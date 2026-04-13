@@ -1,0 +1,11 @@
+{
+  "name": "load-ledger-v4-worker",
+  "version": "4.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
