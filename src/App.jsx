@@ -7,7 +7,7 @@ import RateCon from './RateCon.jsx'
 import Invoice from './Invoice.jsx'
 import Loads from './Loads.jsx'
 
-const API = import.meta.env.VITE_API_URL
+const API = 'https://load-ledger-v4.d49rwgmpj9.workers.dev'
 
 export default function App() {
   const [tab, setTab]       = useState('ratecon')
@@ -18,22 +18,22 @@ export default function App() {
 
   function newLoad() {
     return {
-      id:           null,
-      broker_name:  '',
-      broker_email: '',
-      load_number:  '',
-      origin:       '',
-      destination:  '',
-      pickup_date:  '',
-      delivery_date:'',
-      base_pay:     '',
-      bols:         [],
-      lumpers:      [],
-      incidentals:  [],
-      comdatas:     [],
-      detention:    '',
-      pallets:      '',
-      status:       'draft',
+      id:            null,
+      broker_name:   '',
+      broker_email:  '',
+      load_number:   '',
+      origin:        '',
+      destination:   '',
+      pickup_date:   '',
+      delivery_date: '',
+      base_pay:      '',
+      bols:          [],
+      lumpers:       [],
+      incidentals:   [],
+      comdatas:      [],
+      detention:     '',
+      pallets:       '',
+      status:        'draft',
     }
   }
 
