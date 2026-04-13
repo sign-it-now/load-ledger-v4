@@ -1,0 +1,17 @@
+# worker/wrangler.toml
+# (c) dbappsystems.com | daddyboyapps.com
+# Load Ledger V4 — Cloudflare Worker Config
+
+name = "load-ledger-v4"
+main = "index.js"
+compatibility_date = "2024-09-23"
+account_id = "15f421b3d128ef8067d84f148c04eb54"
+
+[[d1_databases]]
+binding       = "DB"
+database_name = "load-ledger-db"
+database_id   = "e1210397-e084-43ac-93cc-f1c6e9725cb1"
+
+[[r2_buckets]]
+binding     = "R2"
+bucket_name = "load-ledger-files"
