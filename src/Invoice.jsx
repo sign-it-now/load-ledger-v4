@@ -29,11 +29,50 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     fileRef.current.click()
   }
 
-  // ── FULL ADOBE-QUALITY SCANNER PIPELINE ─────────────────
-  // 1. Grayscale  2. Auto-levels  3. Gaussian blur
-  // 4. Bradley-Roth adaptive threshold  5. Unsharp mask
-  // MAX 1200px — iPhone safe
-  // Returns { dataUrl, base64, w, h }
+  // ── LOAD PDF.JS FROM CDN (lazy, cached on window) ────────
+  function loadPdfJs() {
+    return new Promise((resolve, reject) => {
+      if (window.pdfjsLib) { resolve(window.pdfjsLib); return }
+      const script = document.createElement('script')
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
+      script.onload = () => {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+        resolve(window.pdfjsLib)
+      }
+      script.onerror = reject
+      document.head.appendChild(script)
+    })
+  }
+
+  // ── ROUTE FILE TO CORRECT PROCESSOR ─────────────────────
+  // Images go straight to canvas. PDFs get rendered via PDF.js first.
+  function processFile(file) {
+    if (file.type === 'application/pdf') {
+      return processPdfBW(file)
+    }
+    return processImageBW(file)
+  }
+
+  // ── PDF PROCESSOR — renders page 1 to canvas then B&W ───
+  async function processPdfBW(file) {
+    const pdfjsLib = await loadPdfJs()
+    const buffer   = await file.arrayBuffer()
+    const pdfDoc   = await pdfjsLib.getDocument({ data: buffer }).promise
+    const page     = await pdfDoc.getPage(1)
+    const MAX      = 1200
+    const rawVP    = page.getViewport({ scale: 1 })
+    const scale    = Math.min(MAX / rawVP.width, MAX / rawVP.height, 2)
+    const viewport = page.getViewport({ scale })
+    const canvas   = document.createElement('canvas')
+    canvas.width   = Math.round(viewport.width)
+    canvas.height  = Math.round(viewport.height)
+    const ctx      = canvas.getContext('2d')
+    await page.render({ canvasContext: ctx, viewport }).promise
+    return applyBWPipeline(canvas, file.name)
+  }
+
+  // ── IMAGE PROCESSOR — FileReader then canvas then B&W ───
   function processImageBW(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
@@ -48,105 +87,111 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
             let h = img.naturalHeight || img.height || 1000
             if (w > MAX) { h = Math.round(h * MAX / w); w = MAX }
             if (h > MAX) { w = Math.round(w * MAX / h); h = MAX }
-
-            const canvas = document.createElement('canvas')
-            canvas.width  = w
-            canvas.height = h
-            const ctx = canvas.getContext('2d')
+            const canvas   = document.createElement('canvas')
+            canvas.width   = w
+            canvas.height  = h
+            const ctx      = canvas.getContext('2d')
             ctx.drawImage(img, 0, 0, w, h)
-
-            const id   = ctx.getImageData(0, 0, w, h)
-            const data = id.data
-
-            // STEP 1 — Grayscale (luminance weighted)
-            const gray = new Uint8ClampedArray(w * h)
-            for (let i = 0; i < gray.length; i++) {
-              const p = i * 4
-              gray[i] = Math.round(0.299 * data[p] + 0.587 * data[p+1] + 0.114 * data[p+2])
-            }
-
-            // STEP 2 — Auto-levels (histogram stretch)
-            let mn = 255, mx = 0
-            for (let i = 0; i < gray.length; i++) {
-              if (gray[i] < mn) mn = gray[i]
-              if (gray[i] > mx) mx = gray[i]
-            }
-            const range = mx - mn || 1
-            for (let i = 0; i < gray.length; i++) {
-              gray[i] = Math.round(((gray[i] - mn) / range) * 255)
-            }
-
-            // STEP 3 — Gaussian blur 3x3 (noise reduction)
-            const kernel  = [1,2,1, 2,4,2, 1,2,1]
-            const kSum    = 16
-            const blurred = new Uint8ClampedArray(w * h)
-            for (let y = 0; y < h; y++) {
-              for (let x = 0; x < w; x++) {
-                let sum = 0, ki = 0
-                for (let ky = -1; ky <= 1; ky++) {
-                  for (let kx = -1; kx <= 1; kx++) {
-                    const nx = Math.min(Math.max(x + kx, 0), w - 1)
-                    const ny = Math.min(Math.max(y + ky, 0), h - 1)
-                    sum += gray[ny * w + nx] * kernel[ki++]
-                  }
-                }
-                blurred[y * w + x] = Math.round(sum / kSum)
-              }
-            }
-
-            // STEP 4 — Bradley-Roth adaptive thresholding
-            const S     = Math.floor(Math.max(w, h) / 16)
-            const T     = 0.15
-            const integ = new Int32Array(w * h)
-            for (let y = 0; y < h; y++) {
-              let rowSum = 0
-              for (let x = 0; x < w; x++) {
-                rowSum += blurred[y * w + x]
-                integ[y * w + x] = rowSum + (y > 0 ? integ[(y-1)*w+x] : 0)
-              }
-            }
-            const bw = new Uint8ClampedArray(w * h)
-            for (let y = 0; y < h; y++) {
-              for (let x = 0; x < w; x++) {
-                const x1    = Math.max(x - S, 0)
-                const y1    = Math.max(y - S, 0)
-                const x2    = Math.min(x + S, w - 1)
-                const y2    = Math.min(y + S, h - 1)
-                const count = (x2 - x1) * (y2 - y1)
-                const sum   = integ[y2*w+x2]
-                            - (x1 > 0 ? integ[y2*w+(x1-1)] : 0)
-                            - (y1 > 0 ? integ[(y1-1)*w+x2] : 0)
-                            + (x1 > 0 && y1 > 0 ? integ[(y1-1)*w+(x1-1)] : 0)
-                bw[y * w + x] = (blurred[y*w+x] * count) < (sum * (1 - T)) ? 0 : 255
-              }
-            }
-
-            // STEP 5 — Unsharp mask (amount 1.5)
-            const sharp  = new Uint8ClampedArray(w * h)
-            const amount = 1.5
-            for (let i = 0; i < bw.length; i++) {
-              sharp[i] = Math.min(255, Math.max(0, Math.round(bw[i] + amount * (bw[i] - blurred[i]))))
-            }
-
-            // Write final B&W back to canvas
-            for (let i = 0; i < sharp.length; i++) {
-              const p = i * 4
-              data[p] = data[p+1] = data[p+2] = sharp[i]
-              data[p+3] = 255
-            }
-            ctx.putImageData(id, 0, 0)
-
-            // Store full dataUrl — jsPDF addImage uses this directly
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
-            const base64  = dataUrl.split(',')[1]
-
-            resolve({ dataUrl, base64, name: file.name, w, h })
+            resolve(applyBWPipeline(canvas, file.name))
           } catch (err) { reject(err) }
         }
         img.src = ev.target.result
       }
       reader.readAsDataURL(file)
     })
+  }
+
+  // ── B&W PIPELINE — runs on any canvas ───────────────────
+  // 1. Grayscale  2. Auto-levels  3. Gaussian blur
+  // 4. Bradley-Roth adaptive threshold  5. Unsharp mask 1.5
+  function applyBWPipeline(canvas, name) {
+    const w    = canvas.width
+    const h    = canvas.height
+    const ctx  = canvas.getContext('2d')
+    const id   = ctx.getImageData(0, 0, w, h)
+    const data = id.data
+
+    // STEP 1 — Grayscale (luminance weighted)
+    const gray = new Uint8ClampedArray(w * h)
+    for (let i = 0; i < gray.length; i++) {
+      const p = i * 4
+      gray[i] = Math.round(0.299 * data[p] + 0.587 * data[p+1] + 0.114 * data[p+2])
+    }
+
+    // STEP 2 — Auto-levels (histogram stretch)
+    let mn = 255, mx = 0
+    for (let i = 0; i < gray.length; i++) {
+      if (gray[i] < mn) mn = gray[i]
+      if (gray[i] > mx) mx = gray[i]
+    }
+    const range = mx - mn || 1
+    for (let i = 0; i < gray.length; i++) {
+      gray[i] = Math.round(((gray[i] - mn) / range) * 255)
+    }
+
+    // STEP 3 — Gaussian blur 3x3
+    const kernel  = [1,2,1, 2,4,2, 1,2,1]
+    const kSum    = 16
+    const blurred = new Uint8ClampedArray(w * h)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let sum = 0, ki = 0
+        for (let ky = -1; ky <= 1; ky++) {
+          for (let kx = -1; kx <= 1; kx++) {
+            const nx = Math.min(Math.max(x + kx, 0), w - 1)
+            const ny = Math.min(Math.max(y + ky, 0), h - 1)
+            sum += gray[ny * w + nx] * kernel[ki++]
+          }
+        }
+        blurred[y * w + x] = Math.round(sum / kSum)
+      }
+    }
+
+    // STEP 4 — Bradley-Roth adaptive thresholding
+    const S     = Math.floor(Math.max(w, h) / 16)
+    const T     = 0.15
+    const integ = new Int32Array(w * h)
+    for (let y = 0; y < h; y++) {
+      let rowSum = 0
+      for (let x = 0; x < w; x++) {
+        rowSum += blurred[y * w + x]
+        integ[y * w + x] = rowSum + (y > 0 ? integ[(y-1)*w+x] : 0)
+      }
+    }
+    const bw = new Uint8ClampedArray(w * h)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const x1    = Math.max(x - S, 0)
+        const y1    = Math.max(y - S, 0)
+        const x2    = Math.min(x + S, w - 1)
+        const y2    = Math.min(y + S, h - 1)
+        const count = (x2 - x1) * (y2 - y1)
+        const sum   = integ[y2*w+x2]
+                    - (x1 > 0 ? integ[y2*w+(x1-1)] : 0)
+                    - (y1 > 0 ? integ[(y1-1)*w+x2] : 0)
+                    + (x1 > 0 && y1 > 0 ? integ[(y1-1)*w+(x1-1)] : 0)
+        bw[y * w + x] = (blurred[y*w+x] * count) < (sum * (1 - T)) ? 0 : 255
+      }
+    }
+
+    // STEP 5 — Unsharp mask (amount 1.5)
+    const sharp  = new Uint8ClampedArray(w * h)
+    const amount = 1.5
+    for (let i = 0; i < bw.length; i++) {
+      sharp[i] = Math.min(255, Math.max(0, Math.round(bw[i] + amount * (bw[i] - blurred[i]))))
+    }
+
+    // Write B&W result back to canvas
+    for (let i = 0; i < sharp.length; i++) {
+      const p = i * 4
+      data[p] = data[p+1] = data[p+2] = sharp[i]
+      data[p+3] = 255
+    }
+    ctx.putImageData(id, 0, 0)
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+    const base64  = dataUrl.split(',')[1]
+    return { dataUrl, base64, name: name || 'scan', w, h }
   }
 
   // ── BOL UPLOAD HANDLER ───────────────────────────────────
@@ -157,9 +202,9 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     if (remaining <= 0) { showToast('Max 50 BOLs reached'); return }
     const toProcess = files.slice(0, remaining)
     setBolLoading(true)
-    showToast('📷 Processing BOL scans...')
+    showToast('Processing ' + toProcess.length + ' BOL(s)...')
     try {
-      const processed = await Promise.all(toProcess.map(f => processImageBW(f)))
+      const processed = await Promise.all(toProcess.map(f => processFile(f)))
       setLoad(p => ({ ...p, bols: [...p.bols, ...processed] }))
       showToast('✅ ' + processed.length + ' BOL(s) added')
     } catch (err) {
@@ -175,7 +220,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     setLoad(p => ({ ...p, bols: p.bols.filter((_,i) => i !== idx) }))
   }
 
-  // ── RECEIPT SCANNER — B&W scan + OCR amount ─────────────
+  // ── RECEIPT SCANNER — image or PDF + OCR amount ──────────
   async function handleFile(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -183,10 +228,10 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     setScanning(mode)
     showToast('📡 Scanning receipt...')
     try {
-      // Scan image first — get processed B&W version for PDF
-      const scanned = await processImageBW(file)
+      // B&W pipeline — handles both images and PDFs
+      const scanned = await processFile(file)
 
-      // Read original file separately for OCR — better accuracy
+      // Original file base64 → OCR (better accuracy than processed)
       const base64    = await toBase64(file)
       const mediaType = file.type || 'image/jpeg'
 
@@ -207,7 +252,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       const parsed = JSON.parse(raw.substring(start, end + 1))
       const amount = parsed.amount || '0.00'
 
-      // Store full dataUrl for jsPDF — prevents blank pages on iPhone
       const item = {
         amount,
         label:   file.name,
@@ -253,7 +297,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
   }
 
   // ── ADD SCANNED PAGE TO PDF ──────────────────────────────
-  // Uses full dataUrl format — most reliable across jsPDF versions on iPhone
   function addScanPage(doc, item, label) {
     if (!item.dataUrl || !item.w || !item.h) return
     try {
@@ -283,7 +326,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     const M   = 40
     let   y   = 0
 
-    // HEADER
     doc.setFontSize(22)
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
@@ -465,7 +507,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setTextColor(160, 160, 160)
     doc.text('dbappsystems.com | daddyboyapps.com', W / 2, 760, { align: 'center' })
 
-    // ── ATTACHED SCAN PAGES — Page order: BOLs, Lumpers, Incidentals, Comdatas
+    // ── ATTACHED PAGES — order: BOLs, Lumpers, Incidentals, Comdatas
     load.bols.forEach((bol, i) => {
       addScanPage(doc, bol, 'BOL ' + (i+1) + ' of ' + bolCount + ' - ' + bol.name)
     })
@@ -503,8 +545,23 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
   // ── RENDER ────────────────────────────────────────────────
   return (
     <div>
-      <input ref={fileRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleFile} />
-      <input ref={bolRef}  type="file" accept="image/*" multiple style={{display:'none'}} onChange={handleBOL} />
+      {/* Receipt file input — camera, photos, files, PDFs all accepted */}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*,application/pdf"
+        style={{display:'none'}}
+        onChange={handleFile}
+      />
+      {/* BOL file input — camera, photos, files, PDFs, multiple */}
+      <input
+        ref={bolRef}
+        type="file"
+        accept="image/*,application/pdf"
+        multiple
+        style={{display:'none'}}
+        onChange={handleBOL}
+      />
 
       <div className="card">
         <div className="section-title">Load Summary</div>
@@ -514,6 +571,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         <div className="amount-row"><span className="label">Base Pay</span><span className="value">{fmt(base_pay)}</span></div>
       </div>
 
+      {/* BOL SCANS */}
       <div className="card">
         <div className="section-title">
           BOL Scans
@@ -535,7 +593,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         {load.bols.length < MAX_BOLS && (
           <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
             onClick={()=>bolRef.current.click()} disabled={bolLoading}>
-            {bolLoading ? 'Processing...' : 'Add BOL Photos - Camera / Photos / Files'}
+            {bolLoading ? 'Processing...' : 'Add BOLs — Camera / Photos / Files / PDF'}
           </button>
         )}
         {load.bols.length >= MAX_BOLS && (
@@ -543,6 +601,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         )}
       </div>
 
+      {/* LUMPER RECEIPTS */}
       <div className="card">
         <div className="section-title">Lumper Receipts</div>
         {load.lumpers.map((l,i) => (
@@ -558,14 +617,17 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
             <button className="remove-btn" onClick={()=>removeItem('lumpers',i)}>x</button>
           </div>
         ))}
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
-          <button className="scan-btn secondary" onClick={()=>openScanner('lumper')} disabled={scanning==='lumper'}>
-            {scanning==='lumper' ? 'Scanning...' : 'Scan Lumper'}
-          </button>
-          <button className="scan-btn secondary" onClick={()=>addManual('lumper')}>Manual</button>
-        </div>
+        <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
+          onClick={()=>openScanner('lumper')} disabled={scanning==='lumper'}>
+          {scanning==='lumper' ? 'Scanning...' : 'Add Lumper — Camera / Photos / Files / PDF'}
+        </button>
+        <button className="scan-btn secondary" style={{marginTop:6,width:'100%'}}
+          onClick={()=>addManual('lumper')}>
+          Manual Entry
+        </button>
       </div>
 
+      {/* INCIDENTALS */}
       <div className="card">
         <div className="section-title">Incidentals</div>
         {load.incidentals.map((l,i) => (
@@ -581,14 +643,17 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
             <button className="remove-btn" onClick={()=>removeItem('incidentals',i)}>x</button>
           </div>
         ))}
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
-          <button className="scan-btn secondary" onClick={()=>openScanner('incidental')} disabled={scanning==='incidental'}>
-            {scanning==='incidental' ? 'Scanning...' : 'Scan Incidental'}
-          </button>
-          <button className="scan-btn secondary" onClick={()=>addManual('incidental')}>Manual</button>
-        </div>
+        <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
+          onClick={()=>openScanner('incidental')} disabled={scanning==='incidental'}>
+          {scanning==='incidental' ? 'Scanning...' : 'Add Incidental — Camera / Photos / Files / PDF'}
+        </button>
+        <button className="scan-btn secondary" style={{marginTop:6,width:'100%'}}
+          onClick={()=>addManual('incidental')}>
+          Manual Entry
+        </button>
       </div>
 
+      {/* DETENTION AND PALLETS */}
       <div className="card">
         <div className="section-title">Detention and Pallets</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
@@ -603,6 +668,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         </div>
       </div>
 
+      {/* COMDATA / EXPRESS CODES */}
       <div className="card">
         <div className="section-title">Comdata / Express Codes</div>
         {load.comdatas.map((l,i) => (
@@ -618,14 +684,17 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
             <button className="remove-btn" onClick={()=>removeItem('comdatas',i)}>x</button>
           </div>
         ))}
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
-          <button className="scan-btn danger" onClick={()=>openScanner('express')} disabled={scanning==='express'}>
-            {scanning==='express' ? 'Scanning...' : 'Scan Comdata'}
-          </button>
-          <button className="scan-btn danger" onClick={()=>addManual('comdata')}>Manual</button>
-        </div>
+        <button className="scan-btn danger" style={{marginTop:8,width:'100%'}}
+          onClick={()=>openScanner('express')} disabled={scanning==='express'}>
+          {scanning==='express' ? 'Scanning...' : 'Add Comdata — Camera / Photos / Files / PDF'}
+        </button>
+        <button className="scan-btn danger" style={{marginTop:6,width:'100%'}}
+          onClick={()=>addManual('comdata')}>
+          Manual Entry
+        </button>
       </div>
 
+      {/* NOTES */}
       <div className="card">
         <div className="section-title">Notes</div>
         <textarea
@@ -636,6 +705,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         />
       </div>
 
+      {/* BILLING SUMMARY */}
       <div className="card">
         <div className="section-title">Billing Summary</div>
         <div className="amount-row"><span className="label">Trucking Rate</span><span className="value">{fmt(base_pay)}</span></div>
