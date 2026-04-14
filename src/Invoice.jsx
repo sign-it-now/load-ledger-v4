@@ -32,8 +32,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     setScanning(mode)
     showToast('📡 Scanning receipt...')
     try {
-      const base64 = await toBase64(file)
-      // Always default to image/jpeg if mediaType is missing
+      const base64    = await toBase64(file)
       const mediaType = file.type || 'image/jpeg'
       const res = await fetch(`${api}/api/ocr`, {
         method:  'POST',
@@ -43,12 +42,11 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       const json = await res.json()
       if (json.error) throw new Error(json.detail || json.error)
 
-      // Clean result — strip markdown fences
       let raw = json.result || ''
       raw = raw.replace(/```json/gi,'').replace(/```/gi,'').trim()
       const start = raw.indexOf('{')
       const end   = raw.lastIndexOf('}')
-      if (start === -1 || end === -1) throw new Error('No data found in document')
+      if (start === -1 || end === -1) throw new Error('No data found')
 
       const data   = JSON.parse(raw.substring(start, end + 1))
       const amount = data.amount || '0.00'
@@ -90,106 +88,208 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
   }
 
   function generatePDF() {
-    const doc  = new jsPDF({ unit:'pt', format:'letter' })
-    const W    = 612
-    const navy = [10, 22, 40]
-    const amber= [232, 160, 32]
-    const grey = [139, 160, 184]
-    let   y    = 0
+    const doc = new jsPDF({ unit: 'pt', format: 'letter' })
+    const W   = 612
+    const M   = 40
+    let   y   = 0
 
-    doc.setFillColor(...navy)
-    doc.rect(0, 0, W, 90, 'F')
-    doc.setFont('helvetica','bold')
-    doc.setFontSize(28)
-    doc.setTextColor(255,255,255)
-    doc.text('EDGERTON TRUCK & TRAILER REPAIR', 40, 40)
-    doc.setFontSize(11)
-    doc.setTextColor(...amber)
-    doc.text('INVOICE', 40, 58)
-    doc.setTextColor(...grey)
-    doc.text(`Driver: ${driver}   |   Date: ${new Date().toLocaleDateString()}`, 40, 74)
-    doc.setFontSize(11)
-    doc.setTextColor(255,255,255)
-    doc.text(`Load #: ${load.load_number || '—'}`, W - 40, 50, { align:'right' })
-    doc.text(`Broker: ${load.broker_name || '—'}`, W - 40, 66, { align:'right' })
+    // ── HEADER ──────────────────────────────────────────────
+    doc.setFontSize(22)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text('Edgerton Truck & Trailer Repair', W / 2, 50, { align: 'center' })
 
-    y = 110
-    doc.setFillColor(15,31,61)
-    doc.roundedRect(30, y, W-60, 80, 6, 6, 'F')
+    doc.setDrawColor(180, 180, 180)
+    doc.setLineWidth(0.5)
+    doc.line(M, 58, W - M, 58)
+
+    y = 75
+
+    // Left — company info
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text('Bruce Edgerton', M, y)
+    doc.setFont('helvetica', 'normal')
+    doc.text('N4202 Hill Rd · Bonduel WI 54107', M, y + 12)
+    doc.text('MC#699644', M, y + 24)
+    doc.text('bruce.edgerton@yahoo.com · 715-509-0114', M, y + 36)
+
+    // Right — date sent
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(100, 100, 100)
+    doc.text('DATE SENT', W - M, y, { align: 'right' })
+    doc.setDrawColor(180, 180, 180)
+    doc.line(W - 160, y + 3, W - M, y + 3)
     doc.setFontSize(10)
-    doc.setTextColor(...grey)
-    doc.text('ORIGIN', 50, y+20)
-    doc.text('DESTINATION', 220, y+20)
-    doc.text('PICKUP', 390, y+20)
-    doc.text('DELIVERY', 500, y+20)
-    doc.setFontSize(12)
-    doc.setTextColor(255,255,255)
-    doc.setFont('helvetica','bold')
-    doc.text(load.origin        || '—', 50,  y+40)
-    doc.text(load.destination   || '—', 220, y+40)
-    doc.text(load.pickup_date   || '—', 390, y+40)
-    doc.text(load.delivery_date || '—', 500, y+40)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text(new Date().toLocaleDateString('en-US'), W - M, y + 16, { align: 'right' })
 
-    y = 210
-    function row(label, amount, color) {
-      doc.setFont('helvetica','normal')
-      doc.setFontSize(12)
-      doc.setTextColor(...(color || [255,255,255]))
-      doc.text(label, 50, y)
-      doc.text(amount, W-40, y, { align:'right' })
-      doc.setDrawColor(30, 58, 92)
-      doc.line(30, y+8, W-30, y+8)
-      y += 30
-    }
+    y += 60
 
-    doc.setFont('helvetica','bold')
-    doc.setFontSize(11)
-    doc.setTextColor(...amber)
-    doc.text('BILLING BREAKDOWN', 50, y)
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    // ── BILL TO + LOAD # ────────────────────────────────────
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(100, 100, 100)
+    doc.text('BILL TO', M, y)
+    doc.text('LOAD #', W / 2, y)
+
+    y += 12
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+
+    const brokerLines = doc.splitTextToSize(load.broker_name || '—', 220)
+    doc.text(brokerLines, M, y)
+    doc.text(load.load_number || '—', W / 2, y)
+
+    y += brokerLines.length * 14 + 6
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    // ── PICKUP / DELIVERY LOCATIONS ─────────────────────────
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(100, 100, 100)
+    doc.text('PICK UP LOCATION', M, y)
+    doc.text('DELIVERY LOCATION', W / 2, y)
+
+    y += 12
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    const originLines   = doc.splitTextToSize(load.origin      || '—', 220)
+    const destLines     = doc.splitTextToSize(load.destination || '—', 220)
+    doc.text(originLines, M, y)
+    doc.text(destLines,   W / 2, y)
+
+    const locHeight = Math.max(originLines.length, destLines.length) * 14
+    y += locHeight + 6
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    // ── DELIVERY DATE ───────────────────────────────────────
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(100, 100, 100)
+    doc.text('DELIVERY DATE', M, y)
+    y += 12
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text(load.delivery_date || '—', M, y)
+
+    y += 20
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 18
+
+    // ── MEMO LINE ───────────────────────────────────────────
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'italic')
+    doc.setTextColor(80, 80, 80)
+    doc.text('Please remit payment amount for transport services', M, y)
     y += 20
 
-    row('Trucking Rate', fmt(base_pay))
-    load.lumpers.forEach((l,i)     => row(`  Lumper Receipt ${i+1}`, fmt(parseFloat(l.amount))))
-    load.incidentals.forEach((l,i) => row(`  Incidental ${i+1}`, fmt(parseFloat(l.amount))))
-    if (detention > 0) row('Detention', fmt(detention))
-    if (pallets   > 0) row('Pallets',   fmt(pallets))
+    // ── LINE ITEMS ──────────────────────────────────────────
+    function lineItem(label, amount, bold, red) {
+      doc.setFontSize(10)
+      doc.setFont('helvetica', bold ? 'bold' : 'normal')
+      doc.setTextColor(red ? 180 : 0, 0, 0)
+      doc.text(label, M, y)
+      doc.text(amount, W - M, y, { align: 'right' })
+      y += 18
+    }
 
-    doc.setFillColor(15,31,61)
-    doc.rect(30, y-6, W-60, 28, 'F')
-    doc.setFont('helvetica','bold')
-    doc.setFontSize(12)
-    doc.setTextColor(255,255,255)
-    doc.text('SUBTOTAL', 50, y+12)
-    doc.text(fmt(subtotal), W-40, y+12, { align:'right' })
-    y += 40
+    lineItem('Trucking Rate', fmt(base_pay), false, false)
 
-    load.comdatas.forEach((c,i) => row(`  Comdata / Express Code ${i+1}`, `−${fmt(parseFloat(c.amount))}`, [239,68,68]))
+    load.lumpers.forEach((l, i) => {
+      lineItem(`Lumper Receipt ${i + 1}`, fmt(parseFloat(l.amount)), false, false)
+    })
+
+    load.incidentals.forEach((l, i) => {
+      lineItem(`Incidental ${i + 1}`, fmt(parseFloat(l.amount)), false, false)
+    })
+
+    if (detention > 0) lineItem('Detention', fmt(detention), false, false)
+    if (pallets   > 0) lineItem('Pallets',   fmt(pallets),   false, false)
+
+    y += 4
+    doc.setDrawColor(0, 0, 0)
+    doc.setLineWidth(1)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    // Subtotal
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text('SUBTOTAL', M, y)
+    doc.text(fmt(subtotal), W - M, y, { align: 'right' })
+    y += 20
+
+    doc.setLineWidth(0.5)
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    // Comdata deductions
+    load.comdatas.forEach((c, i) => {
+      lineItem(`Comdata / Express Code ${i + 1}`, `− ${fmt(parseFloat(c.amount))}`, false, true)
+    })
 
     y += 8
-    doc.setFillColor(...amber)
-    doc.roundedRect(30, y, W-60, 50, 6, 6, 'F')
-    doc.setFont('helvetica','bold')
-    doc.setFontSize(16)
-    doc.setTextColor(...navy)
-    doc.text('NET BILLABLE TOTAL', 50, y+32)
-    doc.text(fmt(netPay), W-40, y+32, { align:'right' })
 
-    y += 80
-    doc.setFillColor(15,31,61)
-    doc.roundedRect(30, y, W-60, 90, 6, 6, 'F')
-    doc.setFont('helvetica','normal')
-    doc.setFontSize(10)
-    doc.setTextColor(...grey)
-    doc.text('FORMULA: Trucking Rate + Lumpers + Incidentals + Detention + Pallets − Comdata/Express Codes = NET BILLABLE', 50, y+20, { maxWidth: W-100 })
+    // ── NET BILLABLE TOTAL ───────────────────────────────────
+    doc.setFillColor(30, 30, 30)
+    doc.rect(M, y, W - M * 2, 28, 'F')
+    doc.setFontSize(13)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(255, 255, 255)
+    doc.text('NET BILLABLE TOTAL', M + 10, y + 19)
+    doc.text(fmt(netPay), W - M - 10, y + 19, { align: 'right' })
+    y += 48
 
+    // ── NOTES ───────────────────────────────────────────────
+    if (load.notes) {
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'italic')
+      doc.setTextColor(80, 80, 80)
+      const noteLines = doc.splitTextToSize(load.notes, W - M * 2)
+      doc.text(noteLines, M, y)
+      y += noteLines.length * 12 + 10
+    }
+
+    // ── SIGNATURE ───────────────────────────────────────────
+    y += 20
     doc.setFontSize(9)
-    doc.setTextColor(...grey)
-    doc.text('© dbappsystems.com | daddyboyapps.com', W/2, 760, { align:'center' })
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(80, 80, 80)
+    doc.text('Thank You', W - M, y, { align: 'right' })
+    y += 20
+    doc.setFontSize(14)
+    doc.setFont('helvetica', 'bolditalic')
+    doc.setTextColor(0, 0, 0)
+    doc.text('Bruce Edgerton', W - M, y, { align: 'right' })
 
-    doc.save(`ETTR-Invoice-${load.load_number || 'draft'}-${driver}.pdf`)
+    // ── FOOTER ──────────────────────────────────────────────
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(160, 160, 160)
+    doc.text('dbappsystems.com | daddyboyapps.com', W / 2, 760, { align: 'center' })
+
+    doc.save(`Edgerton-Invoice-${load.load_number || 'draft'}-${driver}.pdf`)
     showToast('✅ Invoice downloaded!')
 
-    const saved = { ...load, status:'invoiced', driver, netPay, date: new Date().toISOString() }
+    const saved = { ...load, status: 'invoiced', driver, netPay, date: new Date().toISOString() }
     setLoads(prev => [saved, ...prev])
   }
 
@@ -274,6 +374,16 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
           </button>
           <button className="scan-btn danger" onClick={()=>addManual('comdata')}>✏️ Manual</button>
         </div>
+      </div>
+
+      <div className="card">
+        <div className="section-title">Notes</div>
+        <textarea
+          value={load.notes || ''}
+          onChange={e=>setLoad(p=>({...p,notes:e.target.value}))}
+          placeholder="Special instructions, reference numbers, commodity..."
+          style={{width:'100%',minHeight:70,background:'var(--navy3)',border:'1px solid var(--border)',color:'var(--white)',borderRadius:8,padding:'10px 12px',fontSize:14,fontFamily:'var(--font-body)',resize:'vertical'}}
+        />
       </div>
 
       <div className="card">
