@@ -4,99 +4,18 @@
 import { useState, useRef } from 'react'
 import { jsPDF } from 'jspdf'
 
-// ── Bradley-Roth B&W scanner (inline) ────────────────────────────────────────
-async function scanToBW(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = reject
-    reader.onload = (ev) => {
-      const img = new Image()
-      img.onerror = reject
-      img.onload = () => {
-        try {
-          const MAX = 2400
-          let w = img.naturalWidth, h = img.naturalHeight
-          if (w > MAX || h > MAX) {
-            const r = Math.min(MAX/w, MAX/h); w = Math.round(w*r); h = Math.round(h*r)
-          }
-          const canvas = document.createElement('canvas')
-          canvas.width = w; canvas.height = h
-          const ctx = canvas.getContext('2d')
-          ctx.drawImage(img, 0, 0, w, h)
-          const src = ctx.getImageData(0, 0, w, h), d = src.data
-
-          // 1. Grayscale
-          const gray = new Uint8Array(w*h)
-          for (let i = 0; i < gray.length; i++) {
-            const p = i*4
-            gray[i] = Math.round(0.299*d[p] + 0.587*d[p+1] + 0.114*d[p+2])
-          }
-
-          // 2. Auto-level
-          let lo = 255, hi = 0
-          for (let i = 0; i < gray.length; i++) { if (gray[i]<lo) lo=gray[i]; if (gray[i]>hi) hi=gray[i] }
-          const range = hi-lo || 1
-          for (let i = 0; i < gray.length; i++) gray[i] = Math.round(((gray[i]-lo)/range)*255)
-
-          // 3. Gaussian blur 3x3
-          const blurred = new Uint8Array(w*h)
-          const kernel = [1,2,1,2,4,2,1,2,1], kSum = 16
-          for (let y2=0; y2<h; y2++) for (let x2=0; x2<w; x2++) {
-            let sum=0, ki=0
-            for (let dy=-1; dy<=1; dy++) for (let dx=-1; dx<=1; dx++) {
-              const ny=Math.min(Math.max(y2+dy,0),h-1), nx=Math.min(Math.max(x2+dx,0),w-1)
-              sum += gray[ny*w+nx]*kernel[ki++]
-            }
-            blurred[y2*w+x2] = Math.round(sum/kSum)
-          }
-
-          // 4. Bradley-Roth adaptive threshold
-          const S = Math.round(w/8), T = 0.15
-          const intImg = new Int32Array(w*h)
-          for (let y2=0; y2<h; y2++) {
-            let rowSum=0
-            for (let x2=0; x2<w; x2++) {
-              rowSum += blurred[y2*w+x2]
-              intImg[y2*w+x2] = rowSum + (y2>0 ? intImg[(y2-1)*w+x2] : 0)
-            }
-          }
-          const bw = new Uint8Array(w*h)
-          for (let y2=0; y2<h; y2++) for (let x2=0; x2<w; x2++) {
-            const x1=Math.max(x2-S,0), y1=Math.max(y2-S,0)
-            const x3=Math.min(x2+S,w-1), y3=Math.min(y2+S,h-1)
-            const count=(x3-x1)*(y3-y1)
-            const sum2 = intImg[y3*w+x3]
-              - (y1>0 ? intImg[(y1-1)*w+x3] : 0)
-              - (x1>0 ? intImg[y3*w+(x1-1)] : 0)
-              + (y1>0&&x1>0 ? intImg[(y1-1)*w+(x1-1)] : 0)
-            bw[y2*w+x2] = blurred[y2*w+x2]*count < sum2*(1-T) ? 0 : 255
-          }
-
-          // 5. Write back
-          const out = ctx.createImageData(w, h)
-          for (let i=0; i<bw.length; i++) {
-            const p=i*4; out.data[p]=bw[i]; out.data[p+1]=bw[i]; out.data[p+2]=bw[i]; out.data[p+3]=255
-          }
-          ctx.putImageData(out, 0, 0)
-          resolve(canvas.toDataURL('image/jpeg', 0.92))
-        } catch(err) { reject(err) }
-      }
-      img.src = ev.target.result
-    }
-    reader.readAsDataURL(file)
-  })
-}
+const MAX_BOLS = 50
 
 export default function Invoice({ load, setLoad, driver, api, showToast, loads, setLoads, resetLoad }) {
-  const [scanning,    setScanning]    = useState(null)
-  const [bolScanning, setBolScanning] = useState(false)
-  const fileRef    = useRef()
-  const bolFileRef = useRef()
-  const scanMode   = useRef(null)
+  const [scanning, setScanning]     = useState(null)
+  const [bolLoading, setBolLoading] = useState(false)
+  const fileRef  = useRef()
+  const bolRef   = useRef()
+  const scanMode = useRef(null)
 
-  const base_pay     = parseFloat(load.base_pay)      || 0
-  const detention    = parseFloat(load.detention)     || 0
-  const pallets      = parseFloat(load.pallets)       || 0
+  const base_pay     = parseFloat(load.base_pay)     || 0
+  const detention    = parseFloat(load.detention)    || 0
+  const pallets      = parseFloat(load.pallets)      || 0
   const lumperTotal  = load.lumpers.reduce((s,i)     => s + parseFloat(i.amount||0), 0)
   const incTotal     = load.incidentals.reduce((s,i) => s + parseFloat(i.amount||0), 0)
   const comdataTotal = load.comdatas.reduce((s,i)    => s + parseFloat(i.amount||0), 0)
@@ -105,32 +24,151 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
 
   function fmt(n) { return '$' + n.toFixed(2) }
 
-  // ── BOL scanner ───────────────────────────────────────────────────────────
-  async function handleBOL(e) {
-    const file = e.target.files[0]
-    if (!file) return
-    setBolScanning(true)
-    showToast('📡 Scanning BOL...')
-    try {
-      const bwData = await scanToBW(file)
-      const bol    = { bwData, label: file.name }
-      setLoad(p => ({ ...p, bolScans: [...(p.bolScans||[]), bol] }))
-      showToast('✅ BOL scanned!')
-    } catch(err) {
-      showToast('❌ BOL scan failed')
-      console.error(err)
-    } finally {
-      setBolScanning(false)
-      e.target.value = ''
-    }
-  }
-
-  // ── Receipt scanner ───────────────────────────────────────────────────────
   function openScanner(mode) {
     scanMode.current = mode
     fileRef.current.click()
   }
 
+  // ── FULL ADOBE-QUALITY SCANNER PIPELINE ─────────────────
+  // 1. Grayscale  2. Auto-levels  3. Gaussian blur
+  // 4. Bradley-Roth adaptive threshold  5. Unsharp mask
+  function processImageBW(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+
+      img.onload = () => {
+        const MAX = 2400
+        let w = img.width
+        let h = img.height
+        if (w > MAX) { h = Math.round(h * MAX / w); w = MAX }
+        if (h > MAX) { w = Math.round(w * MAX / h); h = MAX }
+
+        const canvas = document.createElement('canvas')
+        canvas.width  = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0, w, h)
+        URL.revokeObjectURL(url)
+
+        let id   = ctx.getImageData(0, 0, w, h)
+        let data = id.data
+
+        // STEP 1 — Grayscale
+        const gray = new Uint8ClampedArray(w * h)
+        for (let i = 0; i < gray.length; i++) {
+          const p = i * 4
+          gray[i] = Math.round(0.299 * data[p] + 0.587 * data[p+1] + 0.114 * data[p+2])
+        }
+
+        // STEP 2 — Auto-levels
+        let min = 255, max = 0
+        for (let i = 0; i < gray.length; i++) {
+          if (gray[i] < min) min = gray[i]
+          if (gray[i] > max) max = gray[i]
+        }
+        const range = max - min || 1
+        for (let i = 0; i < gray.length; i++) {
+          gray[i] = Math.round(((gray[i] - min) / range) * 255)
+        }
+
+        // STEP 3 — Gaussian blur 3x3
+        const kernel  = [1,2,1, 2,4,2, 1,2,1]
+        const kSum    = 16
+        const blurred = new Uint8ClampedArray(w * h)
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            let sum = 0, ki = 0
+            for (let ky = -1; ky <= 1; ky++) {
+              for (let kx = -1; kx <= 1; kx++) {
+                const nx = Math.min(Math.max(x + kx, 0), w - 1)
+                const ny = Math.min(Math.max(y + ky, 0), h - 1)
+                sum += gray[ny * w + nx] * kernel[ki++]
+              }
+            }
+            blurred[y * w + x] = Math.round(sum / kSum)
+          }
+        }
+
+        // STEP 4 — Bradley-Roth adaptive thresholding
+        const S     = Math.floor(Math.max(w, h) / 16)
+        const T     = 0.15
+        const integ = new Int32Array(w * h)
+        for (let y = 0; y < h; y++) {
+          let rowSum = 0
+          for (let x = 0; x < w; x++) {
+            rowSum += blurred[y * w + x]
+            integ[y * w + x] = rowSum + (y > 0 ? integ[(y-1)*w+x] : 0)
+          }
+        }
+        const bw = new Uint8ClampedArray(w * h)
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const x1    = Math.max(x - S, 0)
+            const y1    = Math.max(y - S, 0)
+            const x2    = Math.min(x + S, w - 1)
+            const y2    = Math.min(y + S, h - 1)
+            const count = (x2 - x1) * (y2 - y1)
+            const sum   = integ[y2*w+x2]
+                        - (x1 > 0 ? integ[y2*w+(x1-1)] : 0)
+                        - (y1 > 0 ? integ[(y1-1)*w+x2] : 0)
+                        + (x1 > 0 && y1 > 0 ? integ[(y1-1)*w+(x1-1)] : 0)
+            bw[y * w + x] = (blurred[y*w+x] * count) < (sum * (1 - T)) ? 0 : 255
+          }
+        }
+
+        // STEP 5 — Unsharp mask
+        const sharp  = new Uint8ClampedArray(w * h)
+        const amount = 1.5
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const idx  = y * w + x
+            sharp[idx] = Math.min(255, Math.max(0, Math.round(bw[idx] + amount * (bw[idx] - blurred[idx]))))
+          }
+        }
+
+        for (let i = 0; i < sharp.length; i++) {
+          const p = i * 4
+          data[p] = data[p+1] = data[p+2] = sharp[i]
+          data[p+3] = 255
+        }
+        ctx.putImageData(id, 0, 0)
+
+        resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), name: file.name, w, h })
+      }
+
+      img.onerror = reject
+      img.src = url
+    })
+  }
+
+  // ── BOL UPLOAD HANDLER ───────────────────────────────────
+  async function handleBOL(e) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    const remaining = MAX_BOLS - load.bols.length
+    if (remaining <= 0) { showToast('Max 50 BOLs reached'); return }
+    const toProcess = files.slice(0, remaining)
+    setBolLoading(true)
+    showToast('📷 Processing BOL scans...')
+    try {
+      const processed = await Promise.all(toProcess.map(f => processImageBW(f)))
+      setLoad(p => ({ ...p, bols: [...p.bols, ...processed] }))
+      showToast(`✅ ${processed.length} BOL(s) added`)
+    } catch (err) {
+      showToast('❌ BOL scan failed')
+      console.error(err)
+    } finally {
+      setBolLoading(false)
+      e.target.value = ''
+    }
+  }
+
+  function removeBOL(idx) {
+    setLoad(p => ({ ...p, bols: p.bols.filter((_,i) => i !== idx) }))
+  }
+
+  // ── RECEIPT SCANNER — saves B&W image + OCR amount ──────
   async function handleFile(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -138,23 +176,32 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     setScanning(mode)
     showToast('📡 Scanning receipt...')
     try {
+      const scanned   = await processImageBW(file)
       const base64    = await toBase64(file)
-      const mediaType = file.type
-      const res       = await fetch(`${api}/api/ocr`, {
+      const mediaType = file.type || 'image/jpeg'
+      const res = await fetch(`${api}/api/ocr`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ base64, mediaType, mode }),
       })
       const json = await res.json()
-      if (json.error) throw new Error(json.error)
-      const data   = JSON.parse(json.result)
+      if (json.error) throw new Error(json.detail || json.error)
+
+      let raw = json.result || ''
+      raw = raw.replace(/```json/gi,'').replace(/```/gi,'').trim()
+      const start = raw.indexOf('{')
+      const end   = raw.lastIndexOf('}')
+      if (start === -1 || end === -1) throw new Error('No data found')
+
+      const data   = JSON.parse(raw.substring(start, end + 1))
       const amount = data.amount || '0.00'
-      const item   = { amount, label: file.name }
+      const item   = { amount, label: file.name, dataUrl: scanned.dataUrl, w: scanned.w, h: scanned.h }
+
       if (mode === 'lumper')     setLoad(p => ({ ...p, lumpers:     [...p.lumpers,     item] }))
       if (mode === 'incidental') setLoad(p => ({ ...p, incidentals: [...p.incidentals, item] }))
       if (mode === 'express')    setLoad(p => ({ ...p, comdatas:    [...p.comdatas,    item] }))
-      showToast('✅ Receipt scanned!')
-    } catch(err) {
+      showToast('✅ Receipt scanned! $' + amount)
+    } catch (err) {
       showToast('❌ Scan failed — add amount manually')
       console.error(err)
     } finally {
@@ -167,14 +214,10 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     setLoad(p => ({ ...p, [type]: p[type].filter((_,i) => i !== idx) }))
   }
 
-  function removeBOL(idx) {
-    setLoad(p => ({ ...p, bolScans: (p.bolScans||[]).filter((_,i) => i !== idx) }))
-  }
-
   function addManual(type) {
     const amount = prompt('Enter amount (numbers only):')
     if (!amount) return
-    const item = { amount: parseFloat(amount).toFixed(2), label: 'Manual entry' }
+    const item = { amount: parseFloat(amount).toFixed(2), label: 'Manual entry', dataUrl: null }
     if (type === 'lumper')     setLoad(p => ({ ...p, lumpers:     [...p.lumpers,     item] }))
     if (type === 'incidental') setLoad(p => ({ ...p, incidentals: [...p.incidentals, item] }))
     if (type === 'comdata')    setLoad(p => ({ ...p, comdatas:    [...p.comdatas,    item] }))
@@ -189,186 +232,302 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     })
   }
 
-  // ── PDF ───────────────────────────────────────────────────────────────────
+  // ── HELPER — add scanned image as PDF page ───────────────
+  function addScanPage(doc, scan, label) {
+    doc.addPage()
+    const pageW = 612
+    const pageH = 792
+    const ratio = Math.min(pageW / scan.w, pageH / scan.h)
+    const imgW  = scan.w * ratio
+    const imgH  = scan.h * ratio
+    const x     = (pageW - imgW) / 2
+    const yPos  = (pageH - imgH) / 2
+    doc.addImage(scan.dataUrl, 'JPEG', x, yPos, imgW, imgH)
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(160, 160, 160)
+    doc.text(label, pageW / 2, 785, { align: 'center' })
+  }
+
+  // ── GENERATE PDF ─────────────────────────────────────────
   function generatePDF() {
-    const doc   = new jsPDF({ unit:'pt', format:'letter' })
-    const W     = 612
-    const navy  = [10, 22, 40]
-    const amber = [232, 160, 32]
-    const grey  = [139, 160, 184]
-    let   y     = 0
+    const doc = new jsPDF({ unit: 'pt', format: 'letter' })
+    const W   = 612
+    const M   = 40
+    let   y   = 0
 
-    // Header
-    doc.setFillColor(...navy)
-    doc.rect(0, 0, W, 90, 'F')
-    doc.setFont('helvetica','bold')
-    doc.setFontSize(28)
-    doc.setTextColor(255,255,255)
-    doc.text('LOAD LEDGER', 40, 40)
-    doc.setFontSize(11)
-    doc.setTextColor(...amber)
-    doc.text('EDGERTON TRANSPORTATION — INVOICE', 40, 58)
-    doc.setFontSize(9)
-    doc.setTextColor(...grey)
-    doc.text('dbappsystems.com', 40, 74)
-    const now = new Date()
-    doc.setFontSize(9)
-    doc.setTextColor(255,255,255)
-    doc.text(`DATE: ${now.toLocaleDateString()}`, W-40, 40, { align:'right' })
-    doc.text(`DRIVER: ${(driver||'').toUpperCase()}`, W-40, 56, { align:'right' })
+    // -- HEADER
+    doc.setFontSize(22)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text('Edgerton Truck & Trailer Repair', W / 2, 50, { align: 'center' })
+    doc.setDrawColor(180, 180, 180)
+    doc.setLineWidth(0.5)
+    doc.line(M, 58, W - M, 58)
+    y = 75
 
-    y = 110
-    const field = (label, val) => {
-      doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...grey)
-      doc.text(label.toUpperCase(), 40, y)
-      doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(...navy)
-      doc.text(val || '—', 40, y+14); y += 36
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text('Bruce Edgerton', M, y)
+    doc.setFont('helvetica', 'normal')
+    doc.text('N4202 Hill Rd · Bonduel WI 54107', M, y + 12)
+    doc.text('MC#699644', M, y + 24)
+    doc.text('bruce.edgerton@yahoo.com · 715-509-0114', M, y + 36)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(100, 100, 100)
+    doc.text('DATE SENT', W - M, y, { align: 'right' })
+    doc.setDrawColor(180, 180, 180)
+    doc.line(W - 160, y + 3, W - M, y + 3)
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text(new Date().toLocaleDateString('en-US'), W - M, y + 16, { align: 'right' })
+
+    y += 60
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(100, 100, 100)
+    doc.text('BILL TO', M, y)
+    doc.text('LOAD #', W / 2, y)
+    y += 12
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    const brokerLines = doc.splitTextToSize(load.broker_name || '-', 220)
+    doc.text(brokerLines, M, y)
+    doc.text(load.load_number || '-', W / 2, y)
+    y += brokerLines.length * 14 + 6
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(100, 100, 100)
+    doc.text('PICK UP LOCATION', M, y)
+    doc.text('DELIVERY LOCATION', W / 2, y)
+    y += 12
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    const originLines = doc.splitTextToSize(load.origin      || '-', 220)
+    const destLines   = doc.splitTextToSize(load.destination || '-', 220)
+    doc.text(originLines, M, y)
+    doc.text(destLines,   W / 2, y)
+    const locHeight = Math.max(originLines.length, destLines.length) * 14
+    y += locHeight + 6
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(100, 100, 100)
+    doc.text('DELIVERY DATE', M, y)
+    y += 12
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text(load.delivery_date || '-', M, y)
+    y += 20
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 18
+
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'italic')
+    doc.setTextColor(80, 80, 80)
+    doc.text('Please remit payment amount for transport services', M, y)
+    y += 20
+
+    function lineItem(label, amount, bold, red) {
+      doc.setFontSize(10)
+      doc.setFont('helvetica', bold ? 'bold' : 'normal')
+      doc.setTextColor(red ? 180 : 0, 0, 0)
+      doc.text(label, M, y)
+      doc.text(amount, W - M, y, { align: 'right' })
+      y += 18
     }
-    field('Broker',        load.broker_name)
-    field('Load Number',   load.load_number)
-    field('Origin',        load.origin)
-    field('Destination',   load.destination)
-    field('Pickup Date',   load.pickup_date)
-    field('Delivery Date', load.delivery_date)
+
+    lineItem('Trucking Rate', fmt(base_pay), false, false)
+    load.lumpers.forEach((l,i)    => lineItem(`Lumper Receipt ${i+1}`, fmt(parseFloat(l.amount)), false, false))
+    load.incidentals.forEach((l,i)=> lineItem(`Incidental ${i+1}`,     fmt(parseFloat(l.amount)), false, false))
+    if (detention > 0) lineItem('Detention', fmt(detention), false, false)
+    if (pallets   > 0) lineItem('Pallets',   fmt(pallets),   false, false)
 
     y += 4
-    doc.setFillColor(15,31,61); doc.rect(30, y, W-60, 1, 'F'); y += 16
+    doc.setDrawColor(0, 0, 0)
+    doc.setLineWidth(1)
+    doc.line(M, y, W - M, y)
+    y += 14
 
-    const row = (label, val, color) => {
-      doc.setFont('helvetica','normal'); doc.setFontSize(10)
-      doc.setTextColor(...(color||navy))
-      doc.text(label, 50, y); doc.text(val, W-40, y, { align:'right' }); y += 20
-    }
-    row('Trucking Rate', fmt(base_pay))
-    load.lumpers.forEach((l,i)     => row(`  Lumper Receipt ${i+1}`,         fmt(parseFloat(l.amount))))
-    load.incidentals.forEach((l,i) => row(`  Incidental ${i+1}`,             fmt(parseFloat(l.amount))))
-    if (detention > 0) row('Detention', fmt(detention))
-    if (pallets   > 0) row('Pallets',   fmt(pallets))
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text('SUBTOTAL', M, y)
+    doc.text(fmt(subtotal), W - M, y, { align: 'right' })
+    y += 20
+    doc.setLineWidth(0.5)
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
 
-    doc.setFillColor(15,31,61); doc.rect(30, y-6, W-60, 28, 'F')
-    doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(255,255,255)
-    doc.text('SUBTOTAL', 50, y+12); doc.text(fmt(subtotal), W-40, y+12, { align:'right' }); y += 40
-
-    load.comdatas.forEach((c,i) => row(`  Comdata / Express Code ${i+1}`, `−${fmt(parseFloat(c.amount))}`, [239,68,68]))
+    load.comdatas.forEach((c,i) => {
+      lineItem(`Comdata / Express Code ${i+1}`, `-${fmt(parseFloat(c.amount))}`, false, true)
+    })
 
     y += 8
-    doc.setFillColor(...amber); doc.roundedRect(30, y, W-60, 50, 6, 6, 'F')
-    doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.setTextColor(...navy)
-    doc.text('NET BILLABLE TOTAL', 50, y+32); doc.text(fmt(netPay), W-40, y+32, { align:'right' }); y += 80
+    doc.setFillColor(30, 30, 30)
+    doc.rect(M, y, W - M * 2, 28, 'F')
+    doc.setFontSize(13)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(255, 255, 255)
+    doc.text('NET BILLABLE TOTAL', M + 10, y + 19)
+    doc.text(fmt(netPay), W - M - 10, y + 19, { align: 'right' })
+    y += 48
 
-    doc.setFillColor(15,31,61); doc.roundedRect(30, y, W-60, 50, 6, 6, 'F')
-    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...grey)
-    doc.text('FORMULA: Trucking Rate + Lumpers + Incidentals + Detention + Pallets − Comdata/Express Codes = NET BILLABLE', 50, y+20, { maxWidth: W-100 })
+    if (load.notes) {
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'italic')
+      doc.setTextColor(80, 80, 80)
+      const noteLines = doc.splitTextToSize(load.notes, W - M * 2)
+      doc.text(noteLines, M, y)
+      y += noteLines.length * 12 + 10
+    }
 
-    doc.setFontSize(9); doc.setTextColor(...grey)
-    doc.text('© dbappsystems.com | daddyboyapps.com', W/2, 760, { align:'center' })
+    const bolCount     = load.bols.length
+    const lumperScans  = load.lumpers.filter(l => l.dataUrl)
+    const incScans     = load.incidentals.filter(l => l.dataUrl)
+    const comdataScans = load.comdatas.filter(l => l.dataUrl)
+    const totalAttach  = bolCount + lumperScans.length + incScans.length + comdataScans.length
 
-    // BOL pages
-    const bols = load.bolScans || []
-    bols.forEach((bol, i) => {
-      doc.addPage()
-      try {
-        if (bol.bwData) {
-          const img=new Image(); img.src=bol.bwData
-          const iw=img.naturalWidth||800, ih=img.naturalHeight||1000
-          const ratio=Math.min((W-40)/iw, 712/ih)
-          doc.addImage(bol.bwData, 'JPEG', (W-iw*ratio)/2, 40, iw*ratio, ih*ratio)
-        }
-      } catch(err) { console.warn('BOL img err', err) }
-      doc.setFontSize(8); doc.setTextColor(120,120,120)
-      doc.text(`BOL ${i+1} of ${bols.length} — ${bol.label||''}`, W/2, 772, { align:'center' })
+    if (totalAttach > 0) {
+      y += 10
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(80, 80, 80)
+      const parts = []
+      if (bolCount            > 0) parts.push(`${bolCount} BOL(s)`)
+      if (lumperScans.length  > 0) parts.push(`${lumperScans.length} Lumper receipt(s)`)
+      if (incScans.length     > 0) parts.push(`${incScans.length} Incidental receipt(s)`)
+      if (comdataScans.length > 0) parts.push(`${comdataScans.length} Comdata receipt(s)`)
+      doc.text(`Attached: ${parts.join(', ')} — see following pages`, M, y)
+      y += 20
+    }
+
+    y += 10
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(80, 80, 80)
+    doc.text('Thank You', W - M, y, { align: 'right' })
+    y += 20
+    doc.setFontSize(14)
+    doc.setFont('helvetica', 'bolditalic')
+    doc.setTextColor(0, 0, 0)
+    doc.text('Bruce Edgerton', W - M, y, { align: 'right' })
+
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(160, 160, 160)
+    doc.text('dbappsystems.com | daddyboyapps.com', W / 2, 760, { align: 'center' })
+
+    // ── ATTACHED PAGES ───────────────────────────────────
+    load.bols.forEach((bol, i) => {
+      addScanPage(doc, bol, `BOL ${i+1} of ${bolCount} — ${bol.name}`)
+    })
+    lumperScans.forEach((l, i) => {
+      addScanPage(doc, l, `Lumper Receipt ${i+1} — $${parseFloat(l.amount).toFixed(2)} — ${l.label}`)
+    })
+    incScans.forEach((l, i) => {
+      addScanPage(doc, l, `Incidental ${i+1} — $${parseFloat(l.amount).toFixed(2)} — ${l.label}`)
+    })
+    comdataScans.forEach((l, i) => {
+      addScanPage(doc, l, `Comdata / Express Code ${i+1} — $${parseFloat(l.amount).toFixed(2)} — ${l.label}`)
     })
 
-    // Lumper pages
-    load.lumpers.forEach((item, i) => {
-      doc.addPage()
-      try {
-        if (item.bwData) {
-          const img=new Image(); img.src=item.bwData
-          const iw=img.naturalWidth||800, ih=img.naturalHeight||1000
-          const ratio=Math.min((W-40)/iw, 712/ih)
-          doc.addImage(item.bwData, 'JPEG', (W-iw*ratio)/2, 40, iw*ratio, ih*ratio)
-        }
-      } catch(err) { console.warn('Lumper img err', err) }
-      doc.setFontSize(8); doc.setTextColor(120,120,120)
-      doc.text(`Lumper Receipt ${i+1} — ${fmt(parseFloat(item.amount||0))} — ${item.label||''}`, W/2, 772, { align:'center' })
-    })
+    doc.save(`Edgerton-Invoice-${load.load_number || 'draft'}-${driver}.pdf`)
+    showToast('✅ Invoice + all receipts downloaded!')
 
-    // Incidental pages
-    load.incidentals.forEach((item, i) => {
-      doc.addPage()
-      try {
-        if (item.bwData) {
-          const img=new Image(); img.src=item.bwData
-          const iw=img.naturalWidth||800, ih=img.naturalHeight||1000
-          const ratio=Math.min((W-40)/iw, 712/ih)
-          doc.addImage(item.bwData, 'JPEG', (W-iw*ratio)/2, 40, iw*ratio, ih*ratio)
-        }
-      } catch(err) { console.warn('Incidental img err', err) }
-      doc.setFontSize(8); doc.setTextColor(120,120,120)
-      doc.text(`Incidental ${i+1} — ${fmt(parseFloat(item.amount||0))} — ${item.label||''}`, W/2, 772, { align:'center' })
-    })
-
-    // Comdata pages
-    load.comdatas.forEach((item, i) => {
-      doc.addPage()
-      try {
-        if (item.bwData) {
-          const img=new Image(); img.src=item.bwData
-          const iw=img.naturalWidth||800, ih=img.naturalHeight||1000
-          const ratio=Math.min((W-40)/iw, 712/ih)
-          doc.addImage(item.bwData, 'JPEG', (W-iw*ratio)/2, 40, iw*ratio, ih*ratio)
-        }
-      } catch(err) { console.warn('Comdata img err', err) }
-      doc.setFontSize(8); doc.setTextColor(120,120,120)
-      doc.text(`Comdata / Express Code ${i+1} — ${fmt(parseFloat(item.amount||0))} — ${item.label||''}`, W/2, 772, { align:'center' })
-    })
-
-    doc.save(`ETTR-Invoice-${load.load_number||'draft'}-${driver}.pdf`)
-    showToast('✅ Invoice downloaded!')
-
-    const saved = { ...load, status:'invoiced', driver, netPay, date: new Date().toISOString() }
+    // ── Strip images before saving to localStorage ───────
+    const { bols: _bols, ...loadData } = load
+    const cleanLumpers     = load.lumpers.map(({ dataUrl, w, h, ...rest }) => rest)
+    const cleanIncidentals = load.incidentals.map(({ dataUrl, w, h, ...rest }) => rest)
+    const cleanComdatas    = load.comdatas.map(({ dataUrl, w, h, ...rest }) => rest)
+    const saved = {
+      ...loadData,
+      lumpers:     cleanLumpers,
+      incidentals: cleanIncidentals,
+      comdatas:    cleanComdatas,
+      status:      'invoiced',
+      driver,
+      netPay,
+      date:        new Date().toISOString(),
+    }
     setLoads(prev => [saved, ...prev])
   }
 
-  // ── UI ────────────────────────────────────────────────────────────────────
+  // ── RENDER ────────────────────────────────────────────────
   return (
     <div>
-      <input ref={fileRef}    type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleFile} />
-      <input ref={bolFileRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleBOL}  />
+      <input ref={fileRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleFile} />
+      <input ref={bolRef}  type="file" accept="image/*" multiple style={{display:'none'}} onChange={handleBOL} />
 
-      {/* LOAD SUMMARY */}
       <div className="card">
         <div className="section-title">Load Summary</div>
-        <div className="amount-row"><span className="label">Broker</span><span className="value">{load.broker_name||'—'}</span></div>
-        <div className="amount-row"><span className="label">Load #</span><span className="value">{load.load_number||'—'}</span></div>
-        <div className="amount-row"><span className="label">Route</span><span className="value" style={{fontSize:13}}>{load.origin||'—'} → {load.destination||'—'}</span></div>
+        <div className="amount-row"><span className="label">Broker</span><span className="value">{load.broker_name || '—'}</span></div>
+        <div className="amount-row"><span className="label">Load #</span><span className="value">{load.load_number || '—'}</span></div>
+        <div className="amount-row"><span className="label">Route</span><span className="value" style={{fontSize:13}}>{load.origin || '—'} → {load.destination || '—'}</span></div>
         <div className="amount-row"><span className="label">Base Pay</span><span className="value">{fmt(base_pay)}</span></div>
       </div>
 
-      {/* BOLS */}
       <div className="card">
-        <div className="section-title">📋 BOLs — Signed Bills of Lading</div>
-        {(load.bolScans||[]).map((bol,i) => (
+        <div className="section-title">
+          📋 BOL Scans
+          <span style={{fontSize:11,fontWeight:400,marginLeft:8,color:'var(--muted)'}}>
+            {load.bols.length} / {MAX_BOLS}
+          </span>
+        </div>
+        {load.bols.map((bol, i) => (
           <div className="scanned-item" key={i}>
-            <div>
+            <img src={bol.dataUrl} alt={`BOL ${i+1}`}
+              style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
+            <div style={{flex:1,marginLeft:10}}>
               <div className="item-label">BOL {i+1}</div>
-              <div className="item-amount">{bol.label||'Scanned'}</div>
+              <div style={{fontSize:10,color:'var(--muted)',marginTop:2}}>{bol.name}</div>
             </div>
             <button className="remove-btn" onClick={()=>removeBOL(i)}>✕</button>
           </div>
         ))}
-        <button className="scan-btn secondary" style={{marginTop:8}} onClick={()=>bolFileRef.current.click()} disabled={bolScanning}>
-          {bolScanning ? '⏳ Scanning...' : '📷 SCAN / ADD BOL'}
-        </button>
+        {load.bols.length < MAX_BOLS && (
+          <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
+            onClick={()=>bolRef.current.click()} disabled={bolLoading}>
+            {bolLoading ? '⏳ Processing...' : '📷 Add BOL Photos — Camera · Photos · Files'}
+          </button>
+        )}
+        {load.bols.length >= MAX_BOLS && (
+          <div style={{textAlign:'center',color:'var(--muted)',fontSize:12,marginTop:8}}>Max 50 BOLs reached</div>
+        )}
       </div>
 
-      {/* LUMPERS */}
       <div className="card">
         <div className="section-title">Lumper Receipts</div>
         {load.lumpers.map((l,i) => (
           <div className="scanned-item" key={i}>
-            <div><div className="item-label">Lumper {i+1}</div><div className="item-amount">{fmt(parseFloat(l.amount))}</div></div>
+            {l.dataUrl && (
+              <img src={l.dataUrl} alt={`Lumper ${i+1}`}
+                style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
+            )}
+            <div style={{flex:1,marginLeft: l.dataUrl ? 10 : 0}}>
+              <div className="item-label">Lumper {i+1}</div>
+              <div className="item-amount">{fmt(parseFloat(l.amount))}</div>
+            </div>
             <button className="remove-btn" onClick={()=>removeItem('lumpers',i)}>✕</button>
           </div>
         ))}
@@ -380,12 +539,18 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         </div>
       </div>
 
-      {/* INCIDENTALS */}
       <div className="card">
         <div className="section-title">Incidentals</div>
         {load.incidentals.map((l,i) => (
           <div className="scanned-item" key={i}>
-            <div><div className="item-label">Incidental {i+1}</div><div className="item-amount">{fmt(parseFloat(l.amount))}</div></div>
+            {l.dataUrl && (
+              <img src={l.dataUrl} alt={`Incidental ${i+1}`}
+                style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
+            )}
+            <div style={{flex:1,marginLeft: l.dataUrl ? 10 : 0}}>
+              <div className="item-label">Incidental {i+1}</div>
+              <div className="item-amount">{fmt(parseFloat(l.amount))}</div>
+            </div>
             <button className="remove-btn" onClick={()=>removeItem('incidentals',i)}>✕</button>
           </div>
         ))}
@@ -397,24 +562,53 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         </div>
       </div>
 
-      {/* COMDATA */}
+      <div className="card">
+        <div className="section-title">Detention & Pallets</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <div className="field-row">
+            <div className="field-label">Detention ($)</div>
+            <input value={load.detention} onChange={e=>setLoad(p=>({...p,detention:e.target.value}))} placeholder="0.00" type="number" inputMode="decimal" />
+          </div>
+          <div className="field-row">
+            <div className="field-label">Pallets ($)</div>
+            <input value={load.pallets} onChange={e=>setLoad(p=>({...p,pallets:e.target.value}))} placeholder="0.00" type="number" inputMode="decimal" />
+          </div>
+        </div>
+      </div>
+
       <div className="card">
         <div className="section-title">Comdata / Express Codes</div>
         {load.comdatas.map((l,i) => (
           <div className="scanned-item" key={i}>
-            <div><div className="item-label">Express Code {i+1}</div><div className="item-amount red">−{fmt(parseFloat(l.amount))}</div></div>
+            {l.dataUrl && (
+              <img src={l.dataUrl} alt={`Comdata ${i+1}`}
+                style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
+            )}
+            <div style={{flex:1,marginLeft: l.dataUrl ? 10 : 0}}>
+              <div className="item-label">Comdata {i+1}</div>
+              <div className="item-amount red">-{fmt(parseFloat(l.amount))}</div>
+            </div>
             <button className="remove-btn" onClick={()=>removeItem('comdatas',i)}>✕</button>
           </div>
         ))}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
-          <button className="scan-btn secondary" onClick={()=>openScanner('express')} disabled={scanning==='express'}>
+          <button className="scan-btn danger" onClick={()=>openScanner('express')} disabled={scanning==='express'}>
             {scanning==='express' ? '⏳ Scanning...' : '📷 Scan Comdata'}
           </button>
           <button className="scan-btn danger" onClick={()=>addManual('comdata')}>✏️ Manual</button>
         </div>
       </div>
 
-      {/* BILLING SUMMARY */}
+      <div className="card">
+        <div className="section-title">Notes</div>
+        <textarea
+          value={load.notes || ''}
+          onChange={e=>setLoad(p=>({...p,notes:e.target.value}))}
+          placeholder="Special instructions, reference numbers, commodity..."
+          style={{width:'100%',minHeight:70,background:'var(--navy3)',border:'1px solid var(--border)',color:'var(--white)',borderRadius:8,padding:'10px 12px',fontSize:14,fontFamily:'var(--font-body)',resize:'vertical'}}
+        />
+      </div>
+
       <div className="card">
         <div className="section-title">💰 Billing Summary</div>
         <div className="amount-row"><span className="label">Trucking Rate</span><span className="value">{fmt(base_pay)}</span></div>
@@ -423,7 +617,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         <div className="amount-row"><span className="label">Detention</span><span className="value">{fmt(detention)}</span></div>
         <div className="amount-row"><span className="label">Pallets</span><span className="value">{fmt(pallets)}</span></div>
         <div className="amount-row"><span className="label">Subtotal</span><span className="value">{fmt(subtotal)}</span></div>
-        <div className="amount-row"><span className="label">Comdata / Express Codes</span><span className="value red">−{fmt(comdataTotal)}</span></div>
+        <div className="amount-row"><span className="label">Comdata / Express Codes</span><span className="value red">-{fmt(comdataTotal)}</span></div>
         <div className="net-total" style={{marginTop:12}}>
           <span className="label">NET BILLABLE TOTAL</span>
           <span className="value">{fmt(netPay)}</span>
@@ -431,7 +625,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       </div>
 
       <button className="scan-btn success" onClick={generatePDF} style={{marginBottom:8}}>
-        ⬇️ DOWNLOAD INVOICE PDF
+        ⬇️ DOWNLOAD INVOICE + ALL RECEIPTS
       </button>
       <button className="scan-btn secondary" onClick={resetLoad}>
         + START NEW LOAD
