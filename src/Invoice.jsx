@@ -46,7 +46,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
   }
 
   // ── ROUTE FILE TO CORRECT PROCESSOR ─────────────────────
-  // Images go straight to canvas. PDFs get rendered via PDF.js first.
   function processFile(file) {
     if (file.type === 'application/pdf') {
       return processPdfBW(file)
@@ -87,10 +86,10 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
             let h = img.naturalHeight || img.height || 1000
             if (w > MAX) { h = Math.round(h * MAX / w); w = MAX }
             if (h > MAX) { w = Math.round(w * MAX / h); h = MAX }
-            const canvas   = document.createElement('canvas')
-            canvas.width   = w
-            canvas.height  = h
-            const ctx      = canvas.getContext('2d')
+            const canvas  = document.createElement('canvas')
+            canvas.width  = w
+            canvas.height = h
+            const ctx     = canvas.getContext('2d')
             ctx.drawImage(img, 0, 0, w, h)
             resolve(applyBWPipeline(canvas, file.name))
           } catch (err) { reject(err) }
@@ -228,13 +227,9 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     setScanning(mode)
     showToast('📡 Scanning receipt...')
     try {
-      // B&W pipeline — handles both images and PDFs
-      const scanned = await processFile(file)
-
-      // Original file base64 → OCR (better accuracy than processed)
+      const scanned   = await processFile(file)
       const base64    = await toBase64(file)
       const mediaType = file.type || 'image/jpeg'
-
       const res = await fetch(api + '/api/ocr', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -507,7 +502,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setTextColor(160, 160, 160)
     doc.text('dbappsystems.com | daddyboyapps.com', W / 2, 760, { align: 'center' })
 
-    // ── ATTACHED PAGES — order: BOLs, Lumpers, Incidentals, Comdatas
+    // ── ATTACHED PAGES — BOLs, Lumpers, Incidentals, Comdatas
     load.bols.forEach((bol, i) => {
       addScanPage(doc, bol, 'BOL ' + (i+1) + ' of ' + bolCount + ' - ' + bol.name)
     })
@@ -545,7 +540,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
   // ── RENDER ────────────────────────────────────────────────
   return (
     <div>
-      {/* Receipt file input — camera, photos, files, PDFs all accepted */}
+      {/* Single receipt input — opens iOS picker with camera/photos/files options */}
       <input
         ref={fileRef}
         type="file"
@@ -553,7 +548,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         style={{display:'none'}}
         onChange={handleFile}
       />
-      {/* BOL file input — camera, photos, files, PDFs, multiple */}
+      {/* BOL input — multiple files, camera/photos/files */}
       <input
         ref={bolRef}
         type="file"
@@ -563,6 +558,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         onChange={handleBOL}
       />
 
+      {/* LOAD SUMMARY */}
       <div className="card">
         <div className="section-title">Load Summary</div>
         <div className="amount-row"><span className="label">Broker</span><span className="value">{load.broker_name || '-'}</span></div>
@@ -593,7 +589,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         {load.bols.length < MAX_BOLS && (
           <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
             onClick={()=>bolRef.current.click()} disabled={bolLoading}>
-            {bolLoading ? 'Processing...' : 'Add BOLs — Camera / Photos / Files / PDF'}
+            {bolLoading ? 'Processing...' : 'Add BOL Photos - Camera / Photos / Files'}
           </button>
         )}
         {load.bols.length >= MAX_BOLS && (
@@ -617,14 +613,12 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
             <button className="remove-btn" onClick={()=>removeItem('lumpers',i)}>x</button>
           </div>
         ))}
-        <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
-          onClick={()=>openScanner('lumper')} disabled={scanning==='lumper'}>
-          {scanning==='lumper' ? 'Scanning...' : 'Add Lumper — Camera / Photos / Files / PDF'}
-        </button>
-        <button className="scan-btn secondary" style={{marginTop:6,width:'100%'}}
-          onClick={()=>addManual('lumper')}>
-          Manual Entry
-        </button>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
+          <button className="scan-btn secondary" onClick={()=>openScanner('lumper')} disabled={scanning==='lumper'}>
+            {scanning==='lumper' ? 'Scanning...' : 'Scan Lumper'}
+          </button>
+          <button className="scan-btn secondary" onClick={()=>addManual('lumper')}>Manual</button>
+        </div>
       </div>
 
       {/* INCIDENTALS */}
@@ -643,14 +637,12 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
             <button className="remove-btn" onClick={()=>removeItem('incidentals',i)}>x</button>
           </div>
         ))}
-        <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
-          onClick={()=>openScanner('incidental')} disabled={scanning==='incidental'}>
-          {scanning==='incidental' ? 'Scanning...' : 'Add Incidental — Camera / Photos / Files / PDF'}
-        </button>
-        <button className="scan-btn secondary" style={{marginTop:6,width:'100%'}}
-          onClick={()=>addManual('incidental')}>
-          Manual Entry
-        </button>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
+          <button className="scan-btn secondary" onClick={()=>openScanner('incidental')} disabled={scanning==='incidental'}>
+            {scanning==='incidental' ? 'Scanning...' : 'Scan Incidental'}
+          </button>
+          <button className="scan-btn secondary" onClick={()=>addManual('incidental')}>Manual</button>
+        </div>
       </div>
 
       {/* DETENTION AND PALLETS */}
@@ -684,14 +676,12 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
             <button className="remove-btn" onClick={()=>removeItem('comdatas',i)}>x</button>
           </div>
         ))}
-        <button className="scan-btn danger" style={{marginTop:8,width:'100%'}}
-          onClick={()=>openScanner('express')} disabled={scanning==='express'}>
-          {scanning==='express' ? 'Scanning...' : 'Add Comdata — Camera / Photos / Files / PDF'}
-        </button>
-        <button className="scan-btn danger" style={{marginTop:6,width:'100%'}}
-          onClick={()=>addManual('comdata')}>
-          Manual Entry
-        </button>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
+          <button className="scan-btn danger" onClick={()=>openScanner('express')} disabled={scanning==='express'}>
+            {scanning==='express' ? 'Scanning...' : 'Scan Comdata'}
+          </button>
+          <button className="scan-btn danger" onClick={()=>addManual('comdata')}>Manual</button>
+        </div>
       </div>
 
       {/* NOTES */}
