@@ -7,11 +7,11 @@ import { jsPDF } from 'jspdf'
 const MAX_BOLS = 50
 
 export default function Invoice({ load, setLoad, driver, api, showToast, loads, setLoads, resetLoad }) {
-  const [scanning, setScanning]   = useState(null)
+  const [scanning, setScanning]     = useState(null)
   const [bolLoading, setBolLoading] = useState(false)
-  const fileRef    = useRef()
-  const bolRef     = useRef()
-  const scanMode   = useRef(null)
+  const fileRef  = useRef()
+  const bolRef   = useRef()
+  const scanMode = useRef(null)
 
   const base_pay     = parseFloat(load.base_pay)     || 0
   const detention    = parseFloat(load.detention)    || 0
@@ -29,13 +29,16 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     fileRef.current.click()
   }
 
-  // ── B&W SCANNER FOR BOL IMAGES ──────────────────────────
+  // ── FULL ADOBE-QUALITY SCANNER PIPELINE ─────────────────
+  // 1. Grayscale  2. Auto-levels  3. Gaussian blur
+  // 4. Bradley-Roth adaptive threshold  5. Unsharp mask
   function processImageBW(file) {
     return new Promise((resolve, reject) => {
       const img = new Image()
       const url = URL.createObjectURL(file)
+
       img.onload = () => {
-        const MAX = 1200
+        const MAX = 2400
         let w = img.width
         let h = img.height
         if (w > MAX) { h = Math.round(h * MAX / w); w = MAX }
@@ -46,32 +49,101 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         canvas.height = h
         const ctx = canvas.getContext('2d')
         ctx.drawImage(img, 0, 0, w, h)
+        URL.revokeObjectURL(url)
 
-        // Grayscale
-        const imageData = ctx.getImageData(0, 0, w, h)
-        const data = imageData.data
-        for (let i = 0; i < data.length; i += 4) {
-          const gray = Math.round(0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2])
-          data[i] = data[i+1] = data[i+2] = gray
+        let id   = ctx.getImageData(0, 0, w, h)
+        let data = id.data
+
+        // STEP 1 — Grayscale (luminance weighted)
+        const gray = new Uint8ClampedArray(w * h)
+        for (let i = 0; i < gray.length; i++) {
+          const p = i * 4
+          gray[i] = Math.round(0.299 * data[p] + 0.587 * data[p+1] + 0.114 * data[p+2])
         }
-        ctx.putImageData(imageData, 0, 0)
 
-        // Auto-levels stretch
+        // STEP 2 — Auto-levels (histogram stretch)
         let min = 255, max = 0
-        for (let i = 0; i < data.length; i += 4) {
-          if (data[i] < min) min = data[i]
-          if (data[i] > max) max = data[i]
+        for (let i = 0; i < gray.length; i++) {
+          if (gray[i] < min) min = gray[i]
+          if (gray[i] > max) max = gray[i]
         }
         const range = max - min || 1
-        for (let i = 0; i < data.length; i += 4) {
-          const v = Math.round(((data[i] - min) / range) * 255)
-          data[i] = data[i+1] = data[i+2] = v
+        for (let i = 0; i < gray.length; i++) {
+          gray[i] = Math.round(((gray[i] - min) / range) * 255)
         }
-        ctx.putImageData(imageData, 0, 0)
 
-        URL.revokeObjectURL(url)
-        resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.7), name: file.name, w, h })
+        // STEP 3 — Gaussian blur 3x3 (noise reduction)
+        const kernel = [1,2,1, 2,4,2, 1,2,1]
+        const kSum   = 16
+        const blurred = new Uint8ClampedArray(w * h)
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            let sum = 0
+            let ki  = 0
+            for (let ky = -1; ky <= 1; ky++) {
+              for (let kx = -1; kx <= 1; kx++) {
+                const nx = Math.min(Math.max(x + kx, 0), w - 1)
+                const ny = Math.min(Math.max(y + ky, 0), h - 1)
+                sum += gray[ny * w + nx] * kernel[ki++]
+              }
+            }
+            blurred[y * w + x] = Math.round(sum / kSum)
+          }
+        }
+
+        // STEP 4 — Bradley-Roth adaptive thresholding
+        // Each pixel compared to average of surrounding window
+        // Handles shadows, uneven lighting — the key to CamScanner quality
+        const S     = Math.floor(Math.max(w, h) / 16) // window size
+        const T     = 0.15                             // threshold 15%
+        const integ = new Int32Array(w * h)
+        // Build integral image
+        for (let y = 0; y < h; y++) {
+          let rowSum = 0
+          for (let x = 0; x < w; x++) {
+            rowSum += blurred[y * w + x]
+            integ[y * w + x] = rowSum + (y > 0 ? integ[(y-1)*w+x] : 0)
+          }
+        }
+        const bw = new Uint8ClampedArray(w * h)
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const x1 = Math.max(x - S, 0)
+            const y1 = Math.max(y - S, 0)
+            const x2 = Math.min(x + S, w - 1)
+            const y2 = Math.min(y + S, h - 1)
+            const count = (x2 - x1) * (y2 - y1)
+            const sum   = integ[y2*w+x2]
+                        - (x1 > 0 ? integ[y2*w+(x1-1)] : 0)
+                        - (y1 > 0 ? integ[(y1-1)*w+x2] : 0)
+                        + (x1 > 0 && y1 > 0 ? integ[(y1-1)*w+(x1-1)] : 0)
+            bw[y * w + x] = (blurred[y*w+x] * count) < (sum * (1 - T)) ? 0 : 255
+          }
+        }
+
+        // STEP 5 — Unsharp mask (razor-sharp text edges)
+        const sharp = new Uint8ClampedArray(w * h)
+        const amount = 1.5
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const idx = y * w + x
+            const orig = bw[idx]
+            const blur = blurred[idx]
+            sharp[idx] = Math.min(255, Math.max(0, Math.round(orig + amount * (orig - blur))))
+          }
+        }
+
+        // Write back to canvas as pure black and white
+        for (let i = 0; i < sharp.length; i++) {
+          const p = i * 4
+          data[p] = data[p+1] = data[p+2] = sharp[i]
+          data[p+3] = 255
+        }
+        ctx.putImageData(id, 0, 0)
+
+        resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), name: file.name, w, h })
       }
+
       img.onerror = reject
       img.src = url
     })
@@ -82,17 +154,12 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     const files = Array.from(e.target.files || [])
     if (!files.length) return
     const remaining = MAX_BOLS - load.bols.length
-    if (remaining <= 0) {
-      showToast('Max 50 BOLs reached')
-      return
-    }
+    if (remaining <= 0) { showToast('Max 50 BOLs reached'); return }
     const toProcess = files.slice(0, remaining)
     setBolLoading(true)
     showToast('📷 Processing BOL scans...')
     try {
-      const processed = await Promise.all(
-        toProcess.map(f => processImageBW(f))
-      )
+      const processed = await Promise.all(toProcess.map(f => processImageBW(f)))
       setLoad(p => ({ ...p, bols: [...p.bols, ...processed] }))
       showToast(`✅ ${processed.length} BOL(s) added`)
     } catch (err) {
@@ -183,11 +250,9 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
     doc.text('Edgerton Truck & Trailer Repair', W / 2, 50, { align: 'center' })
-
     doc.setDrawColor(180, 180, 180)
     doc.setLineWidth(0.5)
     doc.line(M, 58, W - M, 58)
-
     y = 75
 
     // Left -- company info
@@ -288,8 +353,8 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     }
 
     lineItem('Trucking Rate', fmt(base_pay), false, false)
-    load.lumpers.forEach((l, i)    => lineItem(`Lumper Receipt ${i + 1}`, fmt(parseFloat(l.amount)), false, false))
-    load.incidentals.forEach((l, i)=> lineItem(`Incidental ${i + 1}`,     fmt(parseFloat(l.amount)), false, false))
+    load.lumpers.forEach((l,i)    => lineItem(`Lumper Receipt ${i+1}`, fmt(parseFloat(l.amount)), false, false))
+    load.incidentals.forEach((l,i)=> lineItem(`Incidental ${i+1}`,     fmt(parseFloat(l.amount)), false, false))
     if (detention > 0) lineItem('Detention', fmt(detention), false, false)
     if (pallets   > 0) lineItem('Pallets',   fmt(pallets),   false, false)
 
@@ -306,15 +371,14 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.text('SUBTOTAL', M, y)
     doc.text(fmt(subtotal), W - M, y, { align: 'right' })
     y += 20
-
     doc.setLineWidth(0.5)
     doc.setDrawColor(180, 180, 180)
     doc.line(M, y, W - M, y)
     y += 14
 
     // Comdata deductions
-    load.comdatas.forEach((c, i) => {
-      lineItem(`Comdata / Express Code ${i + 1}`, `-${fmt(parseFloat(c.amount))}`, false, true)
+    load.comdatas.forEach((c,i) => {
+      lineItem(`Comdata / Express Code ${i+1}`, `-${fmt(parseFloat(c.amount))}`, false, true)
     })
 
     y += 8
@@ -339,7 +403,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       y += noteLines.length * 12 + 10
     }
 
-    // -- BOL COUNT NOTE ON INVOICE PAGE
+    // -- BOL COUNT NOTE
     if (load.bols.length > 0) {
       y += 10
       doc.setFontSize(9)
@@ -367,10 +431,9 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setTextColor(160, 160, 160)
     doc.text('dbappsystems.com | daddyboyapps.com', W / 2, 760, { align: 'center' })
 
-    // ── BOL PAGES — one per scan ─────────────────────────
+    // ── BOL PAGES — full page, centered, labeled ─────────
     load.bols.forEach((bol, i) => {
       doc.addPage()
-      // fit image full page preserving aspect ratio
       const pageW = 612
       const pageH = 792
       const ratio = Math.min(pageW / bol.w, pageH / bol.h)
@@ -379,12 +442,10 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       const x     = (pageW - imgW) / 2
       const yPos  = (pageH - imgH) / 2
       doc.addImage(bol.dataUrl, 'JPEG', x, yPos, imgW, imgH)
-
-      // small label at bottom
       doc.setFontSize(7)
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(160, 160, 160)
-      doc.text(`BOL ${i + 1} of ${load.bols.length} — ${bol.name}`, pageW / 2, 785, { align: 'center' })
+      doc.text(`BOL ${i+1} of ${load.bols.length} — ${bol.name}`, pageW / 2, 785, { align: 'center' })
     })
 
     doc.save(`Edgerton-Invoice-${load.load_number || 'draft'}-${driver}.pdf`)
@@ -416,7 +477,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
             {load.bols.length} / {MAX_BOLS}
           </span>
         </div>
-
         {load.bols.map((bol, i) => (
           <div className="scanned-item" key={i}>
             <img
@@ -425,13 +485,12 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
               style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}}
             />
             <div style={{flex:1,marginLeft:10}}>
-              <div className="item-label">BOL {i + 1}</div>
+              <div className="item-label">BOL {i+1}</div>
               <div style={{fontSize:10,color:'var(--muted)',marginTop:2}}>{bol.name}</div>
             </div>
             <button className="remove-btn" onClick={()=>removeBOL(i)}>✕</button>
           </div>
         ))}
-
         {load.bols.length < MAX_BOLS && (
           <button
             className="scan-btn secondary"
@@ -439,13 +498,11 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
             onClick={()=>bolRef.current.click()}
             disabled={bolLoading}
           >
-            {bolLoading ? '⏳ Processing...' : `📷 Add BOL Photos  (Camera · Photos · Files)`}
+            {bolLoading ? '⏳ Processing...' : '📷 Add BOL Photos — Camera · Photos · Files'}
           </button>
         )}
         {load.bols.length >= MAX_BOLS && (
-          <div style={{textAlign:'center',color:'var(--muted)',fontSize:12,marginTop:8}}>
-            Max 50 BOLs reached
-          </div>
+          <div style={{textAlign:'center',color:'var(--muted)',fontSize:12,marginTop:8}}>Max 50 BOLs reached</div>
         )}
       </div>
 
