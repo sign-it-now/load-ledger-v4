@@ -54,14 +54,14 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         let id   = ctx.getImageData(0, 0, w, h)
         let data = id.data
 
-        // STEP 1 — Grayscale (luminance weighted)
+        // STEP 1 — Grayscale
         const gray = new Uint8ClampedArray(w * h)
         for (let i = 0; i < gray.length; i++) {
           const p = i * 4
           gray[i] = Math.round(0.299 * data[p] + 0.587 * data[p+1] + 0.114 * data[p+2])
         }
 
-        // STEP 2 — Auto-levels (histogram stretch)
+        // STEP 2 — Auto-levels
         let min = 255, max = 0
         for (let i = 0; i < gray.length; i++) {
           if (gray[i] < min) min = gray[i]
@@ -72,14 +72,13 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
           gray[i] = Math.round(((gray[i] - min) / range) * 255)
         }
 
-        // STEP 3 — Gaussian blur 3x3 (noise reduction)
-        const kernel = [1,2,1, 2,4,2, 1,2,1]
-        const kSum   = 16
+        // STEP 3 — Gaussian blur 3x3
+        const kernel  = [1,2,1, 2,4,2, 1,2,1]
+        const kSum    = 16
         const blurred = new Uint8ClampedArray(w * h)
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
-            let sum = 0
-            let ki  = 0
+            let sum = 0, ki = 0
             for (let ky = -1; ky <= 1; ky++) {
               for (let kx = -1; kx <= 1; kx++) {
                 const nx = Math.min(Math.max(x + kx, 0), w - 1)
@@ -105,10 +104,10 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         const bw = new Uint8ClampedArray(w * h)
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
-            const x1 = Math.max(x - S, 0)
-            const y1 = Math.max(y - S, 0)
-            const x2 = Math.min(x + S, w - 1)
-            const y2 = Math.min(y + S, h - 1)
+            const x1    = Math.max(x - S, 0)
+            const y1    = Math.max(y - S, 0)
+            const x2    = Math.min(x + S, w - 1)
+            const y2    = Math.min(y + S, h - 1)
             const count = (x2 - x1) * (y2 - y1)
             const sum   = integ[y2*w+x2]
                         - (x1 > 0 ? integ[y2*w+(x1-1)] : 0)
@@ -124,13 +123,10 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
             const idx  = y * w + x
-            const orig = bw[idx]
-            const blur = blurred[idx]
-            sharp[idx] = Math.min(255, Math.max(0, Math.round(orig + amount * (orig - blur))))
+            sharp[idx] = Math.min(255, Math.max(0, Math.round(bw[idx] + amount * (bw[idx] - blurred[idx]))))
           }
         }
 
-        // Write back to canvas
         for (let i = 0; i < sharp.length; i++) {
           const p = i * 4
           data[p] = data[p+1] = data[p+2] = sharp[i]
@@ -172,7 +168,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     setLoad(p => ({ ...p, bols: p.bols.filter((_,i) => i !== idx) }))
   }
 
-  // ── RECEIPT SCANNER ──────────────────────────────────────
+  // ── RECEIPT SCANNER — now saves B&W image too ────────────
   async function handleFile(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -180,6 +176,10 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     setScanning(mode)
     showToast('📡 Scanning receipt...')
     try {
+      // Run B&W pipeline first — saves the clean scan image
+      const scanned = await processImageBW(file)
+
+      // Send to OCR for dollar amount
       const base64    = await toBase64(file)
       const mediaType = file.type || 'image/jpeg'
       const res = await fetch(`${api}/api/ocr`, {
@@ -198,7 +198,15 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
 
       const data   = JSON.parse(raw.substring(start, end + 1))
       const amount = data.amount || '0.00'
-      const item   = { amount, label: file.name }
+
+      // Store amount + scanned image together
+      const item = {
+        amount,
+        label:   file.name,
+        dataUrl: scanned.dataUrl,
+        w:       scanned.w,
+        h:       scanned.h,
+      }
 
       if (mode === 'lumper')     setLoad(p => ({ ...p, lumpers:     [...p.lumpers,     item] }))
       if (mode === 'incidental') setLoad(p => ({ ...p, incidentals: [...p.incidentals, item] }))
@@ -220,7 +228,8 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
   function addManual(type) {
     const amount = prompt('Enter amount (numbers only):')
     if (!amount) return
-    const item = { amount: parseFloat(amount).toFixed(2), label: 'Manual entry' }
+    // Manual entries have no scan image
+    const item = { amount: parseFloat(amount).toFixed(2), label: 'Manual entry', dataUrl: null }
     if (type === 'lumper')     setLoad(p => ({ ...p, lumpers:     [...p.lumpers,     item] }))
     if (type === 'incidental') setLoad(p => ({ ...p, incidentals: [...p.incidentals, item] }))
     if (type === 'comdata')    setLoad(p => ({ ...p, comdatas:    [...p.comdatas,    item] }))
@@ -233,6 +242,23 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       r.onerror = rej
       r.readAsDataURL(file)
     })
+  }
+
+  // ── HELPER — add scanned image as a PDF page ─────────────
+  function addScanPage(doc, scan, label) {
+    doc.addPage()
+    const pageW = 612
+    const pageH = 792
+    const ratio = Math.min(pageW / scan.w, pageH / scan.h)
+    const imgW  = scan.w * ratio
+    const imgH  = scan.h * ratio
+    const x     = (pageW - imgW) / 2
+    const yPos  = (pageH - imgH) / 2
+    doc.addImage(scan.dataUrl, 'JPEG', x, yPos, imgW, imgH)
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(160, 160, 160)
+    doc.text(label, pageW / 2, 785, { align: 'center' })
   }
 
   // ── GENERATE PDF ─────────────────────────────────────────
@@ -373,7 +399,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.line(M, y, W - M, y)
     y += 14
 
-    // Comdata deductions
     load.comdatas.forEach((c,i) => {
       lineItem(`Comdata / Express Code ${i+1}`, `-${fmt(parseFloat(c.amount))}`, false, true)
     })
@@ -400,13 +425,24 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       y += noteLines.length * 12 + 10
     }
 
-    // -- BOL COUNT NOTE
-    if (load.bols.length > 0) {
+    // -- ATTACHMENT SUMMARY on invoice page
+    const bolCount     = load.bols.length
+    const lumperScans  = load.lumpers.filter(l => l.dataUrl)
+    const incScans     = load.incidentals.filter(l => l.dataUrl)
+    const comdataScans = load.comdatas.filter(l => l.dataUrl)
+    const totalAttach  = bolCount + lumperScans.length + incScans.length + comdataScans.length
+
+    if (totalAttach > 0) {
       y += 10
       doc.setFontSize(9)
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(80, 80, 80)
-      doc.text(`Attached BOLs: ${load.bols.length} page(s) — see following pages`, M, y)
+      const parts = []
+      if (bolCount       > 0) parts.push(`${bolCount} BOL(s)`)
+      if (lumperScans.length  > 0) parts.push(`${lumperScans.length} Lumper receipt(s)`)
+      if (incScans.length     > 0) parts.push(`${incScans.length} Incidental receipt(s)`)
+      if (comdataScans.length > 0) parts.push(`${comdataScans.length} Comdata receipt(s)`)
+      doc.text(`Attached: ${parts.join(', ')} — see following pages`, M, y)
       y += 20
     }
 
@@ -428,29 +464,45 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setTextColor(160, 160, 160)
     doc.text('dbappsystems.com | daddyboyapps.com', W / 2, 760, { align: 'center' })
 
-    // -- BOL PAGES
+    // ── ATTACHED PAGES — BOLs first, then receipts ───────
+    // BOL pages
     load.bols.forEach((bol, i) => {
-      doc.addPage()
-      const pageW = 612
-      const pageH = 792
-      const ratio = Math.min(pageW / bol.w, pageH / bol.h)
-      const imgW  = bol.w * ratio
-      const imgH  = bol.h * ratio
-      const x     = (pageW - imgW) / 2
-      const yPos  = (pageH - imgH) / 2
-      doc.addImage(bol.dataUrl, 'JPEG', x, yPos, imgW, imgH)
-      doc.setFontSize(7)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(160, 160, 160)
-      doc.text(`BOL ${i+1} of ${load.bols.length} — ${bol.name}`, pageW / 2, 785, { align: 'center' })
+      addScanPage(doc, bol, `BOL ${i+1} of ${bolCount} — ${bol.name}`)
+    })
+
+    // Lumper receipt pages
+    lumperScans.forEach((l, i) => {
+      addScanPage(doc, l, `Lumper Receipt ${i+1} — $${parseFloat(l.amount).toFixed(2)} — ${l.label}`)
+    })
+
+    // Incidental receipt pages
+    incScans.forEach((l, i) => {
+      addScanPage(doc, l, `Incidental ${i+1} — $${parseFloat(l.amount).toFixed(2)} — ${l.label}`)
+    })
+
+    // Comdata / Express Code receipt pages
+    comdataScans.forEach((l, i) => {
+      addScanPage(doc, l, `Comdata / Express Code ${i+1} — $${parseFloat(l.amount).toFixed(2)} — ${l.label}`)
     })
 
     doc.save(`Edgerton-Invoice-${load.load_number || 'draft'}-${driver}.pdf`)
-    showToast('✅ Invoice + BOLs downloaded!')
+    showToast('✅ Invoice + all receipts downloaded!')
 
-    // ✅ FIX — strip BOL images before saving to localStorage
+    // ✅ Strip all scan images before saving to localStorage
     const { bols: _bols, ...loadData } = load
-    const saved = { ...loadData, status: 'invoiced', driver, netPay, date: new Date().toISOString() }
+    const cleanLumpers     = load.lumpers.map(({ dataUrl, w, h, ...rest }) => rest)
+    const cleanIncidentals = load.incidentals.map(({ dataUrl, w, h, ...rest }) => rest)
+    const cleanComdatas    = load.comdatas.map(({ dataUrl, w, h, ...rest }) => rest)
+    const saved = {
+      ...loadData,
+      lumpers:     cleanLumpers,
+      incidentals: cleanIncidentals,
+      comdatas:    cleanComdatas,
+      status:      'invoiced',
+      driver,
+      netPay,
+      date:        new Date().toISOString(),
+    }
     setLoads(prev => [saved, ...prev])
   }
 
@@ -478,11 +530,8 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         </div>
         {load.bols.map((bol, i) => (
           <div className="scanned-item" key={i}>
-            <img
-              src={bol.dataUrl}
-              alt={`BOL ${i+1}`}
-              style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}}
-            />
+            <img src={bol.dataUrl} alt={`BOL ${i+1}`}
+              style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
             <div style={{flex:1,marginLeft:10}}>
               <div className="item-label">BOL {i+1}</div>
               <div style={{fontSize:10,color:'var(--muted)',marginTop:2}}>{bol.name}</div>
@@ -491,12 +540,8 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
           </div>
         ))}
         {load.bols.length < MAX_BOLS && (
-          <button
-            className="scan-btn secondary"
-            style={{marginTop:8,width:'100%'}}
-            onClick={()=>bolRef.current.click()}
-            disabled={bolLoading}
-          >
+          <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
+            onClick={()=>bolRef.current.click()} disabled={bolLoading}>
             {bolLoading ? '⏳ Processing...' : '📷 Add BOL Photos — Camera · Photos · Files'}
           </button>
         )}
@@ -505,11 +550,16 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         )}
       </div>
 
+      {/* LUMPER RECEIPTS */}
       <div className="card">
         <div className="section-title">Lumper Receipts</div>
         {load.lumpers.map((l,i) => (
           <div className="scanned-item" key={i}>
-            <div>
+            {l.dataUrl && (
+              <img src={l.dataUrl} alt={`Lumper ${i+1}`}
+                style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
+            )}
+            <div style={{flex:1,marginLeft: l.dataUrl ? 10 : 0}}>
               <div className="item-label">Lumper {i+1}</div>
               <div className="item-amount">{fmt(parseFloat(l.amount))}</div>
             </div>
@@ -524,11 +574,16 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         </div>
       </div>
 
+      {/* INCIDENTALS */}
       <div className="card">
         <div className="section-title">Incidentals</div>
         {load.incidentals.map((l,i) => (
           <div className="scanned-item" key={i}>
-            <div>
+            {l.dataUrl && (
+              <img src={l.dataUrl} alt={`Incidental ${i+1}`}
+                style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
+            )}
+            <div style={{flex:1,marginLeft: l.dataUrl ? 10 : 0}}>
               <div className="item-label">Incidental {i+1}</div>
               <div className="item-amount">{fmt(parseFloat(l.amount))}</div>
             </div>
@@ -543,6 +598,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         </div>
       </div>
 
+      {/* DETENTION & PALLETS */}
       <div className="card">
         <div className="section-title">Detention & Pallets</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
@@ -557,11 +613,16 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         </div>
       </div>
 
+      {/* COMDATA */}
       <div className="card">
         <div className="section-title">Comdata / Express Codes</div>
         {load.comdatas.map((l,i) => (
           <div className="scanned-item" key={i}>
-            <div>
+            {l.dataUrl && (
+              <img src={l.dataUrl} alt={`Comdata ${i+1}`}
+                style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
+            )}
+            <div style={{flex:1,marginLeft: l.dataUrl ? 10 : 0}}>
               <div className="item-label">Comdata {i+1}</div>
               <div className="item-amount red">-{fmt(parseFloat(l.amount))}</div>
             </div>
@@ -576,6 +637,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         </div>
       </div>
 
+      {/* NOTES */}
       <div className="card">
         <div className="section-title">Notes</div>
         <textarea
@@ -586,6 +648,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         />
       </div>
 
+      {/* BILLING SUMMARY */}
       <div className="card">
         <div className="section-title">💰 Billing Summary</div>
         <div className="amount-row"><span className="label">Trucking Rate</span><span className="value">{fmt(base_pay)}</span></div>
@@ -602,7 +665,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       </div>
 
       <button className="scan-btn success" onClick={generatePDF} style={{marginBottom:8}}>
-        ⬇️ DOWNLOAD INVOICE + BOLs PDF
+        ⬇️ DOWNLOAD INVOICE + ALL RECEIPTS
       </button>
       <button className="scan-btn secondary" onClick={resetLoad}>
         + START NEW LOAD
