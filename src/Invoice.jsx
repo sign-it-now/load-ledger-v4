@@ -4,10 +4,14 @@
 import { useState, useRef } from 'react'
 import { jsPDF } from 'jspdf'
 
+const MAX_BOLS = 50
+
 export default function Invoice({ load, setLoad, driver, api, showToast, loads, setLoads, resetLoad }) {
-  const [scanning, setScanning] = useState(null)
-  const fileRef = useRef()
-  const scanMode = useRef(null)
+  const [scanning, setScanning]   = useState(null)
+  const [bolLoading, setBolLoading] = useState(false)
+  const fileRef    = useRef()
+  const bolRef     = useRef()
+  const scanMode   = useRef(null)
 
   const base_pay     = parseFloat(load.base_pay)     || 0
   const detention    = parseFloat(load.detention)    || 0
@@ -25,6 +29,86 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     fileRef.current.click()
   }
 
+  // ── B&W SCANNER FOR BOL IMAGES ──────────────────────────
+  function processImageBW(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+      img.onload = () => {
+        const MAX = 1200
+        let w = img.width
+        let h = img.height
+        if (w > MAX) { h = Math.round(h * MAX / w); w = MAX }
+        if (h > MAX) { w = Math.round(w * MAX / h); h = MAX }
+
+        const canvas = document.createElement('canvas')
+        canvas.width  = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0, w, h)
+
+        // Grayscale
+        const imageData = ctx.getImageData(0, 0, w, h)
+        const data = imageData.data
+        for (let i = 0; i < data.length; i += 4) {
+          const gray = Math.round(0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2])
+          data[i] = data[i+1] = data[i+2] = gray
+        }
+        ctx.putImageData(imageData, 0, 0)
+
+        // Auto-levels stretch
+        let min = 255, max = 0
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i] < min) min = data[i]
+          if (data[i] > max) max = data[i]
+        }
+        const range = max - min || 1
+        for (let i = 0; i < data.length; i += 4) {
+          const v = Math.round(((data[i] - min) / range) * 255)
+          data[i] = data[i+1] = data[i+2] = v
+        }
+        ctx.putImageData(imageData, 0, 0)
+
+        URL.revokeObjectURL(url)
+        resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.7), name: file.name, w, h })
+      }
+      img.onerror = reject
+      img.src = url
+    })
+  }
+
+  // ── BOL UPLOAD HANDLER ───────────────────────────────────
+  async function handleBOL(e) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    const remaining = MAX_BOLS - load.bols.length
+    if (remaining <= 0) {
+      showToast('Max 50 BOLs reached')
+      return
+    }
+    const toProcess = files.slice(0, remaining)
+    setBolLoading(true)
+    showToast('📷 Processing BOL scans...')
+    try {
+      const processed = await Promise.all(
+        toProcess.map(f => processImageBW(f))
+      )
+      setLoad(p => ({ ...p, bols: [...p.bols, ...processed] }))
+      showToast(`✅ ${processed.length} BOL(s) added`)
+    } catch (err) {
+      showToast('❌ BOL scan failed')
+      console.error(err)
+    } finally {
+      setBolLoading(false)
+      e.target.value = ''
+    }
+  }
+
+  function removeBOL(idx) {
+    setLoad(p => ({ ...p, bols: p.bols.filter((_,i) => i !== idx) }))
+  }
+
+  // ── RECEIPT SCANNER ──────────────────────────────────────
   async function handleFile(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -87,6 +171,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     })
   }
 
+  // ── GENERATE PDF ─────────────────────────────────────────
   function generatePDF() {
     const doc = new jsPDF({ unit: 'pt', format: 'letter' })
     const W   = 612
@@ -128,7 +213,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.text(new Date().toLocaleDateString('en-US'), W - M, y + 16, { align: 'right' })
 
     y += 60
-
     doc.setDrawColor(180, 180, 180)
     doc.line(M, y, W - M, y)
     y += 14
@@ -139,28 +223,24 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setTextColor(100, 100, 100)
     doc.text('BILL TO', M, y)
     doc.text('LOAD #', W / 2, y)
-
     y += 12
     doc.setFontSize(10)
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
-
     const brokerLines = doc.splitTextToSize(load.broker_name || '-', 220)
     doc.text(brokerLines, M, y)
     doc.text(load.load_number || '-', W / 2, y)
-
     y += brokerLines.length * 14 + 6
     doc.setDrawColor(180, 180, 180)
     doc.line(M, y, W - M, y)
     y += 14
 
-    // -- PICKUP / DELIVERY LOCATIONS
+    // -- PICKUP / DELIVERY
     doc.setFontSize(8)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(100, 100, 100)
     doc.text('PICK UP LOCATION', M, y)
     doc.text('DELIVERY LOCATION', W / 2, y)
-
     y += 12
     doc.setFontSize(10)
     doc.setFont('helvetica', 'bold')
@@ -169,7 +249,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     const destLines   = doc.splitTextToSize(load.destination || '-', 220)
     doc.text(originLines, M, y)
     doc.text(destLines,   W / 2, y)
-
     const locHeight = Math.max(originLines.length, destLines.length) * 14
     y += locHeight + 6
     doc.setDrawColor(180, 180, 180)
@@ -186,13 +265,12 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
     doc.text(load.delivery_date || '-', M, y)
-
     y += 20
     doc.setDrawColor(180, 180, 180)
     doc.line(M, y, W - M, y)
     y += 18
 
-    // -- MEMO LINE
+    // -- MEMO
     doc.setFontSize(9)
     doc.setFont('helvetica', 'italic')
     doc.setTextColor(80, 80, 80)
@@ -210,15 +288,8 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     }
 
     lineItem('Trucking Rate', fmt(base_pay), false, false)
-
-    load.lumpers.forEach((l, i) => {
-      lineItem(`Lumper Receipt ${i + 1}`, fmt(parseFloat(l.amount)), false, false)
-    })
-
-    load.incidentals.forEach((l, i) => {
-      lineItem(`Incidental ${i + 1}`, fmt(parseFloat(l.amount)), false, false)
-    })
-
+    load.lumpers.forEach((l, i)    => lineItem(`Lumper Receipt ${i + 1}`, fmt(parseFloat(l.amount)), false, false))
+    load.incidentals.forEach((l, i)=> lineItem(`Incidental ${i + 1}`,     fmt(parseFloat(l.amount)), false, false))
     if (detention > 0) lineItem('Detention', fmt(detention), false, false)
     if (pallets   > 0) lineItem('Pallets',   fmt(pallets),   false, false)
 
@@ -241,7 +312,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.line(M, y, W - M, y)
     y += 14
 
-    // ✅ FIX: standard hyphen-minus (-) — jsPDF Helvetica renders this perfectly
+    // Comdata deductions
     load.comdatas.forEach((c, i) => {
       lineItem(`Comdata / Express Code ${i + 1}`, `-${fmt(parseFloat(c.amount))}`, false, true)
     })
@@ -268,8 +339,18 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       y += noteLines.length * 12 + 10
     }
 
+    // -- BOL COUNT NOTE ON INVOICE PAGE
+    if (load.bols.length > 0) {
+      y += 10
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(80, 80, 80)
+      doc.text(`Attached BOLs: ${load.bols.length} page(s) — see following pages`, M, y)
+      y += 20
+    }
+
     // -- SIGNATURE
-    y += 20
+    y += 10
     doc.setFontSize(9)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(80, 80, 80)
@@ -286,16 +367,38 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setTextColor(160, 160, 160)
     doc.text('dbappsystems.com | daddyboyapps.com', W / 2, 760, { align: 'center' })
 
+    // ── BOL PAGES — one per scan ─────────────────────────
+    load.bols.forEach((bol, i) => {
+      doc.addPage()
+      // fit image full page preserving aspect ratio
+      const pageW = 612
+      const pageH = 792
+      const ratio = Math.min(pageW / bol.w, pageH / bol.h)
+      const imgW  = bol.w * ratio
+      const imgH  = bol.h * ratio
+      const x     = (pageW - imgW) / 2
+      const yPos  = (pageH - imgH) / 2
+      doc.addImage(bol.dataUrl, 'JPEG', x, yPos, imgW, imgH)
+
+      // small label at bottom
+      doc.setFontSize(7)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(160, 160, 160)
+      doc.text(`BOL ${i + 1} of ${load.bols.length} — ${bol.name}`, pageW / 2, 785, { align: 'center' })
+    })
+
     doc.save(`Edgerton-Invoice-${load.load_number || 'draft'}-${driver}.pdf`)
-    showToast('✅ Invoice downloaded!')
+    showToast('✅ Invoice + BOLs downloaded!')
 
     const saved = { ...load, status: 'invoiced', driver, netPay, date: new Date().toISOString() }
     setLoads(prev => [saved, ...prev])
   }
 
+  // ── RENDER ────────────────────────────────────────────────
   return (
     <div>
       <input ref={fileRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleFile} />
+      <input ref={bolRef}  type="file" accept="image/*" multiple style={{display:'none'}} onChange={handleBOL} />
 
       <div className="card">
         <div className="section-title">Load Summary</div>
@@ -303,6 +406,47 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         <div className="amount-row"><span className="label">Load #</span><span className="value">{load.load_number || '—'}</span></div>
         <div className="amount-row"><span className="label">Route</span><span className="value" style={{fontSize:13}}>{load.origin || '—'} → {load.destination || '—'}</span></div>
         <div className="amount-row"><span className="label">Base Pay</span><span className="value">{fmt(base_pay)}</span></div>
+      </div>
+
+      {/* ── BOL SCANS ── */}
+      <div className="card">
+        <div className="section-title">
+          📋 BOL Scans
+          <span style={{fontSize:11,fontWeight:400,marginLeft:8,color:'var(--muted)'}}>
+            {load.bols.length} / {MAX_BOLS}
+          </span>
+        </div>
+
+        {load.bols.map((bol, i) => (
+          <div className="scanned-item" key={i}>
+            <img
+              src={bol.dataUrl}
+              alt={`BOL ${i+1}`}
+              style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}}
+            />
+            <div style={{flex:1,marginLeft:10}}>
+              <div className="item-label">BOL {i + 1}</div>
+              <div style={{fontSize:10,color:'var(--muted)',marginTop:2}}>{bol.name}</div>
+            </div>
+            <button className="remove-btn" onClick={()=>removeBOL(i)}>✕</button>
+          </div>
+        ))}
+
+        {load.bols.length < MAX_BOLS && (
+          <button
+            className="scan-btn secondary"
+            style={{marginTop:8,width:'100%'}}
+            onClick={()=>bolRef.current.click()}
+            disabled={bolLoading}
+          >
+            {bolLoading ? '⏳ Processing...' : `📷 Add BOL Photos  (Camera · Photos · Files)`}
+          </button>
+        )}
+        {load.bols.length >= MAX_BOLS && (
+          <div style={{textAlign:'center',color:'var(--muted)',fontSize:12,marginTop:8}}>
+            Max 50 BOLs reached
+          </div>
+        )}
       </div>
 
       <div className="card">
@@ -402,7 +546,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       </div>
 
       <button className="scan-btn success" onClick={generatePDF} style={{marginBottom:8}}>
-        ⬇️ DOWNLOAD INVOICE PDF
+        ⬇️ DOWNLOAD INVOICE + BOLs PDF
       </button>
       <button className="scan-btn secondary" onClick={resetLoad}>
         + START NEW LOAD
