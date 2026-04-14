@@ -2,19 +2,36 @@
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V4
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import RateCon from './RateCon.jsx'
 import Invoice from './Invoice.jsx'
-import Loads from './Loads.jsx'
+import Loads   from './Loads.jsx'
 
 const API = 'https://load-ledger-v4.d49rwgmpj9.workers.dev'
 
 export default function App() {
-  const [tab, setTab]       = useState('ratecon')
+  const [tab,    setTab]    = useState('ratecon')
   const [driver, setDriver] = useState(null)
-  const [load, setLoad]     = useState(newLoad())
-  const [loads, setLoads]   = useState([])
-  const [toast, setToast]   = useState(null)
+  const [load,   setLoad]   = useState(newLoad())
+  const [toast,  setToast]  = useState(null)
+
+  // ── LOADS — persist to localStorage ─────────────────────
+  const [loads, setLoads] = useState(() => {
+    try {
+      const saved = localStorage.getItem('ll_v4_loads')
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('ll_v4_loads', JSON.stringify(loads))
+    } catch {
+      // storage full — safe fallback
+    }
+  }, [loads])
 
   function newLoad() {
     return {
@@ -33,6 +50,7 @@ export default function App() {
       comdatas:      [],
       detention:     '',
       pallets:       '',
+      notes:         '',
       status:        'draft',
     }
   }
@@ -82,7 +100,7 @@ export default function App() {
       {/* MAIN CONTENT */}
       <div className="tab-content">
         {!driver ? (
-          <div className="empty-state" style={{ paddingTop: 80 }}>
+          <div className="empty-state" style={{ paddingTop:80 }}>
             <div className="icon">🚛</div>
             <h3>SELECT YOUR NAME</h3>
             <p>Tap BRUCE or TIM above to start</p>
@@ -142,12 +160,12 @@ export default function App() {
         </button>
         <button className={`tab-item ${tab==='loads'?'active':''}`} onClick={()=>setTab('loads')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="8" y1="6" x2="21" y2="6"/>
-            <line x1="8" y1="12" x2="21" y2="12"/>
-            <line x1="8" y1="18" x2="21" y2="18"/>
-            <line x1="3" y1="6" x2="3.01" y2="6"/>
-            <line x1="3" y1="12" x2="3.01" y2="12"/>
-            <line x1="3" y1="18" x2="3.01" y2="18"/>
+            <line x1="8"  y1="6"  x2="21" y2="6"/>
+            <line x1="8"  y1="12" x2="21" y2="12"/>
+            <line x1="8"  y1="18" x2="21" y2="18"/>
+            <line x1="3"  y1="6"  x2="3.01" y2="6"/>
+            <line x1="3"  y1="12" x2="3.01" y2="12"/>
+            <line x1="3"  y1="18" x2="3.01" y2="18"/>
           </svg>
           Loads
         </button>
