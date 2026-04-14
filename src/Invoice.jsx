@@ -93,7 +93,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     const M   = 40
     let   y   = 0
 
-    // ── HEADER ──────────────────────────────────────────────
+    // -- HEADER
     doc.setFontSize(22)
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
@@ -105,7 +105,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
 
     y = 75
 
-    // Left — company info
+    // Left -- company info
     doc.setFontSize(9)
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
@@ -115,7 +115,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.text('MC#699644', M, y + 24)
     doc.text('bruce.edgerton@yahoo.com · 715-509-0114', M, y + 36)
 
-    // Right — date sent
+    // Right -- date sent
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
     doc.setTextColor(100, 100, 100)
@@ -133,7 +133,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.line(M, y, W - M, y)
     y += 14
 
-    // ── BILL TO + LOAD # ────────────────────────────────────
+    // -- BILL TO + LOAD #
     doc.setFontSize(8)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(100, 100, 100)
@@ -145,16 +145,16 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
 
-    const brokerLines = doc.splitTextToSize(load.broker_name || '—', 220)
+    const brokerLines = doc.splitTextToSize(load.broker_name || '-', 220)
     doc.text(brokerLines, M, y)
-    doc.text(load.load_number || '—', W / 2, y)
+    doc.text(load.load_number || '-', W / 2, y)
 
     y += brokerLines.length * 14 + 6
     doc.setDrawColor(180, 180, 180)
     doc.line(M, y, W - M, y)
     y += 14
 
-    // ── PICKUP / DELIVERY LOCATIONS ─────────────────────────
+    // -- PICKUP / DELIVERY LOCATIONS
     doc.setFontSize(8)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(100, 100, 100)
@@ -165,8 +165,8 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setFontSize(10)
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
-    const originLines   = doc.splitTextToSize(load.origin      || '—', 220)
-    const destLines     = doc.splitTextToSize(load.destination || '—', 220)
+    const originLines = doc.splitTextToSize(load.origin      || '-', 220)
+    const destLines   = doc.splitTextToSize(load.destination || '-', 220)
     doc.text(originLines, M, y)
     doc.text(destLines,   W / 2, y)
 
@@ -176,7 +176,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.line(M, y, W - M, y)
     y += 14
 
-    // ── DELIVERY DATE ───────────────────────────────────────
+    // -- DELIVERY DATE
     doc.setFontSize(8)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(100, 100, 100)
@@ -185,21 +185,21 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setFontSize(10)
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
-    doc.text(load.delivery_date || '—', M, y)
+    doc.text(load.delivery_date || '-', M, y)
 
     y += 20
     doc.setDrawColor(180, 180, 180)
     doc.line(M, y, W - M, y)
     y += 18
 
-    // ── MEMO LINE ───────────────────────────────────────────
+    // -- MEMO LINE
     doc.setFontSize(9)
     doc.setFont('helvetica', 'italic')
     doc.setTextColor(80, 80, 80)
     doc.text('Please remit payment amount for transport services', M, y)
     y += 20
 
-    // ── LINE ITEMS ──────────────────────────────────────────
+    // -- LINE ITEMS
     function lineItem(label, amount, bold, red) {
       doc.setFontSize(10)
       doc.setFont('helvetica', bold ? 'bold' : 'normal')
@@ -241,14 +241,14 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.line(M, y, W - M, y)
     y += 14
 
-    // Comdata deductions
+    // ✅ FIX: standard hyphen-minus (-) — jsPDF Helvetica renders this perfectly
     load.comdatas.forEach((c, i) => {
-      lineItem(`Comdata / Express Code ${i + 1}`, `− ${fmt(parseFloat(c.amount))}`, false, true)
+      lineItem(`Comdata / Express Code ${i + 1}`, `-${fmt(parseFloat(c.amount))}`, false, true)
     })
 
     y += 8
 
-    // ── NET BILLABLE TOTAL ───────────────────────────────────
+    // -- NET BILLABLE TOTAL
     doc.setFillColor(30, 30, 30)
     doc.rect(M, y, W - M * 2, 28, 'F')
     doc.setFontSize(13)
@@ -258,7 +258,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.text(fmt(netPay), W - M - 10, y + 19, { align: 'right' })
     y += 48
 
-    // ── NOTES ───────────────────────────────────────────────
+    // -- NOTES
     if (load.notes) {
       doc.setFontSize(9)
       doc.setFont('helvetica', 'italic')
@@ -268,7 +268,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       y += noteLines.length * 12 + 10
     }
 
-    // ── SIGNATURE ───────────────────────────────────────────
+    // -- SIGNATURE
     y += 20
     doc.setFontSize(9)
     doc.setFont('helvetica', 'normal')
@@ -280,7 +280,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setTextColor(0, 0, 0)
     doc.text('Bruce Edgerton', W - M, y, { align: 'right' })
 
-    // ── FOOTER ──────────────────────────────────────────────
+    // -- FOOTER
     doc.setFontSize(7)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(160, 160, 160)
@@ -363,7 +363,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
           <div className="scanned-item" key={i}>
             <div>
               <div className="item-label">Comdata {i+1}</div>
-              <div className="item-amount red">−{fmt(parseFloat(l.amount))}</div>
+              <div className="item-amount red">-{fmt(parseFloat(l.amount))}</div>
             </div>
             <button className="remove-btn" onClick={()=>removeItem('comdatas',i)}>✕</button>
           </div>
@@ -394,7 +394,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         <div className="amount-row"><span className="label">Detention</span><span className="value">{fmt(detention)}</span></div>
         <div className="amount-row"><span className="label">Pallets</span><span className="value">{fmt(pallets)}</span></div>
         <div className="amount-row"><span className="label">Subtotal</span><span className="value">{fmt(subtotal)}</span></div>
-        <div className="amount-row"><span className="label">Comdata / Express Codes</span><span className="value red">−{fmt(comdataTotal)}</span></div>
+        <div className="amount-row"><span className="label">Comdata / Express Codes</span><span className="value red">-{fmt(comdataTotal)}</span></div>
         <div className="net-total" style={{marginTop:12}}>
           <span className="label">NET BILLABLE TOTAL</span>
           <span className="value">{fmt(netPay)}</span>
