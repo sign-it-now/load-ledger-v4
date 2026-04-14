@@ -92,12 +92,9 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         }
 
         // STEP 4 — Bradley-Roth adaptive thresholding
-        // Each pixel compared to average of surrounding window
-        // Handles shadows, uneven lighting — the key to CamScanner quality
-        const S     = Math.floor(Math.max(w, h) / 16) // window size
-        const T     = 0.15                             // threshold 15%
+        const S     = Math.floor(Math.max(w, h) / 16)
+        const T     = 0.15
         const integ = new Int32Array(w * h)
-        // Build integral image
         for (let y = 0; y < h; y++) {
           let rowSum = 0
           for (let x = 0; x < w; x++) {
@@ -121,19 +118,19 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
           }
         }
 
-        // STEP 5 — Unsharp mask (razor-sharp text edges)
-        const sharp = new Uint8ClampedArray(w * h)
+        // STEP 5 — Unsharp mask
+        const sharp  = new Uint8ClampedArray(w * h)
         const amount = 1.5
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
-            const idx = y * w + x
+            const idx  = y * w + x
             const orig = bw[idx]
             const blur = blurred[idx]
             sharp[idx] = Math.min(255, Math.max(0, Math.round(orig + amount * (orig - blur))))
           }
         }
 
-        // Write back to canvas as pure black and white
+        // Write back to canvas
         for (let i = 0; i < sharp.length; i++) {
           const p = i * 4
           data[p] = data[p+1] = data[p+2] = sharp[i]
@@ -431,7 +428,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setTextColor(160, 160, 160)
     doc.text('dbappsystems.com | daddyboyapps.com', W / 2, 760, { align: 'center' })
 
-    // ── BOL PAGES — full page, centered, labeled ─────────
+    // -- BOL PAGES
     load.bols.forEach((bol, i) => {
       doc.addPage()
       const pageW = 612
@@ -451,7 +448,9 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.save(`Edgerton-Invoice-${load.load_number || 'draft'}-${driver}.pdf`)
     showToast('✅ Invoice + BOLs downloaded!')
 
-    const saved = { ...load, status: 'invoiced', driver, netPay, date: new Date().toISOString() }
+    // ✅ FIX — strip BOL images before saving to localStorage
+    const { bols: _bols, ...loadData } = load
+    const saved = { ...loadData, status: 'invoiced', driver, netPay, date: new Date().toISOString() }
     setLoads(prev => [saved, ...prev])
   }
 
@@ -469,7 +468,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         <div className="amount-row"><span className="label">Base Pay</span><span className="value">{fmt(base_pay)}</span></div>
       </div>
 
-      {/* ── BOL SCANS ── */}
+      {/* BOL SCANS */}
       <div className="card">
         <div className="section-title">
           📋 BOL Scans
