@@ -32,6 +32,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
   // ── FULL ADOBE-QUALITY SCANNER PIPELINE ─────────────────
   // 1. Grayscale  2. Auto-levels  3. Gaussian blur
   // 4. Bradley-Roth adaptive threshold  5. Unsharp mask
+  // MAX 1200px — iPhone safe
   // Returns { dataUrl, base64, w, h }
   function processImageBW(file) {
     return new Promise((resolve, reject) => {
@@ -42,7 +43,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         img.onerror = reject
         img.onload = () => {
           try {
-            const MAX = 2400
+            const MAX = 1200
             let w = img.naturalWidth  || img.width  || 800
             let h = img.naturalHeight || img.height || 1000
             if (w > MAX) { h = Math.round(h * MAX / w); w = MAX }
@@ -120,7 +121,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
               }
             }
 
-            // STEP 5 — Unsharp mask
+            // STEP 5 — Unsharp mask (amount 1.5)
             const sharp  = new Uint8ClampedArray(w * h)
             const amount = 1.5
             for (let i = 0; i < bw.length; i++) {
@@ -135,7 +136,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
             }
             ctx.putImageData(id, 0, 0)
 
-            // ✅ KEY FIX: store raw base64 AND full dataUrl
+            // Store full dataUrl — jsPDF addImage uses this directly
             const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
             const base64  = dataUrl.split(',')[1]
 
@@ -160,7 +161,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     try {
       const processed = await Promise.all(toProcess.map(f => processImageBW(f)))
       setLoad(p => ({ ...p, bols: [...p.bols, ...processed] }))
-      showToast(`✅ ${processed.length} BOL(s) added`)
+      showToast('✅ ' + processed.length + ' BOL(s) added')
     } catch (err) {
       showToast('❌ BOL scan failed')
       console.error(err)
@@ -182,10 +183,14 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     setScanning(mode)
     showToast('📡 Scanning receipt...')
     try {
-      const scanned   = await processImageBW(file)
+      // Scan image first — get processed B&W version for PDF
+      const scanned = await processImageBW(file)
+
+      // Read original file separately for OCR — better accuracy
       const base64    = await toBase64(file)
       const mediaType = file.type || 'image/jpeg'
-      const res = await fetch(`${api}/api/ocr`, {
+
+      const res = await fetch(api + '/api/ocr', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ base64, mediaType, mode }),
@@ -202,6 +207,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       const parsed = JSON.parse(raw.substring(start, end + 1))
       const amount = parsed.amount || '0.00'
 
+      // Store full dataUrl for jsPDF — prevents blank pages on iPhone
       const item = {
         amount,
         label:   file.name,
@@ -247,9 +253,9 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
   }
 
   // ── ADD SCANNED PAGE TO PDF ──────────────────────────────
-  // ✅ Uses raw base64 — fixes blank white pages in jsPDF
+  // Uses full dataUrl format — most reliable across jsPDF versions on iPhone
   function addScanPage(doc, item, label) {
-    if (!item.base64 || !item.w || !item.h) return
+    if (!item.dataUrl || !item.w || !item.h) return
     try {
       doc.addPage()
       const pageW = 612
@@ -260,7 +266,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       const imgH  = Math.round(item.h * ratio)
       const x     = Math.round((pageW - imgW) / 2)
       const yPos  = Math.round((pageH - imgH) / 2)
-      doc.addImage(item.base64, 'JPEG', x, yPos, imgW, imgH)
+      doc.addImage(item.dataUrl, 'JPEG', x, yPos, imgW, imgH)
       doc.setFontSize(7)
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(160, 160, 160)
@@ -277,7 +283,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     const M   = 40
     let   y   = 0
 
-    // -- HEADER
+    // HEADER
     doc.setFontSize(22)
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
@@ -292,9 +298,9 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setTextColor(0, 0, 0)
     doc.text('Bruce Edgerton', M, y)
     doc.setFont('helvetica', 'normal')
-    doc.text('N4202 Hill Rd · Bonduel WI 54107', M, y + 12)
+    doc.text('N4202 Hill Rd - Bonduel WI 54107', M, y + 12)
     doc.text('MC#699644', M, y + 24)
-    doc.text('bruce.edgerton@yahoo.com · 715-509-0114', M, y + 36)
+    doc.text('bruce.edgerton@yahoo.com - 715-509-0114', M, y + 36)
 
     doc.setFontSize(8)
     doc.setFont('helvetica', 'normal')
@@ -378,8 +384,8 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     }
 
     lineItem('Trucking Rate', fmt(base_pay), false, false)
-    load.lumpers.forEach((l,i)    => lineItem(`Lumper Receipt ${i+1}`, fmt(parseFloat(l.amount)), false, false))
-    load.incidentals.forEach((l,i)=> lineItem(`Incidental ${i+1}`,     fmt(parseFloat(l.amount)), false, false))
+    load.lumpers.forEach((l,i)    => lineItem('Lumper Receipt ' + (i+1), fmt(parseFloat(l.amount)), false, false))
+    load.incidentals.forEach((l,i)=> lineItem('Incidental ' + (i+1),     fmt(parseFloat(l.amount)), false, false))
     if (detention > 0) lineItem('Detention', fmt(detention), false, false)
     if (pallets   > 0) lineItem('Pallets',   fmt(pallets),   false, false)
 
@@ -401,7 +407,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     y += 14
 
     load.comdatas.forEach((c,i) => {
-      lineItem(`Comdata / Express Code ${i+1}`, `-${fmt(parseFloat(c.amount))}`, false, true)
+      lineItem('Comdata / Express Code ' + (i+1), '-' + fmt(parseFloat(c.amount)), false, true)
     })
 
     y += 8
@@ -424,9 +430,9 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     }
 
     const bolCount     = load.bols.length
-    const lumperScans  = load.lumpers.filter(l => l.base64 && l.w && l.h)
-    const incScans     = load.incidentals.filter(l => l.base64 && l.w && l.h)
-    const comdataScans = load.comdatas.filter(l => l.base64 && l.w && l.h)
+    const lumperScans  = load.lumpers.filter(l => l.dataUrl && l.w && l.h)
+    const incScans     = load.incidentals.filter(l => l.dataUrl && l.w && l.h)
+    const comdataScans = load.comdatas.filter(l => l.dataUrl && l.w && l.h)
     const totalAttach  = bolCount + lumperScans.length + incScans.length + comdataScans.length
 
     if (totalAttach > 0) {
@@ -435,11 +441,11 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(80, 80, 80)
       const parts = []
-      if (bolCount            > 0) parts.push(`${bolCount} BOL(s)`)
-      if (lumperScans.length  > 0) parts.push(`${lumperScans.length} Lumper receipt(s)`)
-      if (incScans.length     > 0) parts.push(`${incScans.length} Incidental receipt(s)`)
-      if (comdataScans.length > 0) parts.push(`${comdataScans.length} Comdata receipt(s)`)
-      doc.text(`Attached: ${parts.join(', ')} — see following pages`, M, y)
+      if (bolCount            > 0) parts.push(bolCount + ' BOL(s)')
+      if (lumperScans.length  > 0) parts.push(lumperScans.length + ' Lumper receipt(s)')
+      if (incScans.length     > 0) parts.push(incScans.length + ' Incidental receipt(s)')
+      if (comdataScans.length > 0) parts.push(comdataScans.length + ' Comdata receipt(s)')
+      doc.text('Attached: ' + parts.join(', ') + ' - see following pages', M, y)
       y += 20
     }
 
@@ -459,21 +465,21 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setTextColor(160, 160, 160)
     doc.text('dbappsystems.com | daddyboyapps.com', W / 2, 760, { align: 'center' })
 
-    // ── ATTACHED SCAN PAGES ──────────────────────────────
+    // ── ATTACHED SCAN PAGES — Page order: BOLs, Lumpers, Incidentals, Comdatas
     load.bols.forEach((bol, i) => {
-      addScanPage(doc, bol, `BOL ${i+1} of ${bolCount} — ${bol.name}`)
+      addScanPage(doc, bol, 'BOL ' + (i+1) + ' of ' + bolCount + ' - ' + bol.name)
     })
     lumperScans.forEach((l, i) => {
-      addScanPage(doc, l, `Lumper Receipt ${i+1} — $${parseFloat(l.amount).toFixed(2)} — ${l.label}`)
+      addScanPage(doc, l, 'Lumper Receipt ' + (i+1) + ' - $' + parseFloat(l.amount).toFixed(2) + ' - ' + l.label)
     })
     incScans.forEach((l, i) => {
-      addScanPage(doc, l, `Incidental ${i+1} — $${parseFloat(l.amount).toFixed(2)} — ${l.label}`)
+      addScanPage(doc, l, 'Incidental ' + (i+1) + ' - $' + parseFloat(l.amount).toFixed(2) + ' - ' + l.label)
     })
     comdataScans.forEach((l, i) => {
-      addScanPage(doc, l, `Comdata / Express Code ${i+1} — $${parseFloat(l.amount).toFixed(2)} — ${l.label}`)
+      addScanPage(doc, l, 'Comdata / Express Code ' + (i+1) + ' - $' + parseFloat(l.amount).toFixed(2) + ' - ' + l.label)
     })
 
-    doc.save(`Edgerton-Invoice-${load.load_number || 'draft'}-${driver}.pdf`)
+    doc.save('Edgerton-Invoice-' + (load.load_number || 'draft') + '-' + driver + '.pdf')
     showToast('✅ Invoice + all receipts downloaded!')
 
     // ── Strip images before saving to localStorage ───────
@@ -502,38 +508,38 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
 
       <div className="card">
         <div className="section-title">Load Summary</div>
-        <div className="amount-row"><span className="label">Broker</span><span className="value">{load.broker_name || '—'}</span></div>
-        <div className="amount-row"><span className="label">Load #</span><span className="value">{load.load_number || '—'}</span></div>
-        <div className="amount-row"><span className="label">Route</span><span className="value" style={{fontSize:13}}>{load.origin || '—'} → {load.destination || '—'}</span></div>
+        <div className="amount-row"><span className="label">Broker</span><span className="value">{load.broker_name || '-'}</span></div>
+        <div className="amount-row"><span className="label">Load #</span><span className="value">{load.load_number || '-'}</span></div>
+        <div className="amount-row"><span className="label">Route</span><span className="value" style={{fontSize:13}}>{load.origin || '-'} to {load.destination || '-'}</span></div>
         <div className="amount-row"><span className="label">Base Pay</span><span className="value">{fmt(base_pay)}</span></div>
       </div>
 
       <div className="card">
         <div className="section-title">
-          📋 BOL Scans
-          <span style={{fontSize:11,fontWeight:400,marginLeft:8,color:'var(--muted)'}}>
+          BOL Scans
+          <span style={{fontSize:11,fontWeight:400,marginLeft:8,color:'var(--grey)'}}>
             {load.bols.length} / {MAX_BOLS}
           </span>
         </div>
         {load.bols.map((bol, i) => (
           <div className="scanned-item" key={i}>
-            <img src={bol.dataUrl} alt={`BOL ${i+1}`}
+            <img src={bol.dataUrl} alt={'BOL ' + (i+1)}
               style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
             <div style={{flex:1,marginLeft:10}}>
               <div className="item-label">BOL {i+1}</div>
-              <div style={{fontSize:10,color:'var(--muted)',marginTop:2}}>{bol.name}</div>
+              <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>{bol.name}</div>
             </div>
-            <button className="remove-btn" onClick={()=>removeBOL(i)}>✕</button>
+            <button className="remove-btn" onClick={()=>removeBOL(i)}>x</button>
           </div>
         ))}
         {load.bols.length < MAX_BOLS && (
           <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
             onClick={()=>bolRef.current.click()} disabled={bolLoading}>
-            {bolLoading ? '⏳ Processing...' : '📷 Add BOL Photos — Camera · Photos · Files'}
+            {bolLoading ? 'Processing...' : 'Add BOL Photos - Camera / Photos / Files'}
           </button>
         )}
         {load.bols.length >= MAX_BOLS && (
-          <div style={{textAlign:'center',color:'var(--muted)',fontSize:12,marginTop:8}}>Max 50 BOLs reached</div>
+          <div style={{textAlign:'center',color:'var(--grey)',fontSize:12,marginTop:8}}>Max 50 BOLs reached</div>
         )}
       </div>
 
@@ -542,21 +548,21 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         {load.lumpers.map((l,i) => (
           <div className="scanned-item" key={i}>
             {l.dataUrl && (
-              <img src={l.dataUrl} alt={`Lumper ${i+1}`}
+              <img src={l.dataUrl} alt={'Lumper ' + (i+1)}
                 style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
             )}
             <div style={{flex:1,marginLeft: l.dataUrl ? 10 : 0}}>
               <div className="item-label">Lumper {i+1}</div>
               <div className="item-amount">{fmt(parseFloat(l.amount))}</div>
             </div>
-            <button className="remove-btn" onClick={()=>removeItem('lumpers',i)}>✕</button>
+            <button className="remove-btn" onClick={()=>removeItem('lumpers',i)}>x</button>
           </div>
         ))}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
           <button className="scan-btn secondary" onClick={()=>openScanner('lumper')} disabled={scanning==='lumper'}>
-            {scanning==='lumper' ? '⏳ Scanning...' : '📷 Scan Lumper'}
+            {scanning==='lumper' ? 'Scanning...' : 'Scan Lumper'}
           </button>
-          <button className="scan-btn secondary" onClick={()=>addManual('lumper')}>✏️ Manual</button>
+          <button className="scan-btn secondary" onClick={()=>addManual('lumper')}>Manual</button>
         </div>
       </div>
 
@@ -565,26 +571,26 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         {load.incidentals.map((l,i) => (
           <div className="scanned-item" key={i}>
             {l.dataUrl && (
-              <img src={l.dataUrl} alt={`Incidental ${i+1}`}
+              <img src={l.dataUrl} alt={'Incidental ' + (i+1)}
                 style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
             )}
             <div style={{flex:1,marginLeft: l.dataUrl ? 10 : 0}}>
               <div className="item-label">Incidental {i+1}</div>
               <div className="item-amount">{fmt(parseFloat(l.amount))}</div>
             </div>
-            <button className="remove-btn" onClick={()=>removeItem('incidentals',i)}>✕</button>
+            <button className="remove-btn" onClick={()=>removeItem('incidentals',i)}>x</button>
           </div>
         ))}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
           <button className="scan-btn secondary" onClick={()=>openScanner('incidental')} disabled={scanning==='incidental'}>
-            {scanning==='incidental' ? '⏳ Scanning...' : '📷 Scan Incidental'}
+            {scanning==='incidental' ? 'Scanning...' : 'Scan Incidental'}
           </button>
-          <button className="scan-btn secondary" onClick={()=>addManual('incidental')}>✏️ Manual</button>
+          <button className="scan-btn secondary" onClick={()=>addManual('incidental')}>Manual</button>
         </div>
       </div>
 
       <div className="card">
-        <div className="section-title">Detention & Pallets</div>
+        <div className="section-title">Detention and Pallets</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
           <div className="field-row">
             <div className="field-label">Detention ($)</div>
@@ -602,21 +608,21 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         {load.comdatas.map((l,i) => (
           <div className="scanned-item" key={i}>
             {l.dataUrl && (
-              <img src={l.dataUrl} alt={`Comdata ${i+1}`}
+              <img src={l.dataUrl} alt={'Comdata ' + (i+1)}
                 style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
             )}
             <div style={{flex:1,marginLeft: l.dataUrl ? 10 : 0}}>
               <div className="item-label">Comdata {i+1}</div>
               <div className="item-amount red">-{fmt(parseFloat(l.amount))}</div>
             </div>
-            <button className="remove-btn" onClick={()=>removeItem('comdatas',i)}>✕</button>
+            <button className="remove-btn" onClick={()=>removeItem('comdatas',i)}>x</button>
           </div>
         ))}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
           <button className="scan-btn danger" onClick={()=>openScanner('express')} disabled={scanning==='express'}>
-            {scanning==='express' ? '⏳ Scanning...' : '📷 Scan Comdata'}
+            {scanning==='express' ? 'Scanning...' : 'Scan Comdata'}
           </button>
-          <button className="scan-btn danger" onClick={()=>addManual('comdata')}>✏️ Manual</button>
+          <button className="scan-btn danger" onClick={()=>addManual('comdata')}>Manual</button>
         </div>
       </div>
 
@@ -631,7 +637,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       </div>
 
       <div className="card">
-        <div className="section-title">💰 Billing Summary</div>
+        <div className="section-title">Billing Summary</div>
         <div className="amount-row"><span className="label">Trucking Rate</span><span className="value">{fmt(base_pay)}</span></div>
         <div className="amount-row"><span className="label">Lumper Fees</span><span className="value">{fmt(lumperTotal)}</span></div>
         <div className="amount-row"><span className="label">Incidentals</span><span className="value">{fmt(incTotal)}</span></div>
@@ -646,7 +652,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
       </div>
 
       <button className="scan-btn success" onClick={generatePDF} style={{marginBottom:8}}>
-        ⬇️ DOWNLOAD INVOICE + ALL RECEIPTS
+        DOWNLOAD INVOICE + ALL RECEIPTS
       </button>
       <button className="scan-btn secondary" onClick={resetLoad}>
         + START NEW LOAD
