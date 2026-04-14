@@ -55,7 +55,7 @@ export default {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            model:      'claude-3-5-sonnet-20241022',
+            model:      'claude-3-haiku-20240307',
             max_tokens: 1024,
             messages: [{
               role:    'user',
@@ -67,9 +67,8 @@ export default {
         const raw = await res.text();
 
         if (!res.ok) {
-          // Return the FULL Claude error to the app so we can see it
           return json({
-            error: 'Claude API error',
+            error:  'Claude API error',
             status: res.status,
             detail: raw,
           }, 502);
@@ -134,7 +133,9 @@ export default {
       try {
         const id = path.split('/')[3];
         const { status } = await request.json();
-        await env.DB.prepare('UPDATE loads SET status=? WHERE id=?').bind(status, id).run();
+        await env.DB.prepare(
+          'UPDATE loads SET status=? WHERE id=?'
+        ).bind(status, id).run();
         return json({ ok: true });
       } catch(e) {
         return json({ error: e.message }, 500);
@@ -151,10 +152,10 @@ function getPrompt(mode) {
 Extract ONLY these fields and return ONLY valid JSON, nothing else:
 {"broker_name":"","broker_load_number":"","pickup_location":"","delivery_location":"","pickup_date":"","delivery_date":"","base_pay":""}
 base_pay must be a number string like "1250.00". Leave unknown fields as empty string.`,
-    lumper: `This is a lumper receipt. Return ONLY valid JSON: {"amount":"0.00"}`,
-    express: `This is a Comdata express code document. Return ONLY valid JSON: {"amount":"0.00"}`,
+    lumper:     `This is a lumper receipt. Return ONLY valid JSON: {"amount":"0.00"}`,
+    express:    `This is a Comdata express code document. Return ONLY valid JSON: {"amount":"0.00"}`,
     incidental: `This is an incidental expense receipt. Return ONLY valid JSON: {"amount":"0.00"}`,
-    text: `Extract all visible text. Return plain text only.`,
+    text:       `Extract all visible text. Return plain text only.`,
   };
   return prompts[mode] || null;
 }
