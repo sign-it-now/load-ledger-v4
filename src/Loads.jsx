@@ -5,8 +5,8 @@ import { useState } from 'react'
 
 export default function Loads({ loads, setLoads, showToast }) {
 
-  const [view,   setView]   = useState('all')    // 'all' | 'BRUCE' | 'TIM' | 'reports'
-  const [period, setPeriod] = useState('monthly') // 'daily' | 'weekly' | 'monthly' | 'yearly'
+  const [view,   setView]   = useState('all')
+  const [period, setPeriod] = useState('monthly')
 
   function markPaid(idx) {
     setLoads(prev => prev.map((l,i) => i === idx ? { ...l, status:'paid' } : l))
@@ -18,9 +18,15 @@ export default function Loads({ loads, setLoads, showToast }) {
     showToast('✅ Marked as billed!')
   }
 
+  function deleteLoad(idx) {
+    const ok = window.confirm('Delete this load? This cannot be undone.')
+    if (!ok) return
+    setLoads(prev => prev.filter((_,i) => i !== idx))
+    showToast('🗑️ Load deleted')
+  }
+
   function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
 
-  // ── DATE HELPERS ────────────────────────────────────────
   function inPeriod(dateStr, period) {
     if (!dateStr) return false
     const d   = new Date(dateStr)
@@ -43,23 +49,21 @@ export default function Loads({ loads, setLoads, showToast }) {
     return false
   }
 
-  // ── CALCULATIONS ─────────────────────────────────────────
   const bruceLoads = loads.filter(l => l.driver === 'BRUCE')
   const timLoads   = loads.filter(l => l.driver === 'TIM')
 
   function driverStats(dLoads, period) {
-    const inRange  = dLoads.filter(l => inPeriod(l.date, period))
-    const billed   = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
-    const paid     = inRange.filter(l => l.status === 'paid')
+    const inRange = dLoads.filter(l => inPeriod(l.date, period))
+    const billed  = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
+    const paid    = inRange.filter(l => l.status === 'paid')
     return {
-      count:     inRange.length,
-      billed:    billed.reduce((s,l) => s + (parseFloat(l.netPay)||0), 0),
-      paid:      paid.reduce((s,l)   => s + (parseFloat(l.netPay)||0), 0),
-      total:     inRange.reduce((s,l) => s + (parseFloat(l.netPay)||0), 0),
+      count:  inRange.length,
+      billed: billed.reduce((s,l) => s + (parseFloat(l.netPay)||0), 0),
+      paid:   paid.reduce((s,l)   => s + (parseFloat(l.netPay)||0), 0),
+      total:  inRange.reduce((s,l) => s + (parseFloat(l.netPay)||0), 0),
     }
   }
 
-  // All-time totals for leaderboard
   const bruceTotalAllTime = bruceLoads.reduce((s,l) => s + (parseFloat(l.netPay)||0), 0)
   const timTotalAllTime   = timLoads.reduce((s,l)   => s + (parseFloat(l.netPay)||0), 0)
   const grandTotal        = bruceTotalAllTime + timTotalAllTime
@@ -68,23 +72,19 @@ export default function Loads({ loads, setLoads, showToast }) {
   const leader            = bruceTotalAllTime > timTotalAllTime ? 'BRUCE' :
                             timTotalAllTime > bruceTotalAllTime ? 'TIM'   : 'TIE'
 
-  // Filtered list for load cards
   const filteredLoads = view === 'all'   ? loads :
                         view === 'BRUCE' ? bruceLoads :
                         view === 'TIM'   ? timLoads   : []
 
-  // Overall totals for summary row
   const totalNet    = filteredLoads.reduce((s,l) => s + (parseFloat(l.netPay)||0), 0)
   const totalPaid   = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s + (parseFloat(l.netPay)||0), 0)
   const totalUnpaid = totalNet - totalPaid
 
-  // ── PERIOD STATS ─────────────────────────────────────────
   const bruceStats = driverStats(bruceLoads, period)
   const timStats   = driverStats(timLoads,   period)
 
   const periodLabel = { daily:'TODAY', weekly:'THIS WEEK', monthly:'THIS MONTH', yearly:'THIS YEAR' }
 
-  // ── EMPTY STATE ──────────────────────────────────────────
   if (loads.length === 0) {
     return (
       <div className="empty-state">
@@ -95,7 +95,6 @@ export default function Loads({ loads, setLoads, showToast }) {
     )
   }
 
-  // ── RENDER ───────────────────────────────────────────────
   return (
     <div>
 
@@ -123,7 +122,7 @@ export default function Loads({ loads, setLoads, showToast }) {
         ))}
       </div>
 
-      {/* ── LEADERBOARD ── */}
+      {/* LEADERBOARD */}
       <div className="card" style={{ marginBottom:14 }}>
         <div className="section-title" style={{ marginBottom:10 }}>
           🏆 LEADERBOARD — ALL TIME
@@ -133,14 +132,10 @@ export default function Loads({ loads, setLoads, showToast }) {
             </span>
           )}
         </div>
-
-        {/* Bar */}
         <div style={{ display:'flex', height:18, borderRadius:9, overflow:'hidden', marginBottom:10 }}>
           <div style={{ width:`${brucePercent}%`, background:'#1e88e5', transition:'width 0.4s' }} />
           <div style={{ width:`${timPercent}%`,   background:'#e53935', transition:'width 0.4s' }} />
         </div>
-
-        {/* Driver totals */}
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
           <div style={{ background:'var(--navy3)', borderRadius:8, padding:'10px 12px', borderLeft:'3px solid #1e88e5' }}>
             <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:4 }}>
@@ -167,10 +162,9 @@ export default function Loads({ loads, setLoads, showToast }) {
         </div>
       </div>
 
-      {/* ── REPORTS VIEW ── */}
+      {/* REPORTS VIEW */}
       {view === 'reports' && (
         <div>
-          {/* Period selector */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
             {['daily','weekly','monthly','yearly'].map(p => (
               <button
@@ -199,86 +193,41 @@ export default function Loads({ loads, setLoads, showToast }) {
             {periodLabel[period]} — PER DRIVER REPORT
           </div>
 
-          {/* Bruce report */}
           <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
-            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15,
-                          color:'#1e88e5', marginBottom:10 }}>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>
               BRUCE {leader === 'BRUCE' ? '👑' : ''}
             </div>
-            <div className="amount-row">
-              <span className="label">Loads</span>
-              <span className="value">{bruceStats.count}</span>
-            </div>
-            <div className="amount-row">
-              <span className="label">Total Billed</span>
-              <span className="value" style={{ color:'var(--amber)' }}>{fmt(bruceStats.billed)}</span>
-            </div>
-            <div className="amount-row">
-              <span className="label">Total Paid</span>
-              <span className="value" style={{ color:'var(--green)' }}>{fmt(bruceStats.paid)}</span>
-            </div>
-            <div className="amount-row">
-              <span className="label">Outstanding</span>
-              <span className="value" style={{ color:'var(--red)' }}>{fmt(bruceStats.billed - bruceStats.paid)}</span>
-            </div>
+            <div className="amount-row"><span className="label">Loads</span><span className="value">{bruceStats.count}</span></div>
+            <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed)}</span></div>
+            <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid)}</span></div>
+            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(bruceStats.billed - bruceStats.paid)}</span></div>
           </div>
 
-          {/* Tim report */}
           <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
-            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15,
-                          color:'#e53935', marginBottom:10 }}>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>
               TIM {leader === 'TIM' ? '👑' : ''}
             </div>
-            <div className="amount-row">
-              <span className="label">Loads</span>
-              <span className="value">{timStats.count}</span>
-            </div>
-            <div className="amount-row">
-              <span className="label">Total Billed</span>
-              <span className="value" style={{ color:'var(--amber)' }}>{fmt(timStats.billed)}</span>
-            </div>
-            <div className="amount-row">
-              <span className="label">Total Paid</span>
-              <span className="value" style={{ color:'var(--green)' }}>{fmt(timStats.paid)}</span>
-            </div>
-            <div className="amount-row">
-              <span className="label">Outstanding</span>
-              <span className="value" style={{ color:'var(--red)' }}>{fmt(timStats.billed - timStats.paid)}</span>
-            </div>
+            <div className="amount-row"><span className="label">Loads</span><span className="value">{timStats.count}</span></div>
+            <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.billed)}</span></div>
+            <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.paid)}</span></div>
+            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.billed - timStats.paid)}</span></div>
           </div>
 
-          {/* Combined total */}
           <div className="card" style={{ borderLeft:'3px solid var(--amber)' }}>
-            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15,
-                          color:'var(--amber)', marginBottom:10 }}>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>
               COMBINED {periodLabel[period]}
             </div>
-            <div className="amount-row">
-              <span className="label">Total Loads</span>
-              <span className="value">{bruceStats.count + timStats.count}</span>
-            </div>
-            <div className="amount-row">
-              <span className="label">Total Billed</span>
-              <span className="value" style={{ color:'var(--amber)' }}>{fmt(bruceStats.billed + timStats.billed)}</span>
-            </div>
-            <div className="amount-row">
-              <span className="label">Total Paid</span>
-              <span className="value" style={{ color:'var(--green)' }}>{fmt(bruceStats.paid + timStats.paid)}</span>
-            </div>
-            <div className="amount-row">
-              <span className="label">Outstanding</span>
-              <span className="value" style={{ color:'var(--red)' }}>
-                {fmt((bruceStats.billed + timStats.billed) - (bruceStats.paid + timStats.paid))}
-              </span>
-            </div>
+            <div className="amount-row"><span className="label">Total Loads</span><span className="value">{bruceStats.count + timStats.count}</span></div>
+            <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed + timStats.billed)}</span></div>
+            <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid + timStats.paid)}</span></div>
+            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt((bruceStats.billed + timStats.billed) - (bruceStats.paid + timStats.paid))}</span></div>
           </div>
         </div>
       )}
 
-      {/* ── LOADS LIST VIEW ── */}
+      {/* LOADS LIST VIEW */}
       {view !== 'reports' && (
         <div>
-          {/* Summary row */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
             <div className="card" style={{ padding:12, textAlign:'center', marginBottom:0 }}>
               <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:4 }}>TOTAL</div>
@@ -302,7 +251,6 @@ export default function Loads({ loads, setLoads, showToast }) {
             </div>
           )}
 
-          {/* Load cards */}
           {filteredLoads.map((load, idx) => {
             const realIdx = loads.indexOf(load)
             return (
@@ -331,7 +279,6 @@ export default function Loads({ loads, setLoads, showToast }) {
                     {load.date ? new Date(load.date).toLocaleDateString() : '—'}
                   </p>
 
-                  {/* Net pay */}
                   <div style={{
                     marginTop:8,
                     fontFamily:'var(--font-head)',
@@ -343,7 +290,7 @@ export default function Loads({ loads, setLoads, showToast }) {
                   </div>
 
                   {/* Action buttons */}
-                  <div style={{ display:'flex', gap:8, marginTop:10 }}>
+                  <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
                     {load.status !== 'billed' && load.status !== 'paid' && (
                       <button
                         className="scan-btn secondary"
@@ -368,10 +315,27 @@ export default function Loads({ loads, setLoads, showToast }) {
                         ✅ PAYMENT RECEIVED
                       </div>
                     )}
+                    {/* DELETE BUTTON */}
+                    <button
+                      style={{
+                        padding:'8px 12px',
+                        borderRadius:8,
+                        border:'1px solid #555',
+                        background:'transparent',
+                        color:'#888',
+                        fontSize:13,
+                        fontFamily:'var(--font-head)',
+                        fontWeight:700,
+                        cursor:'pointer',
+                      }}
+                      onClick={() => deleteLoad(realIdx)}
+                    >
+                      🗑️ DELETE
+                    </button>
                   </div>
                 </div>
 
-                {/* Status chip */}
+                {/* Status chip + BOL count */}
                 <div style={{ marginLeft:12, display:'flex', flexDirection:'column', alignItems:'flex-end' }}>
                   <span className={`status-chip ${load.status}`}>
                     {load.status}
