@@ -5,16 +5,16 @@ import { useState, useRef } from 'react'
 import { jsPDF } from 'jspdf'
 
 export default function Invoice({ load, setLoad, driver, api, showToast, loads, setLoads, resetLoad }) {
-  const [scanning, setScanning] = useState(null) // 'lumper'|'incidental'|'comdata'
+  const [scanning, setScanning] = useState(null)
   const fileRef = useRef()
   const scanMode = useRef(null)
 
   const base_pay     = parseFloat(load.base_pay)     || 0
   const detention    = parseFloat(load.detention)    || 0
   const pallets      = parseFloat(load.pallets)      || 0
-  const lumperTotal  = load.lumpers.reduce((s,i)    => s + parseFloat(i.amount||0), 0)
-  const incTotal     = load.incidentals.reduce((s,i)=> s + parseFloat(i.amount||0), 0)
-  const comdataTotal = load.comdatas.reduce((s,i)   => s + parseFloat(i.amount||0), 0)
+  const lumperTotal  = load.lumpers.reduce((s,i)     => s + parseFloat(i.amount||0), 0)
+  const incTotal     = load.incidentals.reduce((s,i) => s + parseFloat(i.amount||0), 0)
+  const comdataTotal = load.comdatas.reduce((s,i)    => s + parseFloat(i.amount||0), 0)
   const subtotal     = base_pay + lumperTotal + incTotal + detention + pallets
   const netPay       = subtotal - comdataTotal
 
@@ -32,22 +32,32 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     setScanning(mode)
     showToast('📡 Scanning receipt...')
     try {
-      const base64    = await toBase64(file)
-      const mediaType = file.type
-      const res       = await fetch(`${api}/api/ocr`, {
+      const base64 = await toBase64(file)
+      // Always default to image/jpeg if mediaType is missing
+      const mediaType = file.type || 'image/jpeg'
+      const res = await fetch(`${api}/api/ocr`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ base64, mediaType, mode }),
       })
       const json = await res.json()
-      if (json.error) throw new Error(json.error)
-      const data   = JSON.parse(json.result)
+      if (json.error) throw new Error(json.detail || json.error)
+
+      // Clean result — strip markdown fences
+      let raw = json.result || ''
+      raw = raw.replace(/```json/gi,'').replace(/```/gi,'').trim()
+      const start = raw.indexOf('{')
+      const end   = raw.lastIndexOf('}')
+      if (start === -1 || end === -1) throw new Error('No data found in document')
+
+      const data   = JSON.parse(raw.substring(start, end + 1))
       const amount = data.amount || '0.00'
       const item   = { amount, label: file.name }
+
       if (mode === 'lumper')     setLoad(p => ({ ...p, lumpers:     [...p.lumpers,     item] }))
       if (mode === 'incidental') setLoad(p => ({ ...p, incidentals: [...p.incidentals, item] }))
       if (mode === 'express')    setLoad(p => ({ ...p, comdatas:    [...p.comdatas,    item] }))
-      showToast('✅ Receipt scanned!')
+      showToast('✅ Receipt scanned! $' + amount)
     } catch (err) {
       showToast('❌ Scan failed — add amount manually')
       console.error(err)
@@ -87,29 +97,23 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     const grey = [139, 160, 184]
     let   y    = 0
 
-    // Header background
     doc.setFillColor(...navy)
     doc.rect(0, 0, W, 90, 'F')
-
-    // Logo
     doc.setFont('helvetica','bold')
     doc.setFontSize(28)
     doc.setTextColor(255,255,255)
-    doc.text('LOAD LEDGER', 40, 40)
+    doc.text('EDGERTON TRUCK & TRAILER REPAIR', 40, 40)
     doc.setFontSize(11)
     doc.setTextColor(...amber)
-    doc.text('EDGERTON TRANSPORTATION — INVOICE', 40, 58)
+    doc.text('INVOICE', 40, 58)
     doc.setTextColor(...grey)
     doc.text(`Driver: ${driver}   |   Date: ${new Date().toLocaleDateString()}`, 40, 74)
-
-    // Invoice number top right
     doc.setFontSize(11)
     doc.setTextColor(255,255,255)
     doc.text(`Load #: ${load.load_number || '—'}`, W - 40, 50, { align:'right' })
     doc.text(`Broker: ${load.broker_name || '—'}`, W - 40, 66, { align:'right' })
 
     y = 110
-    // Load details box
     doc.setFillColor(15,31,61)
     doc.roundedRect(30, y, W-60, 80, 6, 6, 'F')
     doc.setFontSize(10)
@@ -121,13 +125,12 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setFontSize(12)
     doc.setTextColor(255,255,255)
     doc.setFont('helvetica','bold')
-    doc.text(load.origin      || '—', 50,  y+40)
-    doc.text(load.destination || '—', 220, y+40)
+    doc.text(load.origin        || '—', 50,  y+40)
+    doc.text(load.destination   || '—', 220, y+40)
     doc.text(load.pickup_date   || '—', 390, y+40)
     doc.text(load.delivery_date || '—', 500, y+40)
 
     y = 210
-    // Billing rows
     function row(label, amount, color) {
       doc.setFont('helvetica','normal')
       doc.setFontSize(12)
@@ -151,7 +154,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     if (detention > 0) row('Detention', fmt(detention))
     if (pallets   > 0) row('Pallets',   fmt(pallets))
 
-    // Subtotal
     doc.setFillColor(15,31,61)
     doc.rect(30, y-6, W-60, 28, 'F')
     doc.setFont('helvetica','bold')
@@ -161,9 +163,8 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.text(fmt(subtotal), W-40, y+12, { align:'right' })
     y += 40
 
-    load.comdatas.forEach((c,i)    => row(`  Comdata / Express Code ${i+1}`, `−${fmt(parseFloat(c.amount))}`, [239,68,68]))
+    load.comdatas.forEach((c,i) => row(`  Comdata / Express Code ${i+1}`, `−${fmt(parseFloat(c.amount))}`, [239,68,68]))
 
-    // Net total
     y += 8
     doc.setFillColor(...amber)
     doc.roundedRect(30, y, W-60, 50, 6, 6, 'F')
@@ -174,7 +175,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.text(fmt(netPay), W-40, y+32, { align:'right' })
 
     y += 80
-    // Formula box
     doc.setFillColor(15,31,61)
     doc.roundedRect(30, y, W-60, 90, 6, 6, 'F')
     doc.setFont('helvetica','normal')
@@ -182,7 +182,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.setTextColor(...grey)
     doc.text('FORMULA: Trucking Rate + Lumpers + Incidentals + Detention + Pallets − Comdata/Express Codes = NET BILLABLE', 50, y+20, { maxWidth: W-100 })
 
-    // Footer
     doc.setFontSize(9)
     doc.setTextColor(...grey)
     doc.text('© dbappsystems.com | daddyboyapps.com', W/2, 760, { align:'center' })
@@ -190,7 +189,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     doc.save(`ETTR-Invoice-${load.load_number || 'draft'}-${driver}.pdf`)
     showToast('✅ Invoice downloaded!')
 
-    // Save load to history
     const saved = { ...load, status:'invoiced', driver, netPay, date: new Date().toISOString() }
     setLoads(prev => [saved, ...prev])
   }
@@ -199,28 +197,14 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
     <div>
       <input ref={fileRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleFile} />
 
-      {/* LOAD SUMMARY */}
       <div className="card">
         <div className="section-title">Load Summary</div>
-        <div className="amount-row">
-          <span className="label">Broker</span>
-          <span className="value">{load.broker_name || '—'}</span>
-        </div>
-        <div className="amount-row">
-          <span className="label">Load #</span>
-          <span className="value">{load.load_number || '—'}</span>
-        </div>
-        <div className="amount-row">
-          <span className="label">Route</span>
-          <span className="value" style={{fontSize:13}}>{load.origin || '—'} → {load.destination || '—'}</span>
-        </div>
-        <div className="amount-row">
-          <span className="label">Base Pay</span>
-          <span className="value">{fmt(base_pay)}</span>
-        </div>
+        <div className="amount-row"><span className="label">Broker</span><span className="value">{load.broker_name || '—'}</span></div>
+        <div className="amount-row"><span className="label">Load #</span><span className="value">{load.load_number || '—'}</span></div>
+        <div className="amount-row"><span className="label">Route</span><span className="value" style={{fontSize:13}}>{load.origin || '—'} → {load.destination || '—'}</span></div>
+        <div className="amount-row"><span className="label">Base Pay</span><span className="value">{fmt(base_pay)}</span></div>
       </div>
 
-      {/* LUMPERS */}
       <div className="card">
         <div className="section-title">Lumper Receipts</div>
         {load.lumpers.map((l,i) => (
@@ -236,13 +220,10 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
           <button className="scan-btn secondary" onClick={()=>openScanner('lumper')} disabled={scanning==='lumper'}>
             {scanning==='lumper' ? '⏳ Scanning...' : '📷 Scan Lumper'}
           </button>
-          <button className="scan-btn secondary" onClick={()=>addManual('lumper')}>
-            ✏️ Manual
-          </button>
+          <button className="scan-btn secondary" onClick={()=>addManual('lumper')}>✏️ Manual</button>
         </div>
       </div>
 
-      {/* INCIDENTALS */}
       <div className="card">
         <div className="section-title">Incidentals</div>
         {load.incidentals.map((l,i) => (
@@ -258,13 +239,10 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
           <button className="scan-btn secondary" onClick={()=>openScanner('incidental')} disabled={scanning==='incidental'}>
             {scanning==='incidental' ? '⏳ Scanning...' : '📷 Scan Incidental'}
           </button>
-          <button className="scan-btn secondary" onClick={()=>addManual('incidental')}>
-            ✏️ Manual
-          </button>
+          <button className="scan-btn secondary" onClick={()=>addManual('incidental')}>✏️ Manual</button>
         </div>
       </div>
 
-      {/* DETENTION & PALLETS */}
       <div className="card">
         <div className="section-title">Detention & Pallets</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
@@ -279,7 +257,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         </div>
       </div>
 
-      {/* COMDATA */}
       <div className="card">
         <div className="section-title">Comdata / Express Codes</div>
         {load.comdatas.map((l,i) => (
@@ -295,13 +272,10 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
           <button className="scan-btn danger" onClick={()=>openScanner('express')} disabled={scanning==='express'}>
             {scanning==='express' ? '⏳ Scanning...' : '📷 Scan Comdata'}
           </button>
-          <button className="scan-btn danger" onClick={()=>addManual('comdata')}>
-            ✏️ Manual
-          </button>
+          <button className="scan-btn danger" onClick={()=>addManual('comdata')}>✏️ Manual</button>
         </div>
       </div>
 
-      {/* BILLING SUMMARY */}
       <div className="card">
         <div className="section-title">💰 Billing Summary</div>
         <div className="amount-row"><span className="label">Trucking Rate</span><span className="value">{fmt(base_pay)}</span></div>
@@ -317,7 +291,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         </div>
       </div>
 
-      {/* GENERATE INVOICE */}
       <button className="scan-btn success" onClick={generatePDF} style={{marginBottom:8}}>
         ⬇️ DOWNLOAD INVOICE PDF
       </button>
