@@ -12,7 +12,7 @@ export default function RateCon({ load, setLoad, driver, api, showToast, onNext 
     const file = e.target.files[0]
     if (!file) return
     setScanning(true)
-    showToast('📡 Scanning rate confirmation...')
+    showToast('📡 Scanning...')
     try {
       const base64    = await toBase64(file)
       const mediaType = file.type
@@ -22,23 +22,35 @@ export default function RateCon({ load, setLoad, driver, api, showToast, onNext 
         body:    JSON.stringify({ base64, mediaType, mode: 'rateconf' }),
       })
       const json = await res.json()
-      if (json.error) throw new Error(json.error)
-      const data = JSON.parse(json.result)
+
+      // Show exact error in toast for debugging
+      if (json.error) {
+        showToast('ERR: ' + (json.detail || json.error).toString().slice(0, 80))
+        return
+      }
+
+      let data
+      try {
+        data = JSON.parse(json.result)
+      } catch(e) {
+        showToast('Parse ERR: ' + json.result.toString().slice(0, 80))
+        return
+      }
+
       setLoad(prev => ({
         ...prev,
-        broker_name:   data.broker_name   || '',
+        broker_name:   data.broker_name        || '',
         load_number:   data.broker_load_number || '',
-        origin:        data.pickup_location   || data.origin || '',
-        destination:   data.delivery_location || data.destination || '',
-        pickup_date:   data.pickup_date   || '',
-        delivery_date: data.delivery_date || '',
-        base_pay:      data.base_pay      || '',
+        origin:        data.pickup_location    || data.origin       || '',
+        destination:   data.delivery_location  || data.destination  || '',
+        pickup_date:   data.pickup_date        || '',
+        delivery_date: data.delivery_date      || '',
+        base_pay:      data.base_pay           || '',
       }))
       setScanned(true)
       showToast('✅ Rate con scanned!')
     } catch (err) {
-      showToast('❌ Scan failed — fill in manually')
-      console.error(err)
+      showToast('FETCH ERR: ' + err.message.slice(0, 80))
     } finally {
       setScanning(false)
     }
@@ -61,14 +73,11 @@ export default function RateCon({ load, setLoad, driver, api, showToast, onNext 
 
   return (
     <div>
-
-      {/* DRIVER BADGE */}
       <div style={{ marginBottom: 16, display:'flex', alignItems:'center', gap: 8 }}>
         <span style={{ fontFamily:'var(--font-head)', fontSize:13, color:'var(--grey)', letterSpacing:'0.1em', textTransform:'uppercase' }}>Driver</span>
         <span className="badge">{driver}</span>
       </div>
 
-      {/* SCAN BUTTON */}
       <div className="card">
         <div className="section-title">① Rate Confirmation</div>
         <input
@@ -91,7 +100,7 @@ export default function RateCon({ load, setLoad, driver, api, showToast, onNext 
               SCANNING...
             </>
           ) : scanned ? (
-            <>✓ RATE CON SCANNED — TAP TO RESCAN</>
+            <>✓ SCANNED — TAP TO RESCAN</>
           ) : (
             <>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{width:22,height:22}}>
@@ -104,10 +113,8 @@ export default function RateCon({ load, setLoad, driver, api, showToast, onNext 
         </button>
       </div>
 
-      {/* LOAD DETAILS FORM */}
       <div className="card">
         <div className="section-title">② Load Details — Edit if Needed</div>
-
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
           <div className="field-row" style={{ gridColumn:'1 / -1' }}>
             <div className="field-label">Broker Name</div>
@@ -144,7 +151,6 @@ export default function RateCon({ load, setLoad, driver, api, showToast, onNext 
         </div>
       </div>
 
-      {/* NEXT BUTTON */}
       <button
         className="scan-btn"
         onClick={onNext}
@@ -153,7 +159,6 @@ export default function RateCon({ load, setLoad, driver, api, showToast, onNext 
       >
         NEXT — ADD RECEIPTS & GENERATE INVOICE →
       </button>
-
     </div>
   )
 }
