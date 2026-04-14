@@ -42,7 +42,7 @@ export default {
         const isPdf = mediaType === 'application/pdf';
         const contentBlock = isPdf
           ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
-          : { type: 'image',    source: { type: 'base64', media_type: mediaType, data: base64 } };
+          : { type: 'image',    source: { type: 'base64', media_type: mediaType || 'image/jpeg', data: base64 } };
 
         const headers = {
           'Content-Type':      'application/json',
@@ -152,10 +152,24 @@ function getPrompt(mode) {
 Extract ONLY these fields and return ONLY valid JSON, nothing else:
 {"broker_name":"","broker_load_number":"","pickup_location":"","delivery_location":"","pickup_date":"","delivery_date":"","base_pay":""}
 base_pay must be a number string like "1250.00". Leave unknown fields as empty string.`,
-    lumper:     `This is a lumper receipt. Return ONLY valid JSON: {"amount":"0.00"}`,
-    express:    `This is a Comdata express code document. Return ONLY valid JSON: {"amount":"0.00"}`,
-    incidental: `This is an incidental expense receipt. Return ONLY valid JSON: {"amount":"0.00"}`,
-    text:       `Extract all visible text. Return plain text only.`,
+
+    lumper: `This is a lumper receipt for a trucking company.
+Look for any dollar amount on this document — it may say Total, Amount, Fee, or just show a number with a dollar sign.
+Return ONLY valid JSON, nothing else: {"amount":"0.00"}
+amount must be digits only like "125.00" with no dollar sign. If no amount found return {"amount":"0.00"}`,
+
+    express: `This is a Comdata express code or cash advance document used in the trucking industry.
+Look for any dollar amount, advance amount, transaction amount, or value on this document.
+It may show as: Amount, Total, Advance, Value, Net, or just a number near a dollar sign.
+Return ONLY valid JSON, nothing else: {"amount":"0.00"}
+amount must be digits only like "250.00" with no dollar sign. If no clear amount found, look for any number that could represent dollars and return it. If truly nothing found return {"amount":"0.00"}`,
+
+    incidental: `This is an expense receipt for a truck driver — could be fuel, repair, tolls, or any other expense.
+Look for the total amount charged on this receipt.
+Return ONLY valid JSON, nothing else: {"amount":"0.00"}
+amount must be digits only like "45.00" with no dollar sign. If no amount found return {"amount":"0.00"}`,
+
+    text: `Extract all visible text from this document. Return plain text only.`,
   };
   return prompts[mode] || null;
 }
