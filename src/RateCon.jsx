@@ -23,34 +23,37 @@ export default function RateCon({ load, setLoad, driver, api, showToast, onNext 
       })
       const json = await res.json()
 
-      // Show exact error in toast for debugging
       if (json.error) {
-        showToast('ERR: ' + (json.detail || json.error).toString().slice(0, 80))
+        showToast('❌ ' + (json.detail || json.error).toString().slice(0, 80))
         return
       }
 
-      let data
-      try {
-        data = JSON.parse(json.result)
-      } catch(e) {
-        showToast('Parse ERR: ' + json.result.toString().slice(0, 80))
+      // Clean the result — strip markdown fences if any
+      let raw = json.result || ''
+      raw = raw.replace(/```json/gi,'').replace(/```/gi,'').trim()
+      const start = raw.indexOf('{')
+      const end   = raw.lastIndexOf('}')
+      if (start === -1 || end === -1) {
+        showToast('❌ No data found in document')
         return
       }
+
+      const data = JSON.parse(raw.substring(start, end + 1))
 
       setLoad(prev => ({
         ...prev,
-        broker_name:   data.broker_name        || '',
-        load_number:   data.broker_load_number || '',
-        origin:        data.pickup_location    || data.origin       || '',
-        destination:   data.delivery_location  || data.destination  || '',
+        broker_name:   data.broker_name        || data.broker   || '',
+        load_number:   data.broker_load_number || data.loadnum  || '',
+        origin:        data.pickup_location    || data.pickup   || '',
+        destination:   data.delivery_location  || data.delivery || '',
         pickup_date:   data.pickup_date        || '',
-        delivery_date: data.delivery_date      || '',
-        base_pay:      data.base_pay           || '',
+        delivery_date: data.delivery_date      || data.deldate  || '',
+        base_pay:      data.base_pay           || data.rate     || '',
       }))
       setScanned(true)
       showToast('✅ Rate con scanned!')
     } catch (err) {
-      showToast('FETCH ERR: ' + err.message.slice(0, 80))
+      showToast('❌ ' + err.message.slice(0, 80))
     } finally {
       setScanning(false)
     }
