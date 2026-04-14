@@ -540,7 +540,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
   // ── RENDER ────────────────────────────────────────────────
   return (
     <div>
-      {/* Single receipt input — opens iOS picker with camera/photos/files options */}
       <input
         ref={fileRef}
         type="file"
@@ -548,7 +547,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         style={{display:'none'}}
         onChange={handleFile}
       />
-      {/* BOL input — multiple files, camera/photos/files */}
       <input
         ref={bolRef}
         type="file"
@@ -557,15 +555,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         style={{display:'none'}}
         onChange={handleBOL}
       />
-
-      {/* LOAD SUMMARY */}
-      <div className="card">
-        <div className="section-title">Load Summary</div>
-        <div className="amount-row"><span className="label">Broker</span><span className="value">{load.broker_name || '-'}</span></div>
-        <div className="amount-row"><span className="label">Load #</span><span className="value">{load.load_number || '-'}</span></div>
-        <div className="amount-row"><span className="label">Route</span><span className="value" style={{fontSize:13}}>{load.origin || '-'} to {load.destination || '-'}</span></div>
-        <div className="amount-row"><span className="label">Base Pay</span><span className="value">{fmt(base_pay)}</span></div>
-      </div>
 
       {/* BOL SCANS */}
       <div className="card">
@@ -589,7 +578,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, loads, 
         {load.bols.length < MAX_BOLS && (
           <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
             onClick={()=>bolRef.current.click()} disabled={bolLoading}>
-            {bolLoading ? 'Processing...' : 'Add BOL Photos - Camera / Photos / Files'}
+            {bolLoading ? 'Processing...' : 'Add BOL'}
           </button>
         )}
         {load.bols.length >= MAX_BOLS && (
