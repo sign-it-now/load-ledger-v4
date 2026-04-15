@@ -11,27 +11,70 @@ const API = 'https://load-ledger-v4.d49rwgmpj9.workers.dev'
 
 export default function App() {
   const [tab,    setTab]    = useState('ratecon')
-  const [driver, setDriver] = useState(null)
   const [load,   setLoad]   = useState(newLoad())
   const [toast,  setToast]  = useState(null)
+  const [loads,  setLoads]  = useState([])
 
-  // ── LOADS — persist to localStorage ─────────────────────
-  const [loads, setLoads] = useState(() => {
-    try {
-      const saved = localStorage.getItem('ll_v4_loads')
-      return saved ? JSON.parse(saved) : []
-    } catch {
-      return []
-    }
-  })
+  // Auth state — check localStorage on startup for auto-login
+  const [driver,     setDriver]     = useState(() => localStorage.getItem('ll_v4_driver') || null)
+  const [pinDriver,  setPinDriver]  = useState(null)
+  const [pinValue,   setPinValue]   = useState('')
+  const [pinError,   setPinError]   = useState('')
+  const [pinLoading, setPinLoading] = useState(false)
 
+  // Fetch loads from D1 any time driver is set
   useEffect(() => {
+    if (driver) fetchLoads()
+  }, [driver])
+
+  async function fetchLoads() {
     try {
-      localStorage.setItem('ll_v4_loads', JSON.stringify(loads))
+      const res  = await fetch(API + '/api/loads')
+      const data = await res.json()
+      if (Array.isArray(data)) setLoads(data)
     } catch {
-      // storage full — safe fallback
+      showToast('Could not load data — check connection')
     }
-  }, [loads])
+  }
+
+  async function submitPin() {
+    if (!pinValue) return
+    setPinLoading(true)
+    setPinError('')
+    try {
+      const res  = await fetch(API + '/api/auth', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ driver: pinDriver, pin: pinValue }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) {
+        setPinError(data.error || 'Wrong PIN — try again')
+        setPinValue('')
+      } else {
+        localStorage.setItem('ll_v4_driver', pinDriver)
+        setDriver(pinDriver)
+        setPinDriver(null)
+        setPinValue('')
+      }
+    } catch {
+      setPinError('Connection error — try again')
+      setPinValue('')
+    } finally {
+      setPinLoading(false)
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem('ll_v4_driver')
+    setDriver(null)
+    setLoad(newLoad())
+    setLoads([])
+    setTab('ratecon')
+    setPinDriver(null)
+    setPinValue('')
+    setPinError('')
+  }
 
   function newLoad() {
     return {
@@ -65,79 +108,178 @@ export default function App() {
     setTab('ratecon')
   }
 
+  // ── PIN SCREEN ────────────────────────────────────────
+  if (!driver) {
+    return (
+      <div style={{ display:'flex', flexDirection:'column', height:'100dvh', background:'var(--navy)' }}>
+
+        <div className="app-header">
+          <div className="app-logo">LOAD<span>LEDGER</span></div>
+          <div className="badge">V4</div>
+        </div>
+
+        <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:32 }}>
+
+          {!pinDriver ? (
+            <>
+              <div style={{ fontFamily:'var(--font-head)', fontSize:13, letterSpacing:'0.15em', color:'var(--grey)', marginBottom:28 }}>
+                WHO ARE YOU?
+              </div>
+              <div style={{ display:'flex', gap:16 }}>
+                <button
+                  className="driver-btn active"
+                  style={{ fontSize:18, padding:'18px 36px' }}
+                  onClick={() => { setPinDriver('BRUCE'); setPinError('') }}
+                >
+                  BRUCE
+                </button>
+                <button
+                  className="driver-btn active"
+                  style={{ fontSize:18, padding:'18px 36px' }}
+                  onClick={() => { setPinDriver('TIM'); setPinError('') }}
+                >
+                  TIM
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, letterSpacing:'0.1em', color:'var(--amber)', marginBottom:6 }}>
+                {pinDriver}
+              </div>
+              <div style={{ fontFamily:'var(--font-head)', fontSize:12, letterSpacing:'0.15em', color:'var(--grey)', marginBottom:24 }}>
+                ENTER YOUR PIN
+              </div>
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={8}
+                value={pinValue}
+                autoFocus
+                onChange={e => { setPinValue(e.target.value); setPinError('') }}
+                onKeyDown={e => e.key === 'Enter' && submitPin()}
+                placeholder="••••"
+                style={{
+                  fontSize:       28,
+                  letterSpacing:  '0.3em',
+                  textAlign:      'center',
+                  padding:        '14px 20px',
+                  borderRadius:   12,
+                  border:         pinError ? '2px solid var(--red)' : '2px solid var(--border)',
+                  background:     'var(--navy3)',
+                  color:          'var(--white)',
+                  width:          180,
+                  marginBottom:   12,
+                  fontFamily:     'var(--font-head)',
+                  outline:        'none',
+                }}
+              />
+              {pinError && (
+                <div style={{ color:'var(--red)', fontSize:13, marginBottom:12, fontFamily:'var(--font-head)', fontWeight:700 }}>
+                  {pinError}
+                </div>
+              )}
+              <button
+                className="scan-btn success"
+                style={{ width:180, marginBottom:12 }}
+                onClick={submitPin}
+                disabled={pinLoading || !pinValue}
+              >
+                {pinLoading ? 'CHECKING...' : 'ENTER'}
+              </button>
+              <button
+                className="scan-btn secondary"
+                style={{ width:180 }}
+                onClick={() => { setPinDriver(null); setPinValue(''); setPinError('') }}
+              >
+                BACK
+              </button>
+            </>
+          )}
+        </div>
+
+        {toast && <div className="toast">{toast}</div>}
+      </div>
+    )
+  }
+
+  // ── MAIN APP ──────────────────────────────────────────
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100dvh' }}>
 
       {/* HEADER */}
       <div className="app-header">
         <div className="app-logo">LOAD<span>LEDGER</span></div>
-        <div className="badge">V4</div>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <div style={{ fontSize:12, color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700 }}>
+            {driver}
+          </div>
+          <div className="badge">V4</div>
+          <button
+            onClick={logout}
+            style={{
+              background:  'transparent',
+              border:      '1px solid var(--border)',
+              color:       'var(--grey)',
+              borderRadius: 6,
+              padding:     '4px 10px',
+              fontSize:    11,
+              fontFamily:  'var(--font-head)',
+              fontWeight:  700,
+              cursor:      'pointer',
+              letterSpacing: '0.05em',
+            }}
+          >
+            LOGOUT
+          </button>
+        </div>
       </div>
 
-      {/* DRIVER SELECT */}
-      <div className="driver-bar">
-        {['BRUCE','TIM'].map(d => (
-          <button
-            key={d}
-            className={`driver-btn ${driver === d ? 'active' : ''}`}
-            onClick={() => setDriver(d)}
-          >
-            {driver === d ? '✓ ' : ''}{d}
-          </button>
-        ))}
-        {driver && (
-          <button
-            className="driver-btn"
-            style={{ flex:'0 0 auto', padding:'10px 14px' }}
-            onClick={resetLoad}
-            title="New Load"
-          >
-            + NEW
-          </button>
-        )}
+      {/* NEW LOAD BAR */}
+      <div className="driver-bar" style={{ justifyContent:'space-between' }}>
+        <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>
+          LOGGED IN AS {driver}
+        </div>
+        <button
+          className="driver-btn"
+          style={{ flex:'0 0 auto', padding:'10px 14px' }}
+          onClick={resetLoad}
+        >
+          + NEW
+        </button>
       </div>
 
       {/* MAIN CONTENT */}
       <div className="tab-content">
-        {!driver ? (
-          <div className="empty-state" style={{ paddingTop:80 }}>
-            <div className="icon">🚛</div>
-            <h3>SELECT YOUR NAME</h3>
-            <p>Tap BRUCE or TIM above to start</p>
-          </div>
-        ) : (
-          <>
-            {tab === 'ratecon' && (
-              <RateCon
-                load={load}
-                setLoad={setLoad}
-                driver={driver}
-                api={API}
-                showToast={showToast}
-                onNext={() => setTab('invoice')}
-              />
-            )}
-            {tab === 'invoice' && (
-              <Invoice
-                load={load}
-                setLoad={setLoad}
-                driver={driver}
-                api={API}
-                showToast={showToast}
-                loads={loads}
-                setLoads={setLoads}
-                resetLoad={resetLoad}
-              />
-            )}
-            {tab === 'loads' && (
-              <Loads
-                loads={loads}
-                setLoads={setLoads}
-                api={API}
-                showToast={showToast}
-              />
-            )}
-          </>
+        {tab === 'ratecon' && (
+          <RateCon
+            load={load}
+            setLoad={setLoad}
+            driver={driver}
+            api={API}
+            showToast={showToast}
+            onNext={() => setTab('invoice')}
+          />
+        )}
+        {tab === 'invoice' && (
+          <Invoice
+            load={load}
+            setLoad={setLoad}
+            driver={driver}
+            api={API}
+            showToast={showToast}
+            fetchLoads={fetchLoads}
+            resetLoad={resetLoad}
+          />
+        )}
+        {tab === 'loads' && (
+          <Loads
+            loads={loads}
+            fetchLoads={fetchLoads}
+            driver={driver}
+            api={API}
+            showToast={showToast}
+          />
         )}
       </div>
 
