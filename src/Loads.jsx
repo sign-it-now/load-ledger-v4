@@ -3,8 +3,8 @@
 
 import { useState } from 'react'
 
-const BRUCE_CUT = 0.20  // Bruce receives 20% of every base rate
-const TIM_CUT   = 0.80  // Tim receives 80% of every base rate
+const BRUCE_CUT = 0.20
+const TIM_CUT   = 0.80
 
 export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
@@ -95,10 +95,9 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     return false
   }
 
-  // ── PAY CALCULATIONS ─────────────────────────────────────
-  // Tim Gross = base_pay x 80% — that's it, nothing added
-  // Advance kept is a SEPARATE report — does not affect pay
-  // Fuel is tracked separately for Tim's own awareness
+  // ── PAY CALCULATIONS PER LOAD ────────────────────────────
+  // Bruce gets 20% of EVERY rate con — his own AND Tim's
+  // Tim gets 80% of his own base rates
   function calcPay(load) {
     const basePay    = parseFloat(load.base_pay || 0)
     const bruceGross = basePay * BRUCE_CUT
@@ -117,18 +116,29 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const bruceLoads = loads.filter(l => l.driver === 'BRUCE')
   const timLoads   = loads.filter(l => l.driver === 'TIM')
 
+  // ── BRUCE'S 20% CUT — from ALL loads in period ──────────
+  // Bruce is the owner. His 20% comes off every rate con regardless of driver.
+  function bruceCutForPeriod(period) {
+    const inRange = loads.filter(l => inPeriod(l.date || l.created_at, period))
+    const totalBase = inRange.reduce((s,l) => s + parseFloat(l.base_pay || 0), 0)
+    return {
+      totalBase,
+      bruceGross: totalBase * BRUCE_CUT,
+      loadCount:  inRange.length,
+    }
+  }
+
   function driverStats(dLoads, period) {
     const inRange = dLoads.filter(l => inPeriod(l.date || l.created_at, period))
     const billed  = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
     const paid    = inRange.filter(l => l.status === 'paid')
     return {
-      count:       inRange.length,
-      billed:      billed.reduce((s,l)  => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
-      paid:        paid.reduce((s,l)    => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
-      advanceKept: inRange.reduce((s,l) => s + advanceKept(l), 0),
-      bruceGross:  inRange.reduce((s,l) => s + parseFloat(l.base_pay||0) * BRUCE_CUT, 0),
-      timGross:    inRange.reduce((s,l) => s + parseFloat(l.base_pay||0) * TIM_CUT, 0),
-      totalFuel:   inRange.reduce((s,l) => s + parseFloat(l.fuel||0), 0),
+      count:           inRange.length,
+      billed:          billed.reduce((s,l)  => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
+      paid:            paid.reduce((s,l)    => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
+      advanceKept:     inRange.reduce((s,l) => s + advanceKept(l), 0),
+      timGross:        inRange.reduce((s,l) => s + parseFloat(l.base_pay||0) * TIM_CUT, 0),
+      totalFuel:       inRange.reduce((s,l) => s + parseFloat(l.fuel||0), 0),
       comdataTotal:    inRange.reduce((s,l) => s + parseFloat(l.comdata_total    || l.comdataTotal    || 0), 0),
       lumperTotal:     inRange.reduce((s,l) => s + parseFloat(l.lumper_total     || l.lumperTotal     || 0), 0),
       incidentalTotal: inRange.reduce((s,l) => s + parseFloat(l.incidental_total || l.incidentalTotal || 0), 0),
@@ -164,8 +174,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const totalPaid   = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s + (parseFloat(l.net_pay || l.netPay)||0), 0)
   const totalUnpaid = totalNet - totalPaid
 
-  const bruceStats = driverStats(bruceLoads, period)
-  const timStats   = driverStats(timLoads,   period)
+  const bruceStats  = driverStats(bruceLoads, period)
+  const timStats    = driverStats(timLoads,   period)
 
   const periodLabel = { daily:'TODAY', weekly:'THIS WEEK', monthly:'THIS MONTH', yearly:'THIS YEAR' }
 
@@ -178,6 +188,9 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       </div>
     )
   }
+
+  // Calculate Bruce's cut from ALL loads for the selected period
+  const brucePeriodCut = bruceCutForPeriod(period)
 
   return (
     <div>
@@ -289,30 +302,34 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             BASE RATE SPLIT: BRUCE 20% / TIM 80%
           </div>
 
-          {/* BRUCE — owner 20% cut */}
+          {/* BRUCE — 20% of ALL loads (Bruce + Tim) */}
           <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>
-              BRUCE — OWNER CUT (20%)
+              BRUCE — OWNER CUT (20% OF ALL LOADS)
             </div>
             <div className="amount-row">
-              <span className="label">Total Base Rates</span>
-              <span className="value">{fmt(bruceLoads.filter(l=>inPeriod(l.date||l.created_at,period)).reduce((s,l)=>s+parseFloat(l.base_pay||0),0))}</span>
+              <span className="label">Total Loads ({periodLabel[period]})</span>
+              <span className="value">{brucePeriodCut.loadCount}</span>
+            </div>
+            <div className="amount-row">
+              <span className="label">All Base Rates Combined</span>
+              <span className="value">{fmt(brucePeriodCut.totalBase)}</span>
             </div>
             <div style={{ borderTop:'1px solid var(--border)', marginTop:8, paddingTop:10 }}>
               <div className="amount-row">
                 <span className="label" style={{fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>BRUCE GROSS CUT</span>
-                <span className="value" style={{color:'#1e88e5',fontSize:18,fontWeight:900}}>{fmt(bruceStats.bruceGross)}</span>
+                <span className="value" style={{color:'#1e88e5',fontSize:18,fontWeight:900}}>{fmt(brucePeriodCut.bruceGross)}</span>
               </div>
             </div>
           </div>
 
-          {/* TIM — 80% gross only */}
+          {/* TIM — 80% of his own loads only */}
           <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:20 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>
               TIM — DRIVER PAY (80%)
             </div>
             <div className="amount-row">
-              <span className="label">Total Base Rates</span>
+              <span className="label">Tim's Base Rates</span>
               <span className="value">{fmt(timLoads.filter(l=>inPeriod(l.date||l.created_at,period)).reduce((s,l)=>s+parseFloat(l.base_pay||0),0))}</span>
             </div>
             <div style={{ borderTop:'1px solid var(--border)', marginTop:8, paddingTop:10 }}>
@@ -436,7 +453,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     {fmt(netPayVal)}
                   </div>
 
-                  {/* TIM PAY CARD — gross pay only, fuel for awareness */}
+                  {/* TIM PAY CARD */}
                   {load.driver === 'TIM' && (
                     <div style={{
                       marginTop:10, background:'var(--navy3)', border:'1px solid var(--border)',
@@ -460,8 +477,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                           <span style={{fontSize:16,fontFamily:'var(--font-head)',fontWeight:900,color:'var(--green)'}}>{fmt(pay.timGross)}</span>
                         </div>
                       </div>
-
-                      {/* FUEL TRACKING — separate from pay, for awareness only */}
                       <div style={{ marginTop:8, borderTop:'1px solid var(--border)', paddingTop:8 }}>
                         <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)',
                                       letterSpacing:'0.06em', marginBottom:6 }}>
@@ -498,7 +513,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     </div>
                   )}
 
-                  {/* BRUCE PAY CARD — 20% cut only */}
+                  {/* BRUCE PAY CARD — shows his 20% on this specific load */}
                   {load.driver === 'BRUCE' && (
                     <div style={{
                       marginTop:10, background:'var(--navy3)', border:'1px solid var(--border)',
@@ -521,7 +536,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     </div>
                   )}
 
-                  {/* ADVANCE KEPT PILL — only if comdata was used */}
+                  {/* ADVANCE KEPT PILL */}
                   {parseFloat(load.comdata_total || load.comdataTotal || 0) > 0 && (
                     <div style={{
                       marginTop:6, padding:'6px 10px', background:'var(--navy3)',
