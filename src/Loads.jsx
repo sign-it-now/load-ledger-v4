@@ -7,7 +7,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
   const [view,          setView]          = useState('all')
   const [period,        setPeriod]        = useState('monthly')
-  const [confirmDelete, setConfirmDelete] = useState(null) // holds realIdx of load pending delete
+  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [deleting,      setDeleting]      = useState(false)
 
   function markPaid(idx) {
     setLoads(prev => prev.map((l,i) => i === idx ? { ...l, status:'paid' } : l))
@@ -19,10 +20,36 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     showToast('Marked as billed!')
   }
 
-  function deleteLoad(idx) {
-    setLoads(prev => prev.filter((_,i) => i !== idx))
-    setConfirmDelete(null)
-    showToast('Load deleted')
+  // ── DELETE FROM D1 FIRST THEN REFRESH ───────────────────
+  async function deleteLoad(load, localIdx) {
+    setDeleting(true)
+    try {
+      // If load has a D1 id, delete from D1
+      if (load.id) {
+        const res = await fetch(api + '/api/loads/' + load.id, {
+          method:  'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ driver: load.driver }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          showToast('⚠️ Delete failed: ' + (data.error || 'unknown'))
+          setDeleting(false)
+          return
+        }
+        // Refresh from D1
+        await fetchLoads()
+      } else {
+        // localStorage-only load — just remove from local state
+        setLoads(prev => prev.filter((_,i) => i !== localIdx))
+      }
+      setConfirmDelete(null)
+      showToast('✅ Load deleted')
+    } catch (err) {
+      showToast('⚠️ Delete failed: ' + err.message)
+    } finally {
+      setDeleting(false)
+    }
   }
 
   function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
@@ -94,8 +121,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const totalPaid   = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s + (parseFloat(l.net_pay || l.netPay)||0), 0)
   const totalUnpaid = totalNet - totalPaid
 
-  const bruceStats  = driverStats(bruceLoads, period)
-  const timStats    = driverStats(timLoads,   period)
+  const bruceStats = driverStats(bruceLoads, period)
+  const timStats   = driverStats(timLoads,   period)
 
   const periodLabel = { daily:'TODAY', weekly:'THIS WEEK', monthly:'THIS MONTH', yearly:'THIS YEAR' }
 
@@ -267,12 +294,12 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
           )}
 
           {filteredLoads.map((load, idx) => {
-            const realIdx    = loads.indexOf(load)
-            const netPayVal  = parseFloat(load.net_pay || load.netPay) || 0
-            const isPending  = confirmDelete === realIdx
+            const realIdx   = loads.indexOf(load)
+            const netPayVal = parseFloat(load.net_pay || load.netPay) || 0
+            const isPending = confirmDelete === (load.id || realIdx)
 
             return (
-              <div className="load-card" key={idx}>
+              <div className="load-card" key={load.id || idx}>
                 <div className="load-card-info" style={{ flex:1 }}>
 
                   <div style={{
@@ -336,7 +363,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                       </div>
                     )}
 
-                    {/* INLINE DELETE — no popup */}
                     {!isPending && (
                       <button
                         style={{
@@ -350,14 +376,14 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                           fontWeight:700,
                           cursor:'pointer',
                         }}
-                        onClick={() => setConfirmDelete(realIdx)}
+                        onClick={() => setConfirmDelete(load.id || realIdx)}
                       >
                         DELETE
                       </button>
                     )}
                   </div>
 
-                  {/* CONFIRM DELETE — appears inline, no popup */}
+                  {/* INLINE CONFIRM — no popup, calls D1 DELETE */}
                   {isPending && (
                     <div style={{
                       marginTop:12,
@@ -372,16 +398,19 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                       </div>
                       <div style={{ display:'flex', gap:8 }}>
                         <button
-                          onClick={() => deleteLoad(realIdx)}
+                          disabled={deleting}
+                          onClick={() => deleteLoad(load, realIdx)}
                           style={{
                             flex:1, padding:'10px 0', borderRadius:8, border:'none',
-                            background:'#e53935', color:'#fff', fontSize:13,
+                            background: deleting ? '#555' : '#e53935',
+                            color:'#fff', fontSize:13,
                             fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
                           }}
                         >
-                          CONFIRM DELETE
+                          {deleting ? 'DELETING...' : 'CONFIRM DELETE'}
                         </button>
                         <button
+                          disabled={deleting}
                           onClick={() => setConfirmDelete(null)}
                           style={{
                             flex:1, padding:'10px 0', borderRadius:8,
