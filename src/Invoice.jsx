@@ -9,6 +9,15 @@ const MAX_BOLS = 50
 export default function Invoice({ load, setLoad, driver, api, showToast, fetchLoads, resetLoad }) {
   const [scanning,   setScanning]   = useState(null)
   const [bolLoading, setBolLoading] = useState(false)
+
+  // ── INLINE MANUAL ENTRY STATE ────────────────────────────
+  const [manualLumper,     setManualLumper]     = useState('')
+  const [manualIncidental, setManualIncidental] = useState('')
+  const [manualComdata,    setManualComdata]    = useState('')
+  const [showManualLumper,     setShowManualLumper]     = useState(false)
+  const [showManualIncidental, setShowManualIncidental] = useState(false)
+  const [showManualComdata,    setShowManualComdata]    = useState(false)
+
   const fileRef  = useRef()
   const bolRef   = useRef()
   const scanMode = useRef(null)
@@ -27,6 +36,34 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
 
   function isPDF(file) {
     return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+  }
+
+  // ── INLINE MANUAL ADD HANDLERS ───────────────────────────
+  function addManualLumper() {
+    const val = parseFloat(manualLumper)
+    if (!val || val <= 0) { showToast('Enter a valid amount'); return }
+    const item = { amount: val.toFixed(2), label: 'Manual entry', dataUrl: null, base64: null, w: 0, h: 0 }
+    setLoad(p => ({ ...p, lumpers: [...p.lumpers, item] }))
+    setManualLumper('')
+    showToast('✅ Lumper added: $' + val.toFixed(2))
+  }
+
+  function addManualIncidental() {
+    const val = parseFloat(manualIncidental)
+    if (!val || val <= 0) { showToast('Enter a valid amount'); return }
+    const item = { amount: val.toFixed(2), label: 'Manual entry', dataUrl: null, base64: null, w: 0, h: 0 }
+    setLoad(p => ({ ...p, incidentals: [...p.incidentals, item] }))
+    setManualIncidental('')
+    showToast('✅ Incidental added: $' + val.toFixed(2))
+  }
+
+  function addManualComdata() {
+    const val = parseFloat(manualComdata)
+    if (!val || val <= 0) { showToast('Enter a valid amount'); return }
+    const item = { amount: val.toFixed(2), label: 'Manual entry', dataUrl: null, base64: null, w: 0, h: 0 }
+    setLoad(p => ({ ...p, comdatas: [...p.comdatas, item] }))
+    setManualComdata('')
+    showToast('✅ Comdata added: -$' + val.toFixed(2))
   }
 
   // ── RENDER PDF PAGE 1 TO CANVAS ──────────────────────────
@@ -241,15 +278,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     setLoad(p => ({ ...p, [type]: p[type].filter((_,i) => i !== idx) }))
   }
 
-  function addManual(type) {
-    const amount = prompt('Enter amount (numbers only):')
-    if (!amount) return
-    const item = { amount: parseFloat(amount).toFixed(2), label: 'Manual entry', dataUrl: null, base64: null, w: 0, h: 0 }
-    if (type === 'lumper')     setLoad(p => ({ ...p, lumpers:     [...p.lumpers,     item] }))
-    if (type === 'incidental') setLoad(p => ({ ...p, incidentals: [...p.incidentals, item] }))
-    if (type === 'comdata')    setLoad(p => ({ ...p, comdatas:    [...p.comdatas,    item] }))
-  }
-
   function toBase64(file) {
     return new Promise((res, rej) => {
       const r = new FileReader()
@@ -257,6 +285,60 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
       r.onerror = rej
       r.readAsDataURL(file)
     })
+  }
+
+  // ── INLINE MANUAL INPUT COMPONENT ───────────────────────
+  function ManualInput({ value, onChange, onAdd, label }) {
+    return (
+      <div style={{
+        marginTop: 10,
+        background: 'var(--navy)',
+        border: '1px solid var(--border)',
+        borderRadius: 8,
+        padding: '10px 12px',
+      }}>
+        <div style={{ fontSize: 11, color: 'var(--grey)', marginBottom: 6, fontFamily: 'var(--font-head)', letterSpacing: '0.06em' }}>
+          ENTER {label} AMOUNT
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            type="number"
+            inputMode="decimal"
+            placeholder="0.00"
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            style={{
+              flex: 1,
+              background: 'var(--navy3)',
+              border: '1px solid var(--border)',
+              color: 'var(--white)',
+              borderRadius: 8,
+              padding: '10px 12px',
+              fontSize: 18,
+              fontFamily: 'var(--font-head)',
+              fontWeight: 700,
+            }}
+          />
+          <button
+            onClick={onAdd}
+            style={{
+              padding: '10px 20px',
+              borderRadius: 8,
+              border: 'none',
+              background: 'var(--amber)',
+              color: 'var(--navy)',
+              fontSize: 14,
+              fontFamily: 'var(--font-head)',
+              fontWeight: 900,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            ADD
+          </button>
+        </div>
+      </div>
+    )
   }
 
   // ── ADD SCAN PAGE TO PDF ─────────────────────────────────
@@ -496,8 +578,18 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
           <button className="scan-btn secondary" onClick={()=>openScanner('lumper')} disabled={scanning==='lumper'}>
             {scanning==='lumper' ? 'Scanning...' : 'Scan Lumper'}
           </button>
-          <button className="scan-btn secondary" onClick={()=>addManual('lumper')}>Manual</button>
+          <button className="scan-btn secondary" onClick={()=>setShowManualLumper(p=>!p)}>
+            {showManualLumper ? 'Cancel' : 'Manual'}
+          </button>
         </div>
+        {showManualLumper && (
+          <ManualInput
+            value={manualLumper}
+            onChange={setManualLumper}
+            onAdd={() => { addManualLumper(); setShowManualLumper(false) }}
+            label="LUMPER"
+          />
+        )}
       </div>
 
       {/* INCIDENTALS */}
@@ -518,8 +610,18 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
           <button className="scan-btn secondary" onClick={()=>openScanner('incidental')} disabled={scanning==='incidental'}>
             {scanning==='incidental' ? 'Scanning...' : 'Scan Incidental'}
           </button>
-          <button className="scan-btn secondary" onClick={()=>addManual('incidental')}>Manual</button>
+          <button className="scan-btn secondary" onClick={()=>setShowManualIncidental(p=>!p)}>
+            {showManualIncidental ? 'Cancel' : 'Manual'}
+          </button>
         </div>
+        {showManualIncidental && (
+          <ManualInput
+            value={manualIncidental}
+            onChange={setManualIncidental}
+            onAdd={() => { addManualIncidental(); setShowManualIncidental(false) }}
+            label="INCIDENTAL"
+          />
+        )}
       </div>
 
       {/* DETENTION AND PALLETS */}
@@ -555,8 +657,18 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
           <button className="scan-btn danger" onClick={()=>openScanner('express')} disabled={scanning==='express'}>
             {scanning==='express' ? 'Scanning...' : 'Scan Comdata'}
           </button>
-          <button className="scan-btn danger" onClick={()=>addManual('comdata')}>Manual</button>
+          <button className="scan-btn danger" onClick={()=>setShowManualComdata(p=>!p)}>
+            {showManualComdata ? 'Cancel' : 'Manual'}
+          </button>
         </div>
+        {showManualComdata && (
+          <ManualInput
+            value={manualComdata}
+            onChange={setManualComdata}
+            onAdd={() => { addManualComdata(); setShowManualComdata(false) }}
+            label="COMDATA"
+          />
+        )}
       </div>
 
       {/* NOTES */}
