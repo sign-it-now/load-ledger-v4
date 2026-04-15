@@ -9,7 +9,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const [period,        setPeriod]        = useState('monthly')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [deleting,      setDeleting]      = useState(false)
-  const [updating,      setUpdating]      = useState(null) // holds load.id being updated
+  const [updating,      setUpdating]      = useState(null)
 
   // ── PATCH STATUS IN D1 ───────────────────────────────────
   async function patchStatus(load, localIdx, status) {
@@ -30,7 +30,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
         await fetchLoads()
         showToast(status === 'paid' ? '✅ Marked as paid!' : '✅ Marked as billed!')
       } else {
-        // localStorage-only load — update local state only
         setLoads(prev => prev.map((l,i) => i === localIdx ? { ...l, status } : l))
         showToast(status === 'paid' ? '✅ Marked as paid!' : '✅ Marked as billed!')
       }
@@ -76,22 +75,27 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     if (!dateStr) return false
     const d   = new Date(dateStr)
     const now = new Date()
-    if (period === 'daily') {
-      return d.toDateString() === now.toDateString()
-    }
+    if (period === 'daily')   return d.toDateString() === now.toDateString()
     if (period === 'weekly') {
       const start = new Date(now)
       start.setDate(now.getDate() - 6)
       start.setHours(0,0,0,0)
       return d >= start
     }
-    if (period === 'monthly') {
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
-    }
-    if (period === 'yearly') {
-      return d.getFullYear() === now.getFullYear()
-    }
+    if (period === 'monthly') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+    if (period === 'yearly')  return d.getFullYear() === now.getFullYear()
     return false
+  }
+
+  // ── DRIVER ADVANCE KEPT ──────────────────────────────────
+  // Comdata Total - Lumper Fees - Incidentals = what driver kept
+  // All from invoice data only — never negative
+  function advanceKept(load) {
+    const comdata   = parseFloat(load.comdata_total   || load.comdataTotal   || 0)
+    const lumpers   = parseFloat(load.lumper_total    || load.lumperTotal    || 0)
+    const incidents = parseFloat(load.incidental_total|| load.incidentalTotal|| 0)
+    const kept = comdata - lumpers - incidents
+    return kept > 0 ? kept : 0
   }
 
   const bruceLoads = loads.filter(l => l.driver === 'BRUCE')
@@ -102,20 +106,21 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     const billed  = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
     const paid    = inRange.filter(l => l.status === 'paid')
     return {
-      count:  inRange.length,
-      billed: billed.reduce((s,l) => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
-      paid:   paid.reduce((s,l)   => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
-      total:  inRange.reduce((s,l) => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
+      count:        inRange.length,
+      billed:       billed.reduce((s,l)  => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
+      paid:         paid.reduce((s,l)    => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
+      total:        inRange.reduce((s,l) => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
+      advanceKept:  inRange.reduce((s,l) => s + advanceKept(l), 0),
     }
   }
 
-  const bruceTotalAllTime = bruceLoads.reduce((s,l) => s + (parseFloat(l.net_pay || l.netPay)||0), 0)
-  const timTotalAllTime   = timLoads.reduce((s,l)   => s + (parseFloat(l.net_pay || l.netPay)||0), 0)
-  const grandTotal        = bruceTotalAllTime + timTotalAllTime
-  const brucePercent      = grandTotal > 0 ? Math.round((bruceTotalAllTime / grandTotal) * 100) : 50
-  const timPercent        = 100 - brucePercent
-  const leader            = bruceTotalAllTime > timTotalAllTime ? 'BRUCE' :
-                            timTotalAllTime > bruceTotalAllTime ? 'TIM'   : 'TIE'
+  const bruceTotalAllTime    = bruceLoads.reduce((s,l) => s + (parseFloat(l.net_pay || l.netPay)||0), 0)
+  const timTotalAllTime      = timLoads.reduce((s,l)   => s + (parseFloat(l.net_pay || l.netPay)||0), 0)
+  const grandTotal           = bruceTotalAllTime + timTotalAllTime
+  const brucePercent         = grandTotal > 0 ? Math.round((bruceTotalAllTime / grandTotal) * 100) : 50
+  const timPercent           = 100 - brucePercent
+  const leader               = bruceTotalAllTime > timTotalAllTime ? 'BRUCE' :
+                               timTotalAllTime > bruceTotalAllTime ? 'TIM'   : 'TIE'
 
   // ── SORT OLDEST TO NEWEST BY DELIVERY DATE ───────────────
   function sortByDeliveryDate(arr) {
@@ -249,6 +254,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             {periodLabel[period]} - PER DRIVER REPORT
           </div>
 
+          {/* BRUCE REPORT */}
           <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>
               BRUCE {leader === 'BRUCE' ? '👑' : ''}
@@ -259,6 +265,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(bruceStats.billed - bruceStats.paid)}</span></div>
           </div>
 
+          {/* TIM REPORT */}
           <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>
               TIM {leader === 'TIM' ? '👑' : ''}
@@ -269,7 +276,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.billed - timStats.paid)}</span></div>
           </div>
 
-          <div className="card" style={{ borderLeft:'3px solid var(--amber)' }}>
+          {/* COMBINED REPORT */}
+          <div className="card" style={{ borderLeft:'3px solid var(--amber)', marginBottom:10 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>
               COMBINED {periodLabel[period]}
             </div>
@@ -278,6 +286,98 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid + timStats.paid)}</span></div>
             <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt((bruceStats.billed + timStats.billed) - (bruceStats.paid + timStats.paid))}</span></div>
           </div>
+
+          {/* ── DRIVER ADVANCE REPORT ─────────────────────────── */}
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:13,
+                        color:'var(--amber)', letterSpacing:'0.1em', marginTop:20, marginBottom:12 }}>
+            {periodLabel[period]} - DRIVER ADVANCE KEPT
+          </div>
+
+          <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)',
+                        letterSpacing:'0.06em', marginBottom:10, textAlign:'center' }}>
+            COMDATA − LUMPERS − INCIDENTALS = KEPT BY DRIVER
+          </div>
+
+          <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>
+              BRUCE — ADVANCE KEPT
+            </div>
+            <div className="amount-row"><span className="label">Loads with Comdata</span>
+              <span className="value">
+                {bruceLoads.filter(l => inPeriod(l.date || l.created_at, period) && parseFloat(l.comdata_total || l.comdataTotal || 0) > 0).length}
+              </span>
+            </div>
+            <div className="amount-row"><span className="label">Total Comdata Issued</span>
+              <span className="value" style={{color:'var(--red)'}}>
+                {fmt(bruceLoads.filter(l => inPeriod(l.date || l.created_at, period)).reduce((s,l) => s + parseFloat(l.comdata_total || l.comdataTotal || 0), 0))}
+              </span>
+            </div>
+            <div className="amount-row"><span className="label">Lumpers Paid</span>
+              <span className="value">
+                {fmt(bruceLoads.filter(l => inPeriod(l.date || l.created_at, period)).reduce((s,l) => s + parseFloat(l.lumper_total || l.lumperTotal || 0), 0))}
+              </span>
+            </div>
+            <div className="amount-row"><span className="label">Incidentals Paid</span>
+              <span className="value">
+                {fmt(bruceLoads.filter(l => inPeriod(l.date || l.created_at, period)).reduce((s,l) => s + parseFloat(l.incidental_total || l.incidentalTotal || 0), 0))}
+              </span>
+            </div>
+            <div style={{ borderTop:'1px solid var(--border)', marginTop:8, paddingTop:10 }}>
+              <div className="amount-row">
+                <span className="label" style={{fontFamily:'var(--font-head)', fontWeight:900, color:'var(--white)'}}>TOTAL KEPT BY BRUCE</span>
+                <span className="value" style={{color:'var(--amber)', fontSize:18, fontWeight:900}}>
+                  {fmt(bruceStats.advanceKept)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>
+              TIM — ADVANCE KEPT
+            </div>
+            <div className="amount-row"><span className="label">Loads with Comdata</span>
+              <span className="value">
+                {timLoads.filter(l => inPeriod(l.date || l.created_at, period) && parseFloat(l.comdata_total || l.comdataTotal || 0) > 0).length}
+              </span>
+            </div>
+            <div className="amount-row"><span className="label">Total Comdata Issued</span>
+              <span className="value" style={{color:'var(--red)'}}>
+                {fmt(timLoads.filter(l => inPeriod(l.date || l.created_at, period)).reduce((s,l) => s + parseFloat(l.comdata_total || l.comdataTotal || 0), 0))}
+              </span>
+            </div>
+            <div className="amount-row"><span className="label">Lumpers Paid</span>
+              <span className="value">
+                {fmt(timLoads.filter(l => inPeriod(l.date || l.created_at, period)).reduce((s,l) => s + parseFloat(l.lumper_total || l.lumperTotal || 0), 0))}
+              </span>
+            </div>
+            <div className="amount-row"><span className="label">Incidentals Paid</span>
+              <span className="value">
+                {fmt(timLoads.filter(l => inPeriod(l.date || l.created_at, period)).reduce((s,l) => s + parseFloat(l.incidental_total || l.incidentalTotal || 0), 0))}
+              </span>
+            </div>
+            <div style={{ borderTop:'1px solid var(--border)', marginTop:8, paddingTop:10 }}>
+              <div className="amount-row">
+                <span className="label" style={{fontFamily:'var(--font-head)', fontWeight:900, color:'var(--white)'}}>TOTAL KEPT BY TIM</span>
+                <span className="value" style={{color:'var(--amber)', fontSize:18, fontWeight:900}}>
+                  {fmt(timStats.advanceKept)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="card" style={{ borderLeft:'3px solid var(--amber)' }}>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>
+              COMBINED — ADVANCE KEPT
+            </div>
+            <div className="amount-row">
+              <span className="label" style={{fontFamily:'var(--font-head)', fontWeight:900, color:'var(--white)'}}>TOTAL KEPT BY BOTH DRIVERS</span>
+              <span className="value" style={{color:'var(--amber)', fontSize:18, fontWeight:900}}>
+                {fmt(bruceStats.advanceKept + timStats.advanceKept)}
+              </span>
+            </div>
+          </div>
+
         </div>
       )}
 
@@ -316,6 +416,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             const netPayVal  = parseFloat(load.net_pay || load.netPay) || 0
             const isPending  = confirmDelete === (load.id || realIdx)
             const isUpdating = updating === (load.id || realIdx)
+            const kept       = advanceKept(load)
 
             return (
               <div className="load-card" key={load.id || idx}>
@@ -346,19 +447,33 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     Invoiced: {(load.created_at || load.date) ? new Date(load.created_at || load.date).toLocaleDateString() : '-'}
                   </p>
 
-                  <div style={{
-                    marginTop:8,
-                    fontFamily:'var(--font-head)',
-                    fontSize:22,
-                    fontWeight:900,
-                    color:'var(--amber)',
-                  }}>
+                  <div style={{ marginTop:8, fontFamily:'var(--font-head)', fontSize:22, fontWeight:900, color:'var(--amber)' }}>
                     {fmt(netPayVal)}
                   </div>
 
+                  {/* ADVANCE KEPT — only show if comdata was used */}
+                  {parseFloat(load.comdata_total || load.comdataTotal || 0) > 0 && (
+                    <div style={{
+                      marginTop:6,
+                      padding:'6px 10px',
+                      background:'var(--navy3)',
+                      borderRadius:6,
+                      border:'1px solid var(--border)',
+                      display:'inline-flex',
+                      gap:8,
+                      alignItems:'center',
+                    }}>
+                      <span style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)' }}>
+                        ADVANCE KEPT
+                      </span>
+                      <span style={{ fontSize:14, fontFamily:'var(--font-head)', fontWeight:900, color: kept > 0 ? 'var(--amber)' : 'var(--grey)' }}>
+                        {fmt(kept)}
+                      </span>
+                    </div>
+                  )}
+
                   <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
 
-                    {/* MARK BILLED — calls D1 PATCH */}
                     {load.status !== 'billed' && load.status !== 'paid' && (
                       <button
                         className="scan-btn secondary"
@@ -370,7 +485,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                       </button>
                     )}
 
-                    {/* MARK PAID — calls D1 PATCH */}
                     {load.status !== 'paid' && (
                       <button
                         className="scan-btn success"
@@ -383,25 +497,17 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     )}
 
                     {load.status === 'paid' && (
-                      <div style={{ fontSize:13, color:'var(--green)', fontFamily:'var(--font-head)',
-                                    fontWeight:700, paddingTop:4 }}>
+                      <div style={{ fontSize:13, color:'var(--green)', fontFamily:'var(--font-head)', fontWeight:700, paddingTop:4 }}>
                         PAYMENT RECEIVED
                       </div>
                     )}
 
-                    {/* DELETE — inline confirm, no popup */}
                     {!isPending && (
                       <button
                         style={{
-                          padding:'8px 12px',
-                          borderRadius:8,
-                          border:'1px solid #555',
-                          background:'transparent',
-                          color:'#888',
-                          fontSize:13,
-                          fontFamily:'var(--font-head)',
-                          fontWeight:700,
-                          cursor:'pointer',
+                          padding:'8px 12px', borderRadius:8, border:'1px solid #555',
+                          background:'transparent', color:'#888', fontSize:13,
+                          fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
                         }}
                         onClick={() => setConfirmDelete(load.id || realIdx)}
                       >
@@ -410,17 +516,12 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     )}
                   </div>
 
-                  {/* INLINE CONFIRM DELETE */}
                   {isPending && (
                     <div style={{
-                      marginTop:12,
-                      background:'#2a0a0a',
-                      border:'1px solid #e53935',
-                      borderRadius:8,
-                      padding:'12px 14px',
+                      marginTop:12, background:'#2a0a0a',
+                      border:'1px solid #e53935', borderRadius:8, padding:'12px 14px',
                     }}>
-                      <div style={{ fontSize:12, color:'#e53935', fontFamily:'var(--font-head)',
-                                    fontWeight:700, marginBottom:10 }}>
+                      <div style={{ fontSize:12, color:'#e53935', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:10 }}>
                         DELETE THIS LOAD? THIS CANNOT BE UNDONE.
                       </div>
                       <div style={{ display:'flex', gap:8 }}>
@@ -429,9 +530,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                           onClick={() => deleteLoad(load, realIdx)}
                           style={{
                             flex:1, padding:'10px 0', borderRadius:8, border:'none',
-                            background: deleting ? '#555' : '#e53935',
-                            color:'#fff', fontSize:13,
-                            fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
+                            background: deleting ? '#555' : '#e53935', color:'#fff',
+                            fontSize:13, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
                           }}
                         >
                           {deleting ? 'DELETING...' : 'CONFIRM DELETE'}
@@ -440,10 +540,9 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                           disabled={deleting}
                           onClick={() => setConfirmDelete(null)}
                           style={{
-                            flex:1, padding:'10px 0', borderRadius:8,
-                            border:'1px solid #555', background:'transparent',
-                            color:'#aaa', fontSize:13, fontFamily:'var(--font-head)',
-                            fontWeight:700, cursor:'pointer',
+                            flex:1, padding:'10px 0', borderRadius:8, border:'1px solid #555',
+                            background:'transparent', color:'#aaa', fontSize:13,
+                            fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
                           }}
                         >
                           CANCEL
