@@ -102,15 +102,14 @@ export default {
       try {
         const b  = await request.json();
         const id = crypto.randomUUID();
-        // driver_id satisfies the NOT NULL constraint (same value as driver)
         const driverVal = b.driver || '';
         await env.DB.prepare(`
           INSERT INTO loads
             (id, driver_id, driver, broker_name, broker_email, load_number,
              origin, destination, pickup_date, delivery_date,
              base_pay, lumper_total, incidental_total, comdata_total,
-             detention, pallets, net_pay, notes, bol_count, status, created_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+             detention, pallets, net_pay, notes, bol_count, fuel, status, created_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
         `).bind(
           id,
           driverVal,
@@ -131,6 +130,7 @@ export default {
           b.net_pay          || 0,
           b.notes            || '',
           b.bol_count        || 0,
+          b.fuel             || 0,
           b.status           || 'invoiced',
         ).run();
         return json({ id });
@@ -139,14 +139,32 @@ export default {
       }
     }
 
-    // ── LOADS PATCH (status update) ──────────────────────
+    // ── LOADS PATCH (status + fuel update) ──────────────
     if (path.startsWith('/api/loads/') && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
-        const { status } = await request.json();
+        const b  = await request.json();
+
+        // Build dynamic update — only set fields that were sent
+        const fields = [];
+        const values = [];
+
+        if (b.status !== undefined) {
+          fields.push('status=?');
+          values.push(b.status);
+        }
+        if (b.fuel !== undefined) {
+          fields.push('fuel=?');
+          values.push(parseFloat(b.fuel) || 0);
+        }
+
+        if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
+
+        values.push(id);
         await env.DB.prepare(
-          'UPDATE loads SET status=? WHERE id=?'
-        ).bind(status, id).run();
+          'UPDATE loads SET ' + fields.join(', ') + ' WHERE id=?'
+        ).bind(...values).run();
+
         return json({ ok: true });
       } catch(e) {
         return json({ error: e.message }, 500);
