@@ -48,8 +48,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     return canvas
   }
 
-  // ── B&W PIPELINE ─────────────────────────────────────────
-  // LOCKED — DO NOT MODIFY
+  // ── B&W PIPELINE — LOCKED DO NOT MODIFY ──────────────────
   // 1. Grayscale  2. Auto-levels  3. Gaussian blur
   // 4. Bradley-Roth adaptive threshold  5. Unsharp mask
   function applyBWPipeline(canvas) {
@@ -280,10 +279,11 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
   }
 
   // ── GENERATE PDF + SAVE TO D1 ────────────────────────────
-  // CRITICAL ORDER: D1 save FIRST — iOS kills POST if doc.save() fires first
+  // RIGHT FIX: D1 POST fires FIRST before doc.save()
+  // iOS WebKit kills the network request if a Blob download fires first
   async function generatePDF() {
 
-    // ── STEP 1: SAVE TO D1 FIRST ─────────────────────────
+    // STEP 1 — D1 SAVE FIRST
     showToast('💾 Saving load...')
     try {
       const res = await fetch(api + '/api/loads', {
@@ -322,7 +322,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
       return
     }
 
-    // ── STEP 2: BUILD AND DOWNLOAD PDF ───────────────────
+    // STEP 2 — BUILD AND DOWNLOAD PDF
     const doc = new jsPDF({ unit: 'pt', format: 'letter' })
     const W = 612, M = 40
     let y = 0
@@ -448,14 +448,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
       <input ref={fileRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleFile} />
       <input ref={bolRef}  type="file" accept="image/*" multiple style={{display:'none'}} onChange={handleBOL} />
 
-      <div className="card">
-        <div className="section-title">Load Summary</div>
-        <div className="amount-row"><span className="label">Broker</span><span className="value">{load.broker_name || '-'}</span></div>
-        <div className="amount-row"><span className="label">Load #</span><span className="value">{load.load_number || '-'}</span></div>
-        <div className="amount-row"><span className="label">Route</span><span className="value" style={{fontSize:13}}>{load.origin || '-'} to {load.destination || '-'}</span></div>
-        <div className="amount-row"><span className="label">Base Pay</span><span className="value">{fmt(base_pay)}</span></div>
-      </div>
-
+      {/* BOL SCANS */}
       <div className="card">
         <div className="section-title">
           BOL Scans
@@ -485,6 +478,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         )}
       </div>
 
+      {/* LUMPER RECEIPTS */}
       <div className="card">
         <div className="section-title">Lumper Receipts</div>
         {load.lumpers.map((l,i) => (
@@ -506,6 +500,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         </div>
       </div>
 
+      {/* INCIDENTALS */}
       <div className="card">
         <div className="section-title">Incidentals</div>
         {load.incidentals.map((l,i) => (
@@ -527,6 +522,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         </div>
       </div>
 
+      {/* DETENTION AND PALLETS */}
       <div className="card">
         <div className="section-title">Detention and Pallets</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
@@ -541,6 +537,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         </div>
       </div>
 
+      {/* COMDATA */}
       <div className="card">
         <div className="section-title">Comdata / Express Codes</div>
         {load.comdatas.map((l,i) => (
@@ -562,6 +559,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         </div>
       </div>
 
+      {/* NOTES */}
       <div className="card">
         <div className="section-title">Notes</div>
         <textarea
@@ -572,6 +570,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         />
       </div>
 
+      {/* BILLING SUMMARY */}
       <div className="card">
         <div className="section-title">Billing Summary</div>
         <div className="amount-row"><span className="label">Trucking Rate</span><span className="value">{fmt(base_pay)}</span></div>
