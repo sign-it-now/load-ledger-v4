@@ -24,33 +24,44 @@ export default {
       return new Response(null, { headers: CORS });
     }
 
+    // ── AUTH ─────────────────────────────────────────────
+    if (path === '/api/auth' && request.method === 'POST') {
+      try {
+        const { driver, pin } = await request.json();
+        if (!driver || !pin) return json({ error: 'Missing driver or pin' }, 400);
+        const valid = ['BRUCE', 'TIM'];
+        if (!valid.includes(driver)) return json({ error: 'Invalid driver' }, 400);
+        const stored = driver === 'BRUCE' ? env.BRUCE_PIN : env.TIM_PIN;
+        if (!stored) return json({ error: 'PIN not configured on server' }, 500);
+        if (String(pin) !== String(stored)) return json({ error: 'Wrong PIN' }, 401);
+        return json({ ok: true, driver });
+      } catch(e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+
+    // ── OCR ──────────────────────────────────────────────
     if (path === '/api/ocr' && request.method === 'POST') {
       try {
         const { base64, mediaType, mode } = await request.json();
-
         if (!base64 || !mediaType || !mode) {
           return json({ error: 'Missing fields: base64, mediaType, mode' }, 400);
         }
-
         if (!env.ANTHROPIC_API_KEY) {
           return json({ error: 'ANTHROPIC_API_KEY not set in Worker secrets' }, 500);
         }
-
         const prompt = getPrompt(mode);
         if (!prompt) return json({ error: 'Invalid mode: ' + mode }, 400);
-
         const isPdf = mediaType === 'application/pdf';
         const contentBlock = isPdf
           ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
           : { type: 'image',    source: { type: 'base64', media_type: mediaType || 'image/jpeg', data: base64 } };
-
         const headers = {
           'Content-Type':      'application/json',
           'x-api-key':         env.ANTHROPIC_API_KEY,
           'anthropic-version': '2023-06-01',
         };
         if (isPdf) headers['anthropic-beta'] = 'pdfs-2024-09-25';
-
         const res = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers,
@@ -63,25 +74,18 @@ export default {
             }],
           }),
         });
-
         const raw = await res.text();
-
         if (!res.ok) {
-          return json({
-            error:  'Claude API error',
-            status: res.status,
-            detail: raw,
-          }, 502);
+          return json({ error: 'Claude API error', status: res.status, detail: raw }, 502);
         }
-
         const data = JSON.parse(raw);
         return json({ result: data?.content?.[0]?.text ?? '' });
-
       } catch (e) {
         return json({ error: 'Worker exception', detail: e.message }, 500);
       }
     }
 
+    // ── LOADS GET ────────────────────────────────────────
     if (path === '/api/loads' && request.method === 'GET') {
       try {
         const { results } = await env.DB.prepare(
@@ -93,17 +97,18 @@ export default {
       }
     }
 
+    // ── LOADS POST ───────────────────────────────────────
     if (path === '/api/loads' && request.method === 'POST') {
       try {
-        const b = await request.json();
+        const b  = await request.json();
         const id = crypto.randomUUID();
         await env.DB.prepare(`
           INSERT INTO loads
             (id, driver, broker_name, broker_email, load_number,
              origin, destination, pickup_date, delivery_date,
              base_pay, lumper_total, incidental_total, comdata_total,
-             detention, pallets, net_pay, status, created_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+             detention, pallets, net_pay, notes, bol_count, status, created_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
         `).bind(
           id,
           b.driver           || '',
@@ -121,6 +126,8 @@ export default {
           b.detention        || 0,
           b.pallets          || 0,
           b.net_pay          || 0,
+          b.notes            || '',
+          b.bol_count        || 0,
           b.status           || 'invoiced',
         ).run();
         return json({ id });
@@ -129,6 +136,7 @@ export default {
       }
     }
 
+    // ── LOADS PATCH (status update) ──────────────────────
     if (path.startsWith('/api/loads/') && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
@@ -136,6 +144,23 @@ export default {
         await env.DB.prepare(
           'UPDATE loads SET status=? WHERE id=?'
         ).bind(status, id).run();
+        return json({ ok: true });
+      } catch(e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+
+    // ── LOADS DELETE ─────────────────────────────────────
+    if (path.startsWith('/api/loads/') && request.method === 'DELETE') {
+      try {
+        const id  = path.split('/')[3];
+        const { driver } = await request.json();
+        const row = await env.DB.prepare(
+          'SELECT driver FROM loads WHERE id=?'
+        ).bind(id).first();
+        if (!row)              return json({ error: 'Load not found' }, 404);
+        if (row.driver !== driver) return json({ error: 'Not authorized' }, 403);
+        await env.DB.prepare('DELETE FROM loads WHERE id=?').bind(id).run();
         return json({ ok: true });
       } catch(e) {
         return json({ error: e.message }, 500);
