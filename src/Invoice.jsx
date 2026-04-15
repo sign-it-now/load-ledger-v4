@@ -6,6 +6,9 @@ import { jsPDF } from 'jspdf'
 
 const MAX_BOLS = 50
 
+const PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
+const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+
 export default function Invoice({ load, setLoad, driver, api, showToast, fetchLoads, resetLoad }) {
   const [scanning, setScanning]     = useState(null)
   const [bolLoading, setBolLoading] = useState(false)
@@ -29,120 +32,164 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     fileRef.current.click()
   }
 
-  // ── FULL SCANNER PIPELINE ────────────────────────────
+  // ── LOAD PDF.JS ON DEMAND ────────────────────────────
+  async function loadPdfJs() {
+    if (window.pdfjsLib) return window.pdfjsLib
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script')
+      s.src     = PDFJS_CDN
+      s.onload  = resolve
+      s.onerror = reject
+      document.head.appendChild(s)
+    })
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER
+    return window.pdfjsLib
+  }
+
+  // ── RENDER PDF PAGE 1 TO CANVAS ──────────────────────
+  async function renderPdfToCanvas(file) {
+    const pdfjsLib   = await loadPdfJs()
+    const arrayBuf   = await file.arrayBuffer()
+    const pdf        = await pdfjsLib.getDocument({ data: arrayBuf }).promise
+    const page       = await pdf.getPage(1)
+    const MAX        = 1200
+    const baseVP     = page.getViewport({ scale: 1 })
+    const scale      = Math.min(MAX / baseVP.width, MAX / baseVP.height, 2.0)
+    const viewport   = page.getViewport({ scale })
+    const canvas     = document.createElement('canvas')
+    canvas.width     = Math.round(viewport.width)
+    canvas.height    = Math.round(viewport.height)
+    const ctx        = canvas.getContext('2d')
+    await page.render({ canvasContext: ctx, viewport }).promise
+    return canvas
+  }
+
+  // ── FULL B&W SCANNER PIPELINE ────────────────────────
   // 1. Grayscale  2. Auto-levels  3. Gaussian blur
   // 4. Bradley-Roth adaptive threshold  5. Unsharp mask
-  function processImageBW(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onerror = reject
-      reader.onload = (ev) => {
-        const img = new Image()
-        img.onerror = reject
-        img.onload = () => {
-          try {
+  function applyBWPipeline(canvas) {
+    const w    = canvas.width
+    const h    = canvas.height
+    const ctx  = canvas.getContext('2d')
+    const id   = ctx.getImageData(0, 0, w, h)
+    const data = id.data
+
+    // STEP 1 — Grayscale
+    const gray = new Uint8ClampedArray(w * h)
+    for (let i = 0; i < gray.length; i++) {
+      const p = i * 4
+      gray[i] = Math.round(0.299 * data[p] + 0.587 * data[p+1] + 0.114 * data[p+2])
+    }
+
+    // STEP 2 — Auto-levels
+    let mn = 255, mx = 0
+    for (let i = 0; i < gray.length; i++) {
+      if (gray[i] < mn) mn = gray[i]
+      if (gray[i] > mx) mx = gray[i]
+    }
+    const range = mx - mn || 1
+    for (let i = 0; i < gray.length; i++) {
+      gray[i] = Math.round(((gray[i] - mn) / range) * 255)
+    }
+
+    // STEP 3 — Gaussian blur 3x3
+    const kernel  = [1,2,1, 2,4,2, 1,2,1]
+    const kSum    = 16
+    const blurred = new Uint8ClampedArray(w * h)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let sum = 0, ki = 0
+        for (let ky = -1; ky <= 1; ky++) {
+          for (let kx = -1; kx <= 1; kx++) {
+            const nx = Math.min(Math.max(x + kx, 0), w - 1)
+            const ny = Math.min(Math.max(y + ky, 0), h - 1)
+            sum += gray[ny * w + nx] * kernel[ki++]
+          }
+        }
+        blurred[y * w + x] = Math.round(sum / kSum)
+      }
+    }
+
+    // STEP 4 — Bradley-Roth adaptive thresholding
+    const S     = Math.floor(Math.max(w, h) / 16)
+    const T     = 0.15
+    const integ = new Int32Array(w * h)
+    for (let y = 0; y < h; y++) {
+      let rowSum = 0
+      for (let x = 0; x < w; x++) {
+        rowSum += blurred[y * w + x]
+        integ[y * w + x] = rowSum + (y > 0 ? integ[(y-1)*w+x] : 0)
+      }
+    }
+    const bw = new Uint8ClampedArray(w * h)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const x1    = Math.max(x - S, 0)
+        const y1    = Math.max(y - S, 0)
+        const x2    = Math.min(x + S, w - 1)
+        const y2    = Math.min(y + S, h - 1)
+        const count = (x2 - x1) * (y2 - y1)
+        const sum   = integ[y2*w+x2]
+                    - (x1 > 0 ? integ[y2*w+(x1-1)] : 0)
+                    - (y1 > 0 ? integ[(y1-1)*w+x2] : 0)
+                    + (x1 > 0 && y1 > 0 ? integ[(y1-1)*w+(x1-1)] : 0)
+        bw[y * w + x] = (blurred[y*w+x] * count) < (sum * (1 - T)) ? 0 : 255
+      }
+    }
+
+    // STEP 5 — Unsharp mask
+    const sharp  = new Uint8ClampedArray(w * h)
+    const amount = 1.5
+    for (let i = 0; i < bw.length; i++) {
+      sharp[i] = Math.min(255, Math.max(0, Math.round(bw[i] + amount * (bw[i] - blurred[i]))))
+    }
+
+    for (let i = 0; i < sharp.length; i++) {
+      const p = i * 4
+      data[p] = data[p+1] = data[p+2] = sharp[i]
+      data[p+3] = 255
+    }
+    ctx.putImageData(id, 0, 0)
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+    const base64  = dataUrl.split(',')[1]
+    return { dataUrl, base64, w, h }
+  }
+
+  // ── PROCESS ANY FILE — image or PDF ─────────────────
+  async function processFile(file) {
+    let canvas
+
+    if (file.type === 'application/pdf') {
+      canvas = await renderPdfToCanvas(file)
+    } else {
+      // Image path — load into canvas via FileReader
+      canvas = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onerror = reject
+        reader.onload = (ev) => {
+          const img = new Image()
+          img.onerror = reject
+          img.onload = () => {
             const MAX = 1200
             let w = img.naturalWidth  || img.width  || 800
             let h = img.naturalHeight || img.height || 1000
             if (w > MAX) { h = Math.round(h * MAX / w); w = MAX }
             if (h > MAX) { w = Math.round(w * MAX / h); h = MAX }
-
-            const canvas = document.createElement('canvas')
-            canvas.width  = w
-            canvas.height = h
-            const ctx = canvas.getContext('2d')
-            ctx.drawImage(img, 0, 0, w, h)
-
-            const id   = ctx.getImageData(0, 0, w, h)
-            const data = id.data
-
-            // STEP 1 — Grayscale (luminance weighted)
-            const gray = new Uint8ClampedArray(w * h)
-            for (let i = 0; i < gray.length; i++) {
-              const p = i * 4
-              gray[i] = Math.round(0.299 * data[p] + 0.587 * data[p+1] + 0.114 * data[p+2])
-            }
-
-            // STEP 2 — Auto-levels (histogram stretch)
-            let mn = 255, mx = 0
-            for (let i = 0; i < gray.length; i++) {
-              if (gray[i] < mn) mn = gray[i]
-              if (gray[i] > mx) mx = gray[i]
-            }
-            const range = mx - mn || 1
-            for (let i = 0; i < gray.length; i++) {
-              gray[i] = Math.round(((gray[i] - mn) / range) * 255)
-            }
-
-            // STEP 3 — Gaussian blur 3x3 (noise reduction)
-            const kernel  = [1,2,1, 2,4,2, 1,2,1]
-            const kSum    = 16
-            const blurred = new Uint8ClampedArray(w * h)
-            for (let y = 0; y < h; y++) {
-              for (let x = 0; x < w; x++) {
-                let sum = 0, ki = 0
-                for (let ky = -1; ky <= 1; ky++) {
-                  for (let kx = -1; kx <= 1; kx++) {
-                    const nx = Math.min(Math.max(x + kx, 0), w - 1)
-                    const ny = Math.min(Math.max(y + ky, 0), h - 1)
-                    sum += gray[ny * w + nx] * kernel[ki++]
-                  }
-                }
-                blurred[y * w + x] = Math.round(sum / kSum)
-              }
-            }
-
-            // STEP 4 — Bradley-Roth adaptive thresholding
-            const S     = Math.floor(Math.max(w, h) / 16)
-            const T     = 0.15
-            const integ = new Int32Array(w * h)
-            for (let y = 0; y < h; y++) {
-              let rowSum = 0
-              for (let x = 0; x < w; x++) {
-                rowSum += blurred[y * w + x]
-                integ[y * w + x] = rowSum + (y > 0 ? integ[(y-1)*w+x] : 0)
-              }
-            }
-            const bw = new Uint8ClampedArray(w * h)
-            for (let y = 0; y < h; y++) {
-              for (let x = 0; x < w; x++) {
-                const x1    = Math.max(x - S, 0)
-                const y1    = Math.max(y - S, 0)
-                const x2    = Math.min(x + S, w - 1)
-                const y2    = Math.min(y + S, h - 1)
-                const count = (x2 - x1) * (y2 - y1)
-                const sum   = integ[y2*w+x2]
-                            - (x1 > 0 ? integ[y2*w+(x1-1)] : 0)
-                            - (y1 > 0 ? integ[(y1-1)*w+x2] : 0)
-                            + (x1 > 0 && y1 > 0 ? integ[(y1-1)*w+(x1-1)] : 0)
-                bw[y * w + x] = (blurred[y*w+x] * count) < (sum * (1 - T)) ? 0 : 255
-              }
-            }
-
-            // STEP 5 — Unsharp mask
-            const sharp  = new Uint8ClampedArray(w * h)
-            const amount = 1.5
-            for (let i = 0; i < bw.length; i++) {
-              sharp[i] = Math.min(255, Math.max(0, Math.round(bw[i] + amount * (bw[i] - blurred[i]))))
-            }
-
-            for (let i = 0; i < sharp.length; i++) {
-              const p = i * 4
-              data[p] = data[p+1] = data[p+2] = sharp[i]
-              data[p+3] = 255
-            }
-            ctx.putImageData(id, 0, 0)
-
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
-            const base64  = dataUrl.split(',')[1]
-
-            resolve({ dataUrl, base64, name: file.name, w, h })
-          } catch (err) { reject(err) }
+            const c   = document.createElement('canvas')
+            c.width   = w
+            c.height  = h
+            c.getContext('2d').drawImage(img, 0, 0, w, h)
+            resolve(c)
+          }
+          img.src = ev.target.result
         }
-        img.src = ev.target.result
-      }
-      reader.readAsDataURL(file)
-    })
+        reader.readAsDataURL(file)
+      })
+    }
+
+    const result = applyBWPipeline(canvas)
+    return { ...result, name: file.name }
   }
 
   // ── BOL UPLOAD HANDLER ───────────────────────────────
@@ -155,7 +202,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     setBolLoading(true)
     showToast('Processing BOL scans...')
     try {
-      const processed = await Promise.all(toProcess.map(f => processImageBW(f)))
+      const processed = await Promise.all(toProcess.map(f => processFile(f)))
       setLoad(p => ({ ...p, bols: [...p.bols, ...processed] }))
       showToast('✅ ' + processed.length + ' BOL(s) added')
     } catch (err) {
@@ -171,7 +218,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     setLoad(p => ({ ...p, bols: p.bols.filter((_,i) => i !== idx) }))
   }
 
-  // ── RECEIPT SCANNER ──────────────────────────────────
+  // ── RECEIPT SCANNER — scan + OCR ─────────────────────
   async function handleFile(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -179,7 +226,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     setScanning(mode)
     showToast('Scanning receipt...')
     try {
-      const scanned   = await processImageBW(file)
+      const scanned   = await processFile(file)
       const base64    = await toBase64(file)
       const mediaType = file.type || 'image/jpeg'
       const res = await fetch(api + '/api/ocr', {
@@ -245,7 +292,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
 
   // ── ADD SCANNED PAGE TO PDF ──────────────────────────
   function addScanPage(doc, item, label) {
-    if (!item.base64 || !item.w || !item.h) return
+    if (!item.dataUrl || !item.w || !item.h) return
     try {
       doc.addPage()
       const pageW = 612
@@ -419,9 +466,9 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     }
 
     const bolCount     = load.bols.length
-    const lumperScans  = load.lumpers.filter(l => l.base64 && l.w && l.h)
-    const incScans     = load.incidentals.filter(l => l.base64 && l.w && l.h)
-    const comdataScans = load.comdatas.filter(l => l.base64 && l.w && l.h)
+    const lumperScans  = load.lumpers.filter(l => l.dataUrl && l.w && l.h)
+    const incScans     = load.incidentals.filter(l => l.dataUrl && l.w && l.h)
+    const comdataScans = load.comdatas.filter(l => l.dataUrl && l.w && l.h)
     const totalAttach  = bolCount + lumperScans.length + incScans.length + comdataScans.length
 
     if (totalAttach > 0) {
