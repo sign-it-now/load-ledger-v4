@@ -280,8 +280,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
   }
 
   // ── GENERATE PDF + SAVE TO D1 ────────────────────────────
-  // CRITICAL ORDER: D1 save happens FIRST, then PDF download.
-  // iOS WebKit kills the POST if doc.save() (Blob download) fires first.
+  // CRITICAL ORDER: D1 save FIRST — iOS kills POST if doc.save() fires first
   async function generatePDF() {
 
     // ── STEP 1: SAVE TO D1 FIRST ─────────────────────────
@@ -314,14 +313,13 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
       const data = await res.json()
       if (!res.ok) {
         showToast('⚠️ Save failed: ' + (data.error || 'unknown'))
-        return // don't download PDF if save failed — let driver retry
+        return
       }
-      // Refresh the Loads tab from D1
       await fetchLoads()
       showToast('✅ Load saved to reports!')
     } catch (err) {
       showToast('⚠️ Save failed: ' + err.message)
-      return // don't download PDF if save failed — let driver retry
+      return
     }
 
     // ── STEP 2: BUILD AND DOWNLOAD PDF ───────────────────
@@ -479,7 +477,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         {load.bols.length < MAX_BOLS && (
           <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
             onClick={()=>bolRef.current.click()} disabled={bolLoading}>
-            {bolLoading ? 'Processing...' : 'Add BOL Photos - Camera / Photos / Files'}
+            {bolLoading ? 'Processing...' : 'Add BOL'}
           </button>
         )}
         {load.bols.length >= MAX_BOLS && (
