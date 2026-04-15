@@ -11,12 +11,12 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
   const [bolLoading, setBolLoading] = useState(false)
 
   // ── INLINE MANUAL ENTRY STATE ────────────────────────────
-  const [manualLumper,     setManualLumper]     = useState('')
-  const [manualIncidental, setManualIncidental] = useState('')
-  const [manualComdata,    setManualComdata]    = useState('')
   const [showManualLumper,     setShowManualLumper]     = useState(false)
   const [showManualIncidental, setShowManualIncidental] = useState(false)
   const [showManualComdata,    setShowManualComdata]    = useState(false)
+  const [manualLumper,         setManualLumper]         = useState('')
+  const [manualIncidental,     setManualIncidental]     = useState('')
+  const [manualComdata,        setManualComdata]        = useState('')
 
   const fileRef  = useRef()
   const bolRef   = useRef()
@@ -38,7 +38,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
   }
 
-  // ── INLINE MANUAL ADD HANDLERS ───────────────────────────
+  // ── MANUAL ADD HANDLERS ──────────────────────────────────
   function addManualLumper() {
     const val = parseFloat(manualLumper)
     if (!val || val <= 0) { showToast('Enter a valid amount'); return }
@@ -100,7 +100,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
       const p = i * 4
       gray[i] = Math.round(0.299 * data[p] + 0.587 * data[p+1] + 0.114 * data[p+2])
     }
-
     let mn = 255, mx = 0
     for (let i = 0; i < gray.length; i++) {
       if (gray[i] < mn) mn = gray[i]
@@ -287,60 +286,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     })
   }
 
-  // ── INLINE MANUAL INPUT COMPONENT ───────────────────────
-  function ManualInput({ value, onChange, onAdd, label }) {
-    return (
-      <div style={{
-        marginTop: 10,
-        background: 'var(--navy)',
-        border: '1px solid var(--border)',
-        borderRadius: 8,
-        padding: '10px 12px',
-      }}>
-        <div style={{ fontSize: 11, color: 'var(--grey)', marginBottom: 6, fontFamily: 'var(--font-head)', letterSpacing: '0.06em' }}>
-          ENTER {label} AMOUNT
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
-            type="number"
-            inputMode="decimal"
-            placeholder="0.00"
-            value={value}
-            onChange={e => onChange(e.target.value)}
-            style={{
-              flex: 1,
-              background: 'var(--navy3)',
-              border: '1px solid var(--border)',
-              color: 'var(--white)',
-              borderRadius: 8,
-              padding: '10px 12px',
-              fontSize: 18,
-              fontFamily: 'var(--font-head)',
-              fontWeight: 700,
-            }}
-          />
-          <button
-            onClick={onAdd}
-            style={{
-              padding: '10px 20px',
-              borderRadius: 8,
-              border: 'none',
-              background: 'var(--amber)',
-              color: 'var(--navy)',
-              fontSize: 14,
-              fontFamily: 'var(--font-head)',
-              fontWeight: 900,
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            ADD
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   // ── ADD SCAN PAGE TO PDF ─────────────────────────────────
   function addScanPage(doc, item, label) {
     if (!item.dataUrl || !item.w || !item.h) return
@@ -362,7 +307,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
 
   // ── GENERATE PDF + SAVE TO D1 ────────────────────────────
   // RIGHT FIX: D1 POST fires FIRST before doc.save()
-  // iOS WebKit kills the network request if a Blob download fires first
   async function generatePDF() {
 
     // STEP 1 — D1 SAVE FIRST
@@ -525,6 +469,40 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     showToast('✅ Invoice + all receipts downloaded!')
   }
 
+  // ── SHARED INLINE INPUT STYLES ───────────────────────────
+  const inlineBox = {
+    marginTop: 10,
+    background: 'var(--navy)',
+    border: '1px solid var(--border)',
+    borderRadius: 8,
+    padding: '10px 12px',
+  }
+  const inlineInput = {
+    flex: 1,
+    background: 'var(--navy3)',
+    border: '1px solid var(--amber)',
+    color: 'var(--white)',
+    borderRadius: 8,
+    padding: '12px 14px',
+    fontSize: 22,
+    fontFamily: 'var(--font-head)',
+    fontWeight: 700,
+    minWidth: 0,
+    WebkitAppearance: 'none',
+  }
+  const inlineAdd = {
+    padding: '12px 20px',
+    borderRadius: 8,
+    border: 'none',
+    background: 'var(--amber)',
+    color: 'var(--navy)',
+    fontSize: 15,
+    fontFamily: 'var(--font-head)',
+    fontWeight: 900,
+    cursor: 'pointer',
+    flexShrink: 0,
+  }
+
   return (
     <div>
       <input ref={fileRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleFile} />
@@ -582,13 +560,26 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
             {showManualLumper ? 'Cancel' : 'Manual'}
           </button>
         </div>
+        {/* INLINE — never unmounts so keyboard stays up */}
         {showManualLumper && (
-          <ManualInput
-            value={manualLumper}
-            onChange={setManualLumper}
-            onAdd={() => { addManualLumper(); setShowManualLumper(false) }}
-            label="LUMPER"
-          />
+          <div style={inlineBox}>
+            <div style={{fontSize:11,color:'var(--grey)',marginBottom:6,fontFamily:'var(--font-head)',letterSpacing:'0.06em'}}>
+              ENTER LUMPER AMOUNT
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <input
+                type="text"
+                inputMode="decimal"
+                pattern="[0-9.]*"
+                placeholder="0.00"
+                value={manualLumper}
+                onChange={e => setManualLumper(e.target.value)}
+                style={inlineInput}
+                autoFocus
+              />
+              <button onClick={addManualLumper} style={inlineAdd}>ADD</button>
+            </div>
+          </div>
         )}
       </div>
 
@@ -615,12 +606,24 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
           </button>
         </div>
         {showManualIncidental && (
-          <ManualInput
-            value={manualIncidental}
-            onChange={setManualIncidental}
-            onAdd={() => { addManualIncidental(); setShowManualIncidental(false) }}
-            label="INCIDENTAL"
-          />
+          <div style={inlineBox}>
+            <div style={{fontSize:11,color:'var(--grey)',marginBottom:6,fontFamily:'var(--font-head)',letterSpacing:'0.06em'}}>
+              ENTER INCIDENTAL AMOUNT
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <input
+                type="text"
+                inputMode="decimal"
+                pattern="[0-9.]*"
+                placeholder="0.00"
+                value={manualIncidental}
+                onChange={e => setManualIncidental(e.target.value)}
+                style={inlineInput}
+                autoFocus
+              />
+              <button onClick={addManualIncidental} style={inlineAdd}>ADD</button>
+            </div>
+          </div>
         )}
       </div>
 
@@ -662,12 +665,24 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
           </button>
         </div>
         {showManualComdata && (
-          <ManualInput
-            value={manualComdata}
-            onChange={setManualComdata}
-            onAdd={() => { addManualComdata(); setShowManualComdata(false) }}
-            label="COMDATA"
-          />
+          <div style={inlineBox}>
+            <div style={{fontSize:11,color:'var(--grey)',marginBottom:6,fontFamily:'var(--font-head)',letterSpacing:'0.06em'}}>
+              ENTER COMDATA AMOUNT
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <input
+                type="text"
+                inputMode="decimal"
+                pattern="[0-9.]*"
+                placeholder="0.00"
+                value={manualComdata}
+                onChange={e => setManualComdata(e.target.value)}
+                style={inlineInput}
+                autoFocus
+              />
+              <button onClick={addManualComdata} style={inlineAdd}>ADD</button>
+            </div>
+          </div>
         )}
       </div>
 
