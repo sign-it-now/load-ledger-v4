@@ -29,7 +29,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
   }
 
-  // ── RENDER PDF PAGE 1 TO CANVAS ──────────────────────
+  // ── RENDER PDF PAGE 1 TO CANVAS ──────────────────────────
   async function renderPdfToCanvas(file) {
     const pdfjsLib = window.pdfjsLib
     if (!pdfjsLib) throw new Error('PDF.js not loaded')
@@ -48,7 +48,8 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     return canvas
   }
 
-  // ── B&W PIPELINE ─────────────────────────────────────
+  // ── B&W PIPELINE ─────────────────────────────────────────
+  // LOCKED — DO NOT MODIFY
   // 1. Grayscale  2. Auto-levels  3. Gaussian blur
   // 4. Bradley-Roth adaptive threshold  5. Unsharp mask
   function applyBWPipeline(canvas) {
@@ -135,7 +136,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     return { dataUrl, base64, w, h }
   }
 
-  // ── PROCESS ANY FILE — image OR pdf ──────────────────
+  // ── PROCESS ANY FILE — image OR pdf ──────────────────────
   async function processFile(file) {
     let canvas
     if (isPDF(file)) {
@@ -168,7 +169,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     return { ...result, name: file.name }
   }
 
-  // ── BOL UPLOAD ───────────────────────────────────────
+  // ── BOL UPLOAD ───────────────────────────────────────────
   async function handleBOL(e) {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
@@ -176,7 +177,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     if (remaining <= 0) { showToast('Max 50 BOLs reached'); return }
     const toProcess = files.slice(0, remaining)
     setBolLoading(true)
-    showToast('Processing BOL scans...')
+    showToast('📷 Processing BOL scans...')
     try {
       const processed = await Promise.all(toProcess.map(f => processFile(f)))
       setLoad(p => ({ ...p, bols: [...p.bols, ...processed] }))
@@ -194,13 +195,13 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     setLoad(p => ({ ...p, bols: p.bols.filter((_,i) => i !== idx) }))
   }
 
-  // ── RECEIPT SCANNER ──────────────────────────────────
+  // ── RECEIPT SCANNER ──────────────────────────────────────
   async function handleFile(e) {
     const file = e.target.files[0]
     if (!file) return
     const mode = scanMode.current
     setScanning(mode)
-    showToast('Scanning receipt...')
+    showToast('📡 Scanning receipt...')
     try {
       const scanned   = await processFile(file)
       const base64    = await toBase64(file)
@@ -259,7 +260,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     })
   }
 
-  // ── ADD SCAN PAGE TO PDF ─────────────────────────────
+  // ── ADD SCAN PAGE TO PDF ─────────────────────────────────
   function addScanPage(doc, item, label) {
     if (!item.dataUrl || !item.w || !item.h) return
     try {
@@ -278,8 +279,52 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     } catch (err) { console.error('addScanPage error:', err) }
   }
 
-  // ── GENERATE PDF + SAVE TO D1 ────────────────────────
+  // ── GENERATE PDF + SAVE TO D1 ────────────────────────────
+  // CRITICAL ORDER: D1 save happens FIRST, then PDF download.
+  // iOS WebKit kills the POST if doc.save() (Blob download) fires first.
   async function generatePDF() {
+
+    // ── STEP 1: SAVE TO D1 FIRST ─────────────────────────
+    showToast('💾 Saving load...')
+    try {
+      const res = await fetch(api + '/api/loads', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driver,
+          broker_name:      load.broker_name   || '',
+          broker_email:     load.broker_email  || '',
+          load_number:      load.load_number   || '',
+          origin:           load.origin        || '',
+          destination:      load.destination   || '',
+          pickup_date:      load.pickup_date   || '',
+          delivery_date:    load.delivery_date || '',
+          base_pay:         base_pay,
+          lumper_total:     lumperTotal,
+          incidental_total: incTotal,
+          comdata_total:    comdataTotal,
+          detention:        detention,
+          pallets:          pallets,
+          net_pay:          netPay,
+          notes:            load.notes         || '',
+          bol_count:        load.bols.length,
+          status:           'invoiced',
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        showToast('⚠️ Save failed: ' + (data.error || 'unknown'))
+        return // don't download PDF if save failed — let driver retry
+      }
+      // Refresh the Loads tab from D1
+      await fetchLoads()
+      showToast('✅ Load saved to reports!')
+    } catch (err) {
+      showToast('⚠️ Save failed: ' + err.message)
+      return // don't download PDF if save failed — let driver retry
+    }
+
+    // ── STEP 2: BUILD AND DOWNLOAD PDF ───────────────────
     const doc = new jsPDF({ unit: 'pt', format: 'letter' })
     const W = 612, M = 40
     let y = 0
@@ -397,50 +442,21 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
       addScanPage(doc, l, 'Comdata / Express Code '+(i+1)+' - $'+parseFloat(l.amount).toFixed(2)+' - '+l.label))
 
     doc.save('Edgerton-Invoice-'+(load.load_number||'draft')+'-'+driver+'.pdf')
-    showToast('✅ Invoice downloaded!')
-
-    // ── SAVE TO CLOUDFLARE D1 ─────────────────────────
-    try {
-      const res = await fetch(api + '/api/loads', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          driver,
-          broker_name:      load.broker_name   || '',
-          broker_email:     load.broker_email  || '',
-          load_number:      load.load_number   || '',
-          origin:           load.origin        || '',
-          destination:      load.destination   || '',
-          pickup_date:      load.pickup_date   || '',
-          delivery_date:    load.delivery_date || '',
-          base_pay:         base_pay,
-          lumper_total:     lumperTotal,
-          incidental_total: incTotal,
-          comdata_total:    comdataTotal,
-          detention:        detention,
-          pallets:          pallets,
-          net_pay:          netPay,
-          notes:            load.notes         || '',
-          bol_count:        load.bols.length,
-          status:           'invoiced',
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        showToast('⚠️ Save failed: ' + (data.error || 'unknown'))
-      } else {
-        fetchLoads()
-        showToast('✅ Load saved!')
-      }
-    } catch (err) {
-      showToast('⚠️ Save failed: ' + err.message)
-    }
+    showToast('✅ Invoice + all receipts downloaded!')
   }
 
   return (
     <div>
       <input ref={fileRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleFile} />
       <input ref={bolRef}  type="file" accept="image/*" multiple style={{display:'none'}} onChange={handleBOL} />
+
+      <div className="card">
+        <div className="section-title">Load Summary</div>
+        <div className="amount-row"><span className="label">Broker</span><span className="value">{load.broker_name || '-'}</span></div>
+        <div className="amount-row"><span className="label">Load #</span><span className="value">{load.load_number || '-'}</span></div>
+        <div className="amount-row"><span className="label">Route</span><span className="value" style={{fontSize:13}}>{load.origin || '-'} to {load.destination || '-'}</span></div>
+        <div className="amount-row"><span className="label">Base Pay</span><span className="value">{fmt(base_pay)}</span></div>
+      </div>
 
       <div className="card">
         <div className="section-title">
@@ -463,7 +479,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         {load.bols.length < MAX_BOLS && (
           <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
             onClick={()=>bolRef.current.click()} disabled={bolLoading}>
-            {bolLoading ? 'Processing...' : 'Add BOL'}
+            {bolLoading ? 'Processing...' : 'Add BOL Photos - Camera / Photos / Files'}
           </button>
         )}
         {load.bols.length >= MAX_BOLS && (
@@ -579,6 +595,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
       <button className="scan-btn secondary" onClick={resetLoad}>
         + START NEW LOAD
       </button>
+
     </div>
   )
 }
