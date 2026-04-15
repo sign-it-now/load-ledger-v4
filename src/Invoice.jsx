@@ -126,7 +126,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
               sharp[i] = Math.min(255, Math.max(0, Math.round(bw[i] + amount * (bw[i] - blurred[i]))))
             }
 
-            // Write final B&W back to canvas
             for (let i = 0; i < sharp.length; i++) {
               const p = i * 4
               data[p] = data[p+1] = data[p+2] = sharp[i]
@@ -172,7 +171,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     setLoad(p => ({ ...p, bols: p.bols.filter((_,i) => i !== idx) }))
   }
 
-  // ── RECEIPT SCANNER — B&W scan + OCR amount ─────────
+  // ── RECEIPT SCANNER ──────────────────────────────────
   async function handleFile(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -473,7 +472,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
 
     // ── SAVE TO CLOUDFLARE D1 ─────────────────────────
     try {
-      await fetch(api + '/api/loads', {
+      const res = await fetch(api + '/api/loads', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
@@ -497,10 +496,16 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
           status:           'invoiced',
         }),
       })
-      fetchLoads()
+      const data = await res.json()
+      if (!res.ok) {
+        console.error('D1 save error:', data)
+        showToast('⚠️ Invoice downloaded but save failed')
+      } else {
+        fetchLoads()
+      }
     } catch (err) {
       console.error('D1 save error:', err)
-      // PDF already downloaded — don't block the user
+      showToast('⚠️ Invoice downloaded but save failed')
     }
   }
 
@@ -508,14 +513,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     <div>
       <input ref={fileRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleFile} />
       <input ref={bolRef}  type="file" accept="image/*" multiple style={{display:'none'}} onChange={handleBOL} />
-
-      <div className="card">
-        <div className="section-title">Load Summary</div>
-        <div className="amount-row"><span className="label">Broker</span><span className="value">{load.broker_name || '-'}</span></div>
-        <div className="amount-row"><span className="label">Load #</span><span className="value">{load.load_number || '-'}</span></div>
-        <div className="amount-row"><span className="label">Route</span><span className="value" style={{fontSize:13}}>{load.origin || '-'} to {load.destination || '-'}</span></div>
-        <div className="amount-row"><span className="label">Base Pay</span><span className="value">{fmt(base_pay)}</span></div>
-      </div>
 
       <div className="card">
         <div className="section-title">
@@ -538,7 +535,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         {load.bols.length < MAX_BOLS && (
           <button className="scan-btn secondary" style={{marginTop:8,width:'100%'}}
             onClick={()=>bolRef.current.click()} disabled={bolLoading}>
-            {bolLoading ? 'Processing...' : 'Add BOL Photos - Camera / Photos / Files'}
+            {bolLoading ? 'Processing...' : 'Add BOL'}
           </button>
         )}
         {load.bols.length >= MAX_BOLS && (
