@@ -3,26 +3,64 @@
 
 import { useState } from 'react'
 
-export default function Loads({ loads, setLoads, showToast }) {
+export default function Loads({ loads, fetchLoads, driver, api, showToast }) {
 
   const [view,   setView]   = useState('all')
   const [period, setPeriod] = useState('monthly')
 
-  function markPaid(idx) {
-    setLoads(prev => prev.map((l,i) => i === idx ? { ...l, status:'paid' } : l))
-    showToast('✅ Marked as paid!')
+  async function markPaid(load) {
+    try {
+      await fetch(api + '/api/loads/' + load.id, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ status: 'paid' }),
+      })
+      fetchLoads()
+      showToast('Marked as paid!')
+    } catch {
+      showToast('Connection error — try again')
+    }
   }
 
-  function markBilled(idx) {
-    setLoads(prev => prev.map((l,i) => i === idx ? { ...l, status:'billed' } : l))
-    showToast('✅ Marked as billed!')
+  async function markBilled(load) {
+    try {
+      await fetch(api + '/api/loads/' + load.id, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ status: 'billed' }),
+      })
+      fetchLoads()
+      showToast('Marked as billed!')
+    } catch {
+      showToast('Connection error — try again')
+    }
   }
 
-  function deleteLoad(idx) {
-    const ok = window.confirm('Delete this load? This cannot be undone.')
-    if (!ok) return
-    setLoads(prev => prev.filter((_,i) => i !== idx))
-    showToast('🗑️ Load deleted')
+  async function deleteLoad(load) {
+    if (load.driver !== driver) {
+      showToast('You can only delete your own loads')
+      return
+    }
+    const msg = load.status === 'billed'
+      ? 'This load is marked BILLED. Deleting it will remove it permanently. Are you sure?'
+      : 'Delete this load? This cannot be undone.'
+    if (!window.confirm(msg)) return
+    try {
+      const res = await fetch(api + '/api/loads/' + load.id, {
+        method:  'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ driver }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        showToast('Error: ' + (data.error || 'Delete failed'))
+        return
+      }
+      fetchLoads()
+      showToast('Load deleted')
+    } catch {
+      showToast('Connection error — try again')
+    }
   }
 
   function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
@@ -53,19 +91,19 @@ export default function Loads({ loads, setLoads, showToast }) {
   const timLoads   = loads.filter(l => l.driver === 'TIM')
 
   function driverStats(dLoads, period) {
-    const inRange = dLoads.filter(l => inPeriod(l.date, period))
+    const inRange = dLoads.filter(l => inPeriod(l.created_at, period))
     const billed  = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
     const paid    = inRange.filter(l => l.status === 'paid')
     return {
       count:  inRange.length,
-      billed: billed.reduce((s,l) => s + (parseFloat(l.netPay)||0), 0),
-      paid:   paid.reduce((s,l)   => s + (parseFloat(l.netPay)||0), 0),
-      total:  inRange.reduce((s,l) => s + (parseFloat(l.netPay)||0), 0),
+      billed: billed.reduce((s,l) => s + (parseFloat(l.net_pay)||0), 0),
+      paid:   paid.reduce((s,l)   => s + (parseFloat(l.net_pay)||0), 0),
+      total:  inRange.reduce((s,l) => s + (parseFloat(l.net_pay)||0), 0),
     }
   }
 
-  const bruceTotalAllTime = bruceLoads.reduce((s,l) => s + (parseFloat(l.netPay)||0), 0)
-  const timTotalAllTime   = timLoads.reduce((s,l)   => s + (parseFloat(l.netPay)||0), 0)
+  const bruceTotalAllTime = bruceLoads.reduce((s,l) => s + (parseFloat(l.net_pay)||0), 0)
+  const timTotalAllTime   = timLoads.reduce((s,l)   => s + (parseFloat(l.net_pay)||0), 0)
   const grandTotal        = bruceTotalAllTime + timTotalAllTime
   const brucePercent      = grandTotal > 0 ? Math.round((bruceTotalAllTime / grandTotal) * 100) : 50
   const timPercent        = 100 - brucePercent
@@ -76,8 +114,8 @@ export default function Loads({ loads, setLoads, showToast }) {
                         view === 'BRUCE' ? bruceLoads :
                         view === 'TIM'   ? timLoads   : []
 
-  const totalNet    = filteredLoads.reduce((s,l) => s + (parseFloat(l.netPay)||0), 0)
-  const totalPaid   = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s + (parseFloat(l.netPay)||0), 0)
+  const totalNet    = filteredLoads.reduce((s,l) => s + (parseFloat(l.net_pay)||0), 0)
+  const totalPaid   = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s + (parseFloat(l.net_pay)||0), 0)
   const totalUnpaid = totalNet - totalPaid
 
   const bruceStats = driverStats(bruceLoads, period)
@@ -98,7 +136,6 @@ export default function Loads({ loads, setLoads, showToast }) {
   return (
     <div>
 
-      {/* VIEW TABS */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
         {['all','BRUCE','TIM','reports'].map(v => (
           <button
@@ -114,7 +151,7 @@ export default function Loads({ loads, setLoads, showToast }) {
               letterSpacing:'0.05em',
               cursor:'pointer',
               background: view === v ? 'var(--amber)' : 'var(--navy3)',
-              color:       view === v ? 'var(--navy1)' : 'var(--grey)',
+              color:       view === v ? 'var(--navy)' : 'var(--grey)',
             }}
           >
             {v.toUpperCase()}
@@ -122,10 +159,9 @@ export default function Loads({ loads, setLoads, showToast }) {
         ))}
       </div>
 
-      {/* LEADERBOARD */}
       <div className="card" style={{ marginBottom:14 }}>
         <div className="section-title" style={{ marginBottom:10 }}>
-          🏆 LEADERBOARD — ALL TIME
+          LEADERBOARD - ALL TIME
           {leader !== 'TIE' && (
             <span style={{ marginLeft:8, fontSize:12, color:'var(--amber)' }}>
               {leader} IS WINNING!
@@ -133,8 +169,8 @@ export default function Loads({ loads, setLoads, showToast }) {
           )}
         </div>
         <div style={{ display:'flex', height:18, borderRadius:9, overflow:'hidden', marginBottom:10 }}>
-          <div style={{ width:`${brucePercent}%`, background:'#1e88e5', transition:'width 0.4s' }} />
-          <div style={{ width:`${timPercent}%`,   background:'#e53935', transition:'width 0.4s' }} />
+          <div style={{ width:brucePercent + '%', background:'#1e88e5', transition:'width 0.4s' }} />
+          <div style={{ width:timPercent + '%',   background:'#e53935', transition:'width 0.4s' }} />
         </div>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
           <div style={{ background:'var(--navy3)', borderRadius:8, padding:'10px 12px', borderLeft:'3px solid #1e88e5' }}>
@@ -162,7 +198,6 @@ export default function Loads({ loads, setLoads, showToast }) {
         </div>
       </div>
 
-      {/* REPORTS VIEW */}
       {view === 'reports' && (
         <div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
@@ -180,7 +215,7 @@ export default function Loads({ loads, setLoads, showToast }) {
                   letterSpacing:'0.05em',
                   cursor:'pointer',
                   background: period === p ? 'var(--white)' : 'var(--navy3)',
-                  color:       period === p ? 'var(--navy1)' : 'var(--grey)',
+                  color:       period === p ? 'var(--navy)' : 'var(--grey)',
                 }}
               >
                 {p.toUpperCase()}
@@ -190,7 +225,7 @@ export default function Loads({ loads, setLoads, showToast }) {
 
           <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:13,
                         color:'var(--amber)', letterSpacing:'0.1em', marginBottom:12 }}>
-            {periodLabel[period]} — PER DRIVER REPORT
+            {periodLabel[period]} - PER DRIVER REPORT
           </div>
 
           <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
@@ -225,7 +260,6 @@ export default function Loads({ loads, setLoads, showToast }) {
         </div>
       )}
 
-      {/* LOADS LIST VIEW */}
       {view !== 'reports' && (
         <div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
@@ -251,71 +285,67 @@ export default function Loads({ loads, setLoads, showToast }) {
             </div>
           )}
 
-          {filteredLoads.map((load, idx) => {
-            const realIdx = loads.indexOf(load)
-            return (
-              <div className="load-card" key={idx}>
-                <div className="load-card-info" style={{ flex:1 }}>
+          {filteredLoads.map((load, idx) => (
+            <div className="load-card" key={load.id || idx}>
+              <div className="load-card-info" style={{ flex:1 }}>
 
-                  {/* Driver badge */}
-                  <div style={{
-                    display:'inline-block',
-                    padding:'2px 8px',
-                    borderRadius:10,
-                    fontSize:10,
-                    fontFamily:'var(--font-head)',
-                    fontWeight:700,
-                    marginBottom:6,
-                    background: load.driver === 'BRUCE' ? '#1e88e5' : '#e53935',
-                    color:'#fff',
-                  }}>
-                    {load.driver || '—'}
-                  </div>
+                <div style={{
+                  display:'inline-block',
+                  padding:'2px 8px',
+                  borderRadius:10,
+                  fontSize:10,
+                  fontFamily:'var(--font-head)',
+                  fontWeight:700,
+                  marginBottom:6,
+                  background: load.driver === 'BRUCE' ? '#1e88e5' : '#e53935',
+                  color:'#fff',
+                }}>
+                  {load.driver || '-'}
+                </div>
 
-                  <h4>{load.broker_name || 'Unknown Broker'}</h4>
-                  <p>Load # {load.load_number || '—'}</p>
-                  <p>{load.origin || '—'} → {load.destination || '—'}</p>
-                  <p style={{ color:'var(--grey)', fontSize:11 }}>
-                    {load.date ? new Date(load.date).toLocaleDateString() : '—'}
-                  </p>
+                <h4>{load.broker_name || 'Unknown Broker'}</h4>
+                <p>Load # {load.load_number || '-'}</p>
+                <p>{load.origin || '-'} to {load.destination || '-'}</p>
+                <p style={{ color:'var(--grey)', fontSize:11 }}>
+                  {load.created_at ? new Date(load.created_at).toLocaleDateString() : '-'}
+                </p>
 
-                  <div style={{
-                    marginTop:8,
-                    fontFamily:'var(--font-head)',
-                    fontSize:22,
-                    fontWeight:900,
-                    color:'var(--amber)',
-                  }}>
-                    {fmt(load.netPay)}
-                  </div>
+                <div style={{
+                  marginTop:8,
+                  fontFamily:'var(--font-head)',
+                  fontSize:22,
+                  fontWeight:900,
+                  color:'var(--amber)',
+                }}>
+                  {fmt(load.net_pay)}
+                </div>
 
-                  {/* Action buttons */}
-                  <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
-                    {load.status !== 'billed' && load.status !== 'paid' && (
-                      <button
-                        className="scan-btn secondary"
-                        style={{ flex:1, padding:'8px 12px', fontSize:13 }}
-                        onClick={() => markBilled(realIdx)}
-                      >
-                        MARK BILLED
-                      </button>
-                    )}
-                    {load.status !== 'paid' && (
-                      <button
-                        className="scan-btn success"
-                        style={{ flex:1, padding:'8px 12px', fontSize:13 }}
-                        onClick={() => markPaid(realIdx)}
-                      >
-                        MARK PAID
-                      </button>
-                    )}
-                    {load.status === 'paid' && (
-                      <div style={{ fontSize:13, color:'var(--green)', fontFamily:'var(--font-head)',
-                                    fontWeight:700, paddingTop:4 }}>
-                        ✅ PAYMENT RECEIVED
-                      </div>
-                    )}
-                    {/* DELETE BUTTON */}
+                <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
+                  {load.status !== 'billed' && load.status !== 'paid' && (
+                    <button
+                      className="scan-btn secondary"
+                      style={{ flex:1, padding:'8px 12px', fontSize:13 }}
+                      onClick={() => markBilled(load)}
+                    >
+                      MARK BILLED
+                    </button>
+                  )}
+                  {load.status !== 'paid' && (
+                    <button
+                      className="scan-btn success"
+                      style={{ flex:1, padding:'8px 12px', fontSize:13 }}
+                      onClick={() => markPaid(load)}
+                    >
+                      MARK PAID
+                    </button>
+                  )}
+                  {load.status === 'paid' && (
+                    <div style={{ fontSize:13, color:'var(--green)', fontFamily:'var(--font-head)',
+                                  fontWeight:700, paddingTop:4 }}>
+                      PAYMENT RECEIVED
+                    </div>
+                  )}
+                  {load.driver === driver && (
                     <button
                       style={{
                         padding:'8px 12px',
@@ -328,27 +358,26 @@ export default function Loads({ loads, setLoads, showToast }) {
                         fontWeight:700,
                         cursor:'pointer',
                       }}
-                      onClick={() => deleteLoad(realIdx)}
+                      onClick={() => deleteLoad(load)}
                     >
-                      🗑️ DELETE
+                      DELETE
                     </button>
-                  </div>
-                </div>
-
-                {/* Status chip + BOL count */}
-                <div style={{ marginLeft:12, display:'flex', flexDirection:'column', alignItems:'flex-end' }}>
-                  <span className={`status-chip ${load.status}`}>
-                    {load.status}
-                  </span>
-                  {load.bols && load.bols.length > 0 && (
-                    <div style={{ fontSize:10, color:'var(--grey)', marginTop:6 }}>
-                      📋 {load.bols.length} BOL{load.bols.length !== 1 ? 's' : ''}
-                    </div>
                   )}
                 </div>
               </div>
-            )
-          })}
+
+              <div style={{ marginLeft:12, display:'flex', flexDirection:'column', alignItems:'flex-end' }}>
+                <span className={'status-chip ' + load.status}>
+                  {load.status}
+                </span>
+                {load.bol_count > 0 && (
+                  <div style={{ fontSize:10, color:'var(--grey)', marginTop:6 }}>
+                    {load.bol_count} BOL{load.bol_count !== 1 ? 's' : ''}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
