@@ -5,8 +5,6 @@ import { useState, useRef } from 'react'
 import { jsPDF } from 'jspdf'
 
 const MAX_BOLS = 50
-const PDFJS_CDN    = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js'
-const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js'
 
 export default function Invoice({ load, setLoad, driver, api, showToast, fetchLoads, resetLoad }) {
   const [scanning,   setScanning]   = useState(null)
@@ -27,28 +25,14 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
   function fmt(n) { return '$' + n.toFixed(2) }
   function openScanner(mode) { scanMode.current = mode; fileRef.current.click() }
 
-  // ── DETECT PDF — check type AND extension ────────────
   function isPDF(file) {
     return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
   }
 
-  // ── LOAD PDF.JS ON DEMAND ────────────────────────────
-  async function loadPdfJs() {
-    if (window.pdfjsLib) return window.pdfjsLib
-    await new Promise((resolve, reject) => {
-      const s = document.createElement('script')
-      s.src = PDFJS_CDN
-      s.onload  = resolve
-      s.onerror = reject
-      document.head.appendChild(s)
-    })
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER
-    return window.pdfjsLib
-  }
-
   // ── RENDER PDF PAGE 1 TO CANVAS ──────────────────────
   async function renderPdfToCanvas(file) {
-    const pdfjsLib = await loadPdfJs()
+    const pdfjsLib = window.pdfjsLib
+    if (!pdfjsLib) throw new Error('PDF.js not loaded')
     const arrayBuf = await file.arrayBuffer()
     const pdf      = await pdfjsLib.getDocument({ data: arrayBuf }).promise
     const page     = await pdf.getPage(1)
@@ -64,7 +48,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     return canvas
   }
 
-  // ── B&W PIPELINE ON A CANVAS ─────────────────────────
+  // ── B&W PIPELINE ─────────────────────────────────────
   // 1. Grayscale  2. Auto-levels  3. Gaussian blur
   // 4. Bradley-Roth adaptive threshold  5. Unsharp mask
   function applyBWPipeline(canvas) {
@@ -151,7 +135,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     return { dataUrl, base64, w, h }
   }
 
-  // ── PROCESS ANY FILE — image OR pdf → B&W scan ───────
+  // ── PROCESS ANY FILE — image OR pdf ──────────────────
   async function processFile(file) {
     let canvas
     if (isPDF(file)) {
@@ -317,8 +301,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(0,0,0)
     doc.text(new Date().toLocaleDateString('en-US'), W-M, y+16, { align:'right' })
 
-    y += 60
-    doc.setDrawColor(180,180,180); doc.line(M, y, W-M, y); y += 14
+    y += 60; doc.setDrawColor(180,180,180); doc.line(M, y, W-M, y); y += 14
 
     doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100)
     doc.text('BILL TO', M, y); doc.text('LOAD #', W/2, y); y += 12
@@ -444,9 +427,10 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
       })
       const data = await res.json()
       if (!res.ok) {
-        showToast('⚠️ Save failed: ' + (data.error || 'unknown error'))
+        showToast('⚠️ Save failed: ' + (data.error || 'unknown'))
       } else {
         fetchLoads()
+        showToast('✅ Load saved!')
       }
     } catch (err) {
       showToast('⚠️ Save failed: ' + err.message)
