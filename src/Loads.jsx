@@ -13,7 +13,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [deleting,      setDeleting]      = useState(false)
   const [updating,      setUpdating]      = useState(null)
-  const [fuelInputs,    setFuelInputs]    = useState({}) // keyed by load.id
+  const [fuelInputs,    setFuelInputs]    = useState({})
 
   // ── PATCH STATUS OR FUEL IN D1 ───────────────────────────
   async function patchLoad(load, localIdx, fields) {
@@ -96,26 +96,20 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   }
 
   // ── PAY CALCULATIONS ─────────────────────────────────────
+  // Tim Gross = base_pay x 80% — that's it, nothing added
+  // Advance kept is a SEPARATE report — does not affect pay
+  // Fuel is tracked separately for Tim's own awareness
   function calcPay(load) {
-    const basePay      = parseFloat(load.base_pay      || 0)
-    const netPay       = parseFloat(load.net_pay       || load.netPay       || 0)
-    const comdataTotal = parseFloat(load.comdata_total || load.comdataTotal || 0)
-    const lumperTotal  = parseFloat(load.lumper_total  || load.lumperTotal  || 0)
-    const incTotal     = parseFloat(load.incidental_total || load.incidentalTotal || 0)
-    const fuel         = parseFloat(load.fuel          || 0)
-
-    const bruceGross   = basePay * BRUCE_CUT              // 20% of base rate
-    const timGross     = basePay * TIM_CUT                // 80% of base rate
-    const advanceKept  = Math.max(0, comdataTotal - lumperTotal - incTotal)
-    const totalReceived = netPay + advanceKept             // invoice pay + advance kept
-    const netIncome    = totalReceived - fuel              // after fuel
-
-    return { basePay, bruceGross, timGross, advanceKept, netPay, totalReceived, fuel, netIncome }
+    const basePay    = parseFloat(load.base_pay || 0)
+    const bruceGross = basePay * BRUCE_CUT
+    const timGross   = basePay * TIM_CUT
+    const fuel       = parseFloat(load.fuel || 0)
+    return { basePay, bruceGross, timGross, fuel }
   }
 
   function advanceKept(load) {
-    const c = parseFloat(load.comdata_total || load.comdataTotal || 0)
-    const l = parseFloat(load.lumper_total  || load.lumperTotal  || 0)
+    const c = parseFloat(load.comdata_total    || load.comdataTotal    || 0)
+    const l = parseFloat(load.lumper_total     || load.lumperTotal     || 0)
     const i = parseFloat(load.incidental_total || load.incidentalTotal || 0)
     return Math.max(0, c - l - i)
   }
@@ -128,17 +122,16 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     const billed  = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
     const paid    = inRange.filter(l => l.status === 'paid')
     return {
-      count:        inRange.length,
-      billed:       billed.reduce((s,l)  => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
-      paid:         paid.reduce((s,l)    => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
-      advanceKept:  inRange.reduce((s,l) => s + advanceKept(l), 0),
-      bruceGross:   inRange.reduce((s,l) => s + parseFloat(l.base_pay||0) * BRUCE_CUT, 0),
-      timGross:     inRange.reduce((s,l) => s + parseFloat(l.base_pay||0) * TIM_CUT, 0),
-      totalFuel:    inRange.reduce((s,l) => s + parseFloat(l.fuel||0), 0),
-      timNet:       inRange.reduce((s,l) => {
-        const p = calcPay(l)
-        return s + p.netIncome
-      }, 0),
+      count:       inRange.length,
+      billed:      billed.reduce((s,l)  => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
+      paid:        paid.reduce((s,l)    => s + (parseFloat(l.net_pay || l.netPay)||0), 0),
+      advanceKept: inRange.reduce((s,l) => s + advanceKept(l), 0),
+      bruceGross:  inRange.reduce((s,l) => s + parseFloat(l.base_pay||0) * BRUCE_CUT, 0),
+      timGross:    inRange.reduce((s,l) => s + parseFloat(l.base_pay||0) * TIM_CUT, 0),
+      totalFuel:   inRange.reduce((s,l) => s + parseFloat(l.fuel||0), 0),
+      comdataTotal:    inRange.reduce((s,l) => s + parseFloat(l.comdata_total    || l.comdataTotal    || 0), 0),
+      lumperTotal:     inRange.reduce((s,l) => s + parseFloat(l.lumper_total     || l.lumperTotal     || 0), 0),
+      incidentalTotal: inRange.reduce((s,l) => s + parseFloat(l.incidental_total || l.incidentalTotal || 0), 0),
     }
   }
 
@@ -150,7 +143,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const leader            = bruceTotalAllTime > timTotalAllTime ? 'BRUCE' :
                             timTotalAllTime > bruceTotalAllTime ? 'TIM'   : 'TIE'
 
-  // ── SORT OLDEST TO NEWEST BY DELIVERY DATE ───────────────
   function sortByDeliveryDate(arr) {
     return [...arr].sort((a, b) => {
       const da = a.delivery_date ? new Date(a.delivery_date) : null
@@ -192,17 +184,13 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
         {['all','BRUCE','TIM','reports'].map(v => (
-          <button
-            key={v}
-            onClick={() => setView(v)}
-            style={{
-              padding:'9px 4px', borderRadius:8, border:'none',
-              fontFamily:'var(--font-head)', fontWeight:700, fontSize:12,
-              letterSpacing:'0.05em', cursor:'pointer',
-              background: view === v ? 'var(--amber)' : 'var(--navy3)',
-              color:       view === v ? 'var(--navy)' : 'var(--grey)',
-            }}
-          >
+          <button key={v} onClick={() => setView(v)} style={{
+            padding:'9px 4px', borderRadius:8, border:'none',
+            fontFamily:'var(--font-head)', fontWeight:700, fontSize:12,
+            letterSpacing:'0.05em', cursor:'pointer',
+            background: view === v ? 'var(--amber)' : 'var(--navy3)',
+            color:       view === v ? 'var(--navy)' : 'var(--grey)',
+          }}>
             {v.toUpperCase()}
           </button>
         ))}
@@ -258,7 +246,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             {periodLabel[period]} - PER DRIVER REPORT
           </div>
 
-          {/* BRUCE BILLING REPORT */}
+          {/* BRUCE BILLING */}
           <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>
               BRUCE {leader==='BRUCE'?'👑':''}
@@ -269,7 +257,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(bruceStats.billed - bruceStats.paid)}</span></div>
           </div>
 
-          {/* TIM BILLING REPORT */}
+          {/* TIM BILLING */}
           <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>
               TIM {leader==='TIM'?'👑':''}
@@ -280,7 +268,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.billed - timStats.paid)}</span></div>
           </div>
 
-          {/* COMBINED BILLING REPORT */}
+          {/* COMBINED BILLING */}
           <div className="card" style={{ borderLeft:'3px solid var(--amber)', marginBottom:20 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>
               COMBINED {periodLabel[period]}
@@ -291,22 +279,23 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt((bruceStats.billed+timStats.billed)-(bruceStats.paid+timStats.paid))}</span></div>
           </div>
 
-          {/* ── DRIVER PAY MODULE ───────────────────────────── */}
+          {/* ── DRIVER PAY MODULE ─────────────────────────── */}
           <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:13,
-                        color:'var(--amber)', letterSpacing:'0.1em', marginBottom:12 }}>
+                        color:'var(--amber)', letterSpacing:'0.1em', marginBottom:6 }}>
             {periodLabel[period]} - DRIVER PAY MODULE
           </div>
           <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)',
-                        letterSpacing:'0.06em', marginBottom:10, textAlign:'center' }}>
+                        letterSpacing:'0.06em', marginBottom:12, textAlign:'center' }}>
             BASE RATE SPLIT: BRUCE 20% / TIM 80%
           </div>
 
-          {/* BRUCE PAY — owner cut only */}
+          {/* BRUCE — owner 20% cut */}
           <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>
               BRUCE — OWNER CUT (20%)
             </div>
-            <div className="amount-row"><span className="label">Total Base Rates</span>
+            <div className="amount-row">
+              <span className="label">Total Base Rates</span>
               <span className="value">{fmt(bruceLoads.filter(l=>inPeriod(l.date||l.created_at,period)).reduce((s,l)=>s+parseFloat(l.base_pay||0),0))}</span>
             </div>
             <div style={{ borderTop:'1px solid var(--border)', marginTop:8, paddingTop:10 }}>
@@ -317,67 +306,65 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             </div>
           </div>
 
-          {/* TIM PAY — full breakdown */}
-          <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
+          {/* TIM — 80% gross only */}
+          <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:20 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>
-              TIM — DRIVER PAY BREAKDOWN
+              TIM — DRIVER PAY (80%)
             </div>
-            <div className="amount-row"><span className="label">Total Base Rates</span>
+            <div className="amount-row">
+              <span className="label">Total Base Rates</span>
               <span className="value">{fmt(timLoads.filter(l=>inPeriod(l.date||l.created_at,period)).reduce((s,l)=>s+parseFloat(l.base_pay||0),0))}</span>
-            </div>
-            <div className="amount-row"><span className="label">Tim's 80% Gross Rate</span>
-              <span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.timGross)}</span>
-            </div>
-            <div className="amount-row"><span className="label">Invoice Pay (net billable)</span>
-              <span className="value">{fmt(timStats.billed)}</span>
-            </div>
-            <div className="amount-row"><span className="label">Advance Kept</span>
-              <span className="value">{fmt(timStats.advanceKept)}</span>
-            </div>
-            <div className="amount-row"><span className="label">Fuel Costs</span>
-              <span className="value" style={{color:'var(--red)'}}>-{fmt(timStats.totalFuel)}</span>
             </div>
             <div style={{ borderTop:'1px solid var(--border)', marginTop:8, paddingTop:10 }}>
               <div className="amount-row">
-                <span className="label" style={{fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>TIM NET INCOME</span>
-                <span className="value" style={{color:'var(--green)',fontSize:18,fontWeight:900}}>{fmt(timStats.timNet)}</span>
+                <span className="label" style={{fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>TIM GROSS PAY</span>
+                <span className="value" style={{color:'var(--green)',fontSize:18,fontWeight:900}}>{fmt(timStats.timGross)}</span>
               </div>
             </div>
           </div>
 
-          {/* DRIVER ADVANCE REPORT */}
+          {/* DRIVER ADVANCE KEPT */}
           <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:13,
-                        color:'var(--amber)', letterSpacing:'0.1em', marginTop:20, marginBottom:12 }}>
+                        color:'var(--amber)', letterSpacing:'0.1em', marginBottom:6 }}>
             {periodLabel[period]} - DRIVER ADVANCE KEPT
           </div>
           <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)',
-                        letterSpacing:'0.06em', marginBottom:10, textAlign:'center' }}>
+                        letterSpacing:'0.06em', marginBottom:12, textAlign:'center' }}>
             COMDATA − LUMPERS − INCIDENTALS = KEPT BY DRIVER
           </div>
 
           <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>BRUCE — ADVANCE KEPT</div>
-            <div className="amount-row"><span className="label">Total Comdata Issued</span><span className="value" style={{color:'var(--red)'}}>{fmt(bruceLoads.filter(l=>inPeriod(l.date||l.created_at,period)).reduce((s,l)=>s+parseFloat(l.comdata_total||l.comdataTotal||0),0))}</span></div>
-            <div className="amount-row"><span className="label">Lumpers Paid</span><span className="value">{fmt(bruceLoads.filter(l=>inPeriod(l.date||l.created_at,period)).reduce((s,l)=>s+parseFloat(l.lumper_total||l.lumperTotal||0),0))}</span></div>
-            <div className="amount-row"><span className="label">Incidentals Paid</span><span className="value">{fmt(bruceLoads.filter(l=>inPeriod(l.date||l.created_at,period)).reduce((s,l)=>s+parseFloat(l.incidental_total||l.incidentalTotal||0),0))}</span></div>
+            <div className="amount-row"><span className="label">Total Comdata Issued</span><span className="value" style={{color:'var(--red)'}}>{fmt(bruceStats.comdataTotal)}</span></div>
+            <div className="amount-row"><span className="label">Lumpers Paid</span><span className="value">{fmt(bruceStats.lumperTotal)}</span></div>
+            <div className="amount-row"><span className="label">Incidentals Paid</span><span className="value">{fmt(bruceStats.incidentalTotal)}</span></div>
             <div style={{ borderTop:'1px solid var(--border)', marginTop:8, paddingTop:10 }}>
-              <div className="amount-row"><span className="label" style={{fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>TOTAL KEPT BY BRUCE</span><span className="value" style={{color:'var(--amber)',fontSize:18,fontWeight:900}}>{fmt(bruceStats.advanceKept)}</span></div>
+              <div className="amount-row">
+                <span className="label" style={{fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>TOTAL KEPT BY BRUCE</span>
+                <span className="value" style={{color:'var(--amber)',fontSize:18,fontWeight:900}}>{fmt(bruceStats.advanceKept)}</span>
+              </div>
             </div>
           </div>
 
           <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>TIM — ADVANCE KEPT</div>
-            <div className="amount-row"><span className="label">Total Comdata Issued</span><span className="value" style={{color:'var(--red)'}}>{fmt(timLoads.filter(l=>inPeriod(l.date||l.created_at,period)).reduce((s,l)=>s+parseFloat(l.comdata_total||l.comdataTotal||0),0))}</span></div>
-            <div className="amount-row"><span className="label">Lumpers Paid</span><span className="value">{fmt(timLoads.filter(l=>inPeriod(l.date||l.created_at,period)).reduce((s,l)=>s+parseFloat(l.lumper_total||l.lumperTotal||0),0))}</span></div>
-            <div className="amount-row"><span className="label">Incidentals Paid</span><span className="value">{fmt(timLoads.filter(l=>inPeriod(l.date||l.created_at,period)).reduce((s,l)=>s+parseFloat(l.incidental_total||l.incidentalTotal||0),0))}</span></div>
+            <div className="amount-row"><span className="label">Total Comdata Issued</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.comdataTotal)}</span></div>
+            <div className="amount-row"><span className="label">Lumpers Paid</span><span className="value">{fmt(timStats.lumperTotal)}</span></div>
+            <div className="amount-row"><span className="label">Incidentals Paid</span><span className="value">{fmt(timStats.incidentalTotal)}</span></div>
             <div style={{ borderTop:'1px solid var(--border)', marginTop:8, paddingTop:10 }}>
-              <div className="amount-row"><span className="label" style={{fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>TOTAL KEPT BY TIM</span><span className="value" style={{color:'var(--amber)',fontSize:18,fontWeight:900}}>{fmt(timStats.advanceKept)}</span></div>
+              <div className="amount-row">
+                <span className="label" style={{fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>TOTAL KEPT BY TIM</span>
+                <span className="value" style={{color:'var(--amber)',fontSize:18,fontWeight:900}}>{fmt(timStats.advanceKept)}</span>
+              </div>
             </div>
           </div>
 
           <div className="card" style={{ borderLeft:'3px solid var(--amber)' }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>COMBINED — ADVANCE KEPT</div>
-            <div className="amount-row"><span className="label" style={{fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>TOTAL KEPT BY BOTH DRIVERS</span><span className="value" style={{color:'var(--amber)',fontSize:18,fontWeight:900}}>{fmt(bruceStats.advanceKept+timStats.advanceKept)}</span></div>
+            <div className="amount-row">
+              <span className="label" style={{fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>TOTAL KEPT BY BOTH DRIVERS</span>
+              <span className="value" style={{color:'var(--amber)',fontSize:18,fontWeight:900}}>{fmt(bruceStats.advanceKept + timStats.advanceKept)}</span>
+            </div>
           </div>
         </div>
       )}
@@ -418,6 +405,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             const isPending  = confirmDelete === (load.id || realIdx)
             const isUpdating = updating === (load.id || realIdx)
             const pay        = calcPay(load)
+            const kept       = advanceKept(load)
+            const netPayVal  = parseFloat(load.net_pay || load.netPay) || 0
             const fuelVal    = fuelInputs[load.id] !== undefined ? fuelInputs[load.id] : (load.fuel || '')
 
             return (
@@ -444,10 +433,10 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                   </p>
 
                   <div style={{ marginTop:8, fontFamily:'var(--font-head)', fontSize:22, fontWeight:900, color:'var(--amber)' }}>
-                    {fmt(pay.netPay)}
+                    {fmt(netPayVal)}
                   </div>
 
-                  {/* ── DRIVER PAY CARD ── only show for TIM loads */}
+                  {/* TIM PAY CARD — gross pay only, fuel for awareness */}
                   {load.driver === 'TIM' && (
                     <div style={{
                       marginTop:10, background:'var(--navy3)', border:'1px solid var(--border)',
@@ -455,32 +444,28 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     }}>
                       <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)',
                                     letterSpacing:'0.08em', marginBottom:8 }}>
-                        DRIVER PAY BREAKDOWN
+                        DRIVER PAY — THIS LOAD
+                      </div>
+                      <div className="amount-row" style={{marginBottom:4}}>
+                        <span style={{fontSize:11,color:'var(--grey)'}}>Base Rate</span>
+                        <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700}}>{fmt(pay.basePay)}</span>
                       </div>
                       <div className="amount-row" style={{marginBottom:4}}>
                         <span style={{fontSize:11,color:'var(--grey)'}}>Bruce 20% cut</span>
                         <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,color:'#1e88e5'}}>{fmt(pay.bruceGross)}</span>
                       </div>
-                      <div className="amount-row" style={{marginBottom:4}}>
-                        <span style={{fontSize:11,color:'var(--grey)'}}>Tim 80% gross rate</span>
-                        <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,color:'var(--amber)'}}>{fmt(pay.timGross)}</span>
-                      </div>
-                      <div className="amount-row" style={{marginBottom:4}}>
-                        <span style={{fontSize:11,color:'var(--grey)'}}>Invoice pay</span>
-                        <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700}}>{fmt(pay.netPay)}</span>
-                      </div>
-                      {pay.advanceKept > 0 && (
-                        <div className="amount-row" style={{marginBottom:4}}>
-                          <span style={{fontSize:11,color:'var(--grey)'}}>Advance kept</span>
-                          <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700}}>{fmt(pay.advanceKept)}</span>
+                      <div style={{ borderTop:'1px solid var(--border)', marginTop:6, paddingTop:8 }}>
+                        <div className="amount-row">
+                          <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>TIM GROSS PAY</span>
+                          <span style={{fontSize:16,fontFamily:'var(--font-head)',fontWeight:900,color:'var(--green)'}}>{fmt(pay.timGross)}</span>
                         </div>
-                      )}
+                      </div>
 
-                      {/* FUEL ENTRY — inline, saves to D1 */}
+                      {/* FUEL TRACKING — separate from pay, for awareness only */}
                       <div style={{ marginTop:8, borderTop:'1px solid var(--border)', paddingTop:8 }}>
                         <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)',
                                       letterSpacing:'0.06em', marginBottom:6 }}>
-                          FUEL COST
+                          FUEL COST (TRACKING ONLY)
                         </div>
                         <div style={{ display:'flex', gap:8 }}>
                           <input
@@ -510,17 +495,10 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                           </button>
                         </div>
                       </div>
-
-                      <div style={{ borderTop:'1px solid var(--border)', marginTop:8, paddingTop:8 }}>
-                        <div className="amount-row">
-                          <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>TIM NET INCOME</span>
-                          <span style={{fontSize:16,fontFamily:'var(--font-head)',fontWeight:900,color:'var(--green)'}}>{fmt(pay.netIncome)}</span>
-                        </div>
-                      </div>
                     </div>
                   )}
 
-                  {/* BRUCE LOADS — show his 20% cut + advance kept */}
+                  {/* BRUCE PAY CARD — 20% cut only */}
                   {load.driver === 'BRUCE' && (
                     <div style={{
                       marginTop:10, background:'var(--navy3)', border:'1px solid var(--border)',
@@ -528,22 +506,22 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     }}>
                       <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)',
                                     letterSpacing:'0.08em', marginBottom:8 }}>
-                        OWNER PAY BREAKDOWN
+                        OWNER PAY — THIS LOAD
                       </div>
                       <div className="amount-row" style={{marginBottom:4}}>
-                        <span style={{fontSize:11,color:'var(--grey)'}}>Bruce 20% cut</span>
-                        <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,color:'#1e88e5'}}>{fmt(pay.bruceGross)}</span>
+                        <span style={{fontSize:11,color:'var(--grey)'}}>Base Rate</span>
+                        <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700}}>{fmt(pay.basePay)}</span>
                       </div>
-                      {pay.advanceKept > 0 && (
-                        <div className="amount-row" style={{marginBottom:4}}>
-                          <span style={{fontSize:11,color:'var(--grey)'}}>Advance kept</span>
-                          <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700}}>{fmt(pay.advanceKept)}</span>
+                      <div style={{ borderTop:'1px solid var(--border)', marginTop:6, paddingTop:8 }}>
+                        <div className="amount-row">
+                          <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:900,color:'var(--white)'}}>BRUCE GROSS CUT</span>
+                          <span style={{fontSize:16,fontFamily:'var(--font-head)',fontWeight:900,color:'#1e88e5'}}>{fmt(pay.bruceGross)}</span>
                         </div>
-                      )}
+                      </div>
                     </div>
                   )}
 
-                  {/* ADVANCE KEPT PILL — if comdata was used */}
+                  {/* ADVANCE KEPT PILL — only if comdata was used */}
                   {parseFloat(load.comdata_total || load.comdataTotal || 0) > 0 && (
                     <div style={{
                       marginTop:6, padding:'6px 10px', background:'var(--navy3)',
@@ -552,8 +530,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     }}>
                       <span style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)' }}>ADVANCE KEPT</span>
                       <span style={{ fontSize:14, fontFamily:'var(--font-head)', fontWeight:900,
-                                     color: pay.advanceKept > 0 ? 'var(--amber)' : 'var(--grey)' }}>
-                        {fmt(pay.advanceKept)}
+                                     color: kept > 0 ? 'var(--amber)' : 'var(--grey)' }}>
+                        {fmt(kept)}
                       </span>
                     </div>
                   )}
