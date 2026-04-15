@@ -102,16 +102,19 @@ export default {
       try {
         const b  = await request.json();
         const id = crypto.randomUUID();
+        // driver_id satisfies the NOT NULL constraint (same value as driver)
+        const driverVal = b.driver || '';
         await env.DB.prepare(`
           INSERT INTO loads
-            (id, driver, broker_name, broker_email, load_number,
+            (id, driver_id, driver, broker_name, broker_email, load_number,
              origin, destination, pickup_date, delivery_date,
              base_pay, lumper_total, incidental_total, comdata_total,
              detention, pallets, net_pay, notes, bol_count, status, created_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
         `).bind(
           id,
-          b.driver           || '',
+          driverVal,
+          driverVal,
           b.broker_name      || '',
           b.broker_email     || '',
           b.load_number      || '',
@@ -158,7 +161,7 @@ export default {
         const row = await env.DB.prepare(
           'SELECT driver FROM loads WHERE id=?'
         ).bind(id).first();
-        if (!row)              return json({ error: 'Load not found' }, 404);
+        if (!row)                  return json({ error: 'Load not found' }, 404);
         if (row.driver !== driver) return json({ error: 'Not authorized' }, 403);
         await env.DB.prepare('DELETE FROM loads WHERE id=?').bind(id).run();
         return json({ ok: true });
