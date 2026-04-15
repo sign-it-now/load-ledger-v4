@@ -9,22 +9,42 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const [period,        setPeriod]        = useState('monthly')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [deleting,      setDeleting]      = useState(false)
+  const [updating,      setUpdating]      = useState(null) // holds load.id being updated
 
-  function markPaid(idx) {
-    setLoads(prev => prev.map((l,i) => i === idx ? { ...l, status:'paid' } : l))
-    showToast('Marked as paid!')
+  // ── PATCH STATUS IN D1 ───────────────────────────────────
+  async function patchStatus(load, localIdx, status) {
+    setUpdating(load.id || localIdx)
+    try {
+      if (load.id) {
+        const res = await fetch(api + '/api/loads/' + load.id, {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ status }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          showToast('⚠️ Update failed: ' + (data.error || 'unknown'))
+          setUpdating(null)
+          return
+        }
+        await fetchLoads()
+        showToast(status === 'paid' ? '✅ Marked as paid!' : '✅ Marked as billed!')
+      } else {
+        // localStorage-only load — update local state only
+        setLoads(prev => prev.map((l,i) => i === localIdx ? { ...l, status } : l))
+        showToast(status === 'paid' ? '✅ Marked as paid!' : '✅ Marked as billed!')
+      }
+    } catch (err) {
+      showToast('⚠️ Update failed: ' + err.message)
+    } finally {
+      setUpdating(null)
+    }
   }
 
-  function markBilled(idx) {
-    setLoads(prev => prev.map((l,i) => i === idx ? { ...l, status:'billed' } : l))
-    showToast('Marked as billed!')
-  }
-
-  // ── DELETE FROM D1 FIRST THEN REFRESH ───────────────────
+  // ── DELETE FROM D1 ───────────────────────────────────────
   async function deleteLoad(load, localIdx) {
     setDeleting(true)
     try {
-      // If load has a D1 id, delete from D1
       if (load.id) {
         const res = await fetch(api + '/api/loads/' + load.id, {
           method:  'DELETE',
@@ -37,10 +57,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
           setDeleting(false)
           return
         }
-        // Refresh from D1
         await fetchLoads()
       } else {
-        // localStorage-only load — just remove from local state
         setLoads(prev => prev.filter((_,i) => i !== localIdx))
       }
       setConfirmDelete(null)
@@ -294,9 +312,10 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
           )}
 
           {filteredLoads.map((load, idx) => {
-            const realIdx   = loads.indexOf(load)
-            const netPayVal = parseFloat(load.net_pay || load.netPay) || 0
-            const isPending = confirmDelete === (load.id || realIdx)
+            const realIdx    = loads.indexOf(load)
+            const netPayVal  = parseFloat(load.net_pay || load.netPay) || 0
+            const isPending  = confirmDelete === (load.id || realIdx)
+            const isUpdating = updating === (load.id || realIdx)
 
             return (
               <div className="load-card" key={load.id || idx}>
@@ -338,24 +357,31 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                   </div>
 
                   <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
+
+                    {/* MARK BILLED — calls D1 PATCH */}
                     {load.status !== 'billed' && load.status !== 'paid' && (
                       <button
                         className="scan-btn secondary"
-                        style={{ flex:1, padding:'8px 12px', fontSize:13 }}
-                        onClick={() => markBilled(realIdx)}
+                        style={{ flex:1, padding:'8px 12px', fontSize:13, opacity: isUpdating ? 0.5 : 1 }}
+                        disabled={isUpdating}
+                        onClick={() => patchStatus(load, realIdx, 'billed')}
                       >
-                        MARK BILLED
+                        {isUpdating ? 'SAVING...' : 'MARK BILLED'}
                       </button>
                     )}
+
+                    {/* MARK PAID — calls D1 PATCH */}
                     {load.status !== 'paid' && (
                       <button
                         className="scan-btn success"
-                        style={{ flex:1, padding:'8px 12px', fontSize:13 }}
-                        onClick={() => markPaid(realIdx)}
+                        style={{ flex:1, padding:'8px 12px', fontSize:13, opacity: isUpdating ? 0.5 : 1 }}
+                        disabled={isUpdating}
+                        onClick={() => patchStatus(load, realIdx, 'paid')}
                       >
-                        MARK PAID
+                        {isUpdating ? 'SAVING...' : 'MARK PAID'}
                       </button>
                     )}
+
                     {load.status === 'paid' && (
                       <div style={{ fontSize:13, color:'var(--green)', fontFamily:'var(--font-head)',
                                     fontWeight:700, paddingTop:4 }}>
@@ -363,6 +389,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                       </div>
                     )}
 
+                    {/* DELETE — inline confirm, no popup */}
                     {!isPending && (
                       <button
                         style={{
@@ -383,7 +410,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     )}
                   </div>
 
-                  {/* INLINE CONFIRM — no popup, calls D1 DELETE */}
+                  {/* INLINE CONFIRM DELETE */}
                   {isPending && (
                     <div style={{
                       marginTop:12,
