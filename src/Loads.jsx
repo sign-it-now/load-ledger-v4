@@ -5,8 +5,9 @@ import { useState } from 'react'
 
 export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
-  const [view,   setView]   = useState('all')
-  const [period, setPeriod] = useState('monthly')
+  const [view,          setView]          = useState('all')
+  const [period,        setPeriod]        = useState('monthly')
+  const [confirmDelete, setConfirmDelete] = useState(null) // holds realIdx of load pending delete
 
   function markPaid(idx) {
     setLoads(prev => prev.map((l,i) => i === idx ? { ...l, status:'paid' } : l))
@@ -19,9 +20,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   }
 
   function deleteLoad(idx) {
-    const ok = window.confirm('Delete this load? This cannot be undone.')
-    if (!ok) return
     setLoads(prev => prev.filter((_,i) => i !== idx))
+    setConfirmDelete(null)
     showToast('Load deleted')
   }
 
@@ -73,8 +73,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                             timTotalAllTime > bruceTotalAllTime ? 'TIM'   : 'TIE'
 
   // ── SORT OLDEST TO NEWEST BY DELIVERY DATE ───────────────
-  // delivery_date comes from the rate confirmation — matches paper records
-  // Loads with no delivery_date sort to the end
   function sortByDeliveryDate(arr) {
     return [...arr].sort((a, b) => {
       const da = a.delivery_date ? new Date(a.delivery_date) : null
@@ -86,9 +84,9 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     })
   }
 
-  const rawFiltered = view === 'all'   ? loads :
-                      view === 'BRUCE' ? bruceLoads :
-                      view === 'TIM'   ? timLoads   : []
+  const rawFiltered   = view === 'all'   ? loads :
+                        view === 'BRUCE' ? bruceLoads :
+                        view === 'TIM'   ? timLoads   : []
 
   const filteredLoads = sortByDeliveryDate(rawFiltered)
 
@@ -96,8 +94,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const totalPaid   = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s + (parseFloat(l.net_pay || l.netPay)||0), 0)
   const totalUnpaid = totalNet - totalPaid
 
-  const bruceStats = driverStats(bruceLoads, period)
-  const timStats   = driverStats(timLoads,   period)
+  const bruceStats  = driverStats(bruceLoads, period)
+  const timStats    = driverStats(timLoads,   period)
 
   const periodLabel = { daily:'TODAY', weekly:'THIS WEEK', monthly:'THIS MONTH', yearly:'THIS YEAR' }
 
@@ -255,7 +253,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             </div>
           </div>
 
-          {/* SORTED OLDEST TO NEWEST — label shows for accounting */}
           <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)',
                         letterSpacing:'0.08em', marginBottom:10, textAlign:'center' }}>
             SORTED BY DELIVERY DATE — OLDEST FIRST
@@ -270,8 +267,10 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
           )}
 
           {filteredLoads.map((load, idx) => {
-            const realIdx = loads.indexOf(load)
-            const netPayVal = parseFloat(load.net_pay || load.netPay) || 0
+            const realIdx    = loads.indexOf(load)
+            const netPayVal  = parseFloat(load.net_pay || load.netPay) || 0
+            const isPending  = confirmDelete === realIdx
+
             return (
               <div className="load-card" key={idx}>
                 <div className="load-card-info" style={{ flex:1 }}>
@@ -294,12 +293,9 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                   <p>Load # {load.load_number || '-'}</p>
                   <p>{load.origin || '-'} to {load.destination || '-'}</p>
 
-                  {/* DELIVERY DATE — from rate confirmation — for accounting cross-reference */}
                   <p style={{ color:'var(--amber)', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, marginTop:2 }}>
                     Delivery: {load.delivery_date || '-'}
                   </p>
-
-                  {/* INVOICED DATE — when the invoice was generated */}
                   <p style={{ color:'var(--grey)', fontSize:11 }}>
                     Invoiced: {(load.created_at || load.date) ? new Date(load.created_at || load.date).toLocaleDateString() : '-'}
                   </p>
@@ -339,23 +335,67 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                         PAYMENT RECEIVED
                       </div>
                     )}
-                    <button
-                      style={{
-                        padding:'8px 12px',
-                        borderRadius:8,
-                        border:'1px solid #555',
-                        background:'transparent',
-                        color:'#888',
-                        fontSize:13,
-                        fontFamily:'var(--font-head)',
-                        fontWeight:700,
-                        cursor:'pointer',
-                      }}
-                      onClick={() => deleteLoad(realIdx)}
-                    >
-                      DELETE
-                    </button>
+
+                    {/* INLINE DELETE — no popup */}
+                    {!isPending && (
+                      <button
+                        style={{
+                          padding:'8px 12px',
+                          borderRadius:8,
+                          border:'1px solid #555',
+                          background:'transparent',
+                          color:'#888',
+                          fontSize:13,
+                          fontFamily:'var(--font-head)',
+                          fontWeight:700,
+                          cursor:'pointer',
+                        }}
+                        onClick={() => setConfirmDelete(realIdx)}
+                      >
+                        DELETE
+                      </button>
+                    )}
                   </div>
+
+                  {/* CONFIRM DELETE — appears inline, no popup */}
+                  {isPending && (
+                    <div style={{
+                      marginTop:12,
+                      background:'#2a0a0a',
+                      border:'1px solid #e53935',
+                      borderRadius:8,
+                      padding:'12px 14px',
+                    }}>
+                      <div style={{ fontSize:12, color:'#e53935', fontFamily:'var(--font-head)',
+                                    fontWeight:700, marginBottom:10 }}>
+                        DELETE THIS LOAD? THIS CANNOT BE UNDONE.
+                      </div>
+                      <div style={{ display:'flex', gap:8 }}>
+                        <button
+                          onClick={() => deleteLoad(realIdx)}
+                          style={{
+                            flex:1, padding:'10px 0', borderRadius:8, border:'none',
+                            background:'#e53935', color:'#fff', fontSize:13,
+                            fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
+                          }}
+                        >
+                          CONFIRM DELETE
+                        </button>
+                        <button
+                          onClick={() => setConfirmDelete(null)}
+                          style={{
+                            flex:1, padding:'10px 0', borderRadius:8,
+                            border:'1px solid #555', background:'transparent',
+                            color:'#aaa', fontSize:13, fontFamily:'var(--font-head)',
+                            fontWeight:700, cursor:'pointer',
+                          }}
+                        >
+                          CANCEL
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                 </div>
 
                 <div style={{ marginLeft:12, display:'flex', flexDirection:'column', alignItems:'flex-end' }}>
