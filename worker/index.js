@@ -221,8 +221,7 @@ export default {
         const bytes  = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
         const ext   = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
-        const r2Key = 'credentials/' + driver + '/' + credKey + '.' + ext
-        await env.R2.put(r2Key, bytes, { httpMetadata: { contentType: mediaType } })
+        await env.R2.put('credentials/' + driver + '/' + credKey + '.' + ext, bytes, { httpMetadata: { contentType: mediaType } })
         return json({ ok: true, url: '/api/credentials/' + driver + '/file/' + credKey })
       } catch(e) {
         return json({ error: e.message }, 500)
@@ -273,8 +272,8 @@ export default {
         if (!b.driver) return json({ error: 'Missing driver' }, 400)
         await env.DB.prepare(`
           INSERT INTO maintenance_ledger
-            (id, driver, entry_date, category, description, amount, receipt_url, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            (id, driver, entry_date, category, description, amount, paid_by, receipt_url, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         `).bind(
           id,
           b.driver.toUpperCase(),
@@ -282,9 +281,29 @@ export default {
           b.category     || 'Other',
           b.description  || '',
           parseFloat(b.amount) || 0,
+          b.paid_by      || 'TIM',
           b.receipt_url  || '',
         ).run()
         return json({ id })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── MAINTENANCE PATCH (paid_by update) ───────────────
+    if (path.startsWith('/api/maintenance/') && path.split('/').length === 4 && request.method === 'PATCH') {
+      try {
+        const id = path.split('/')[3]
+        const b  = await request.json()
+        const fields = []
+        const values = []
+        if (b.paid_by !== undefined) { fields.push('paid_by=?'); values.push(b.paid_by); }
+        if (fields.length === 0) return json({ error: 'Nothing to update' }, 400)
+        values.push(id)
+        await env.DB.prepare(
+          'UPDATE maintenance_ledger SET ' + fields.join(', ') + ' WHERE id=?'
+        ).bind(...values).run()
+        return json({ ok: true })
       } catch(e) {
         return json({ error: e.message }, 500)
       }
@@ -298,7 +317,6 @@ export default {
         const row = await env.DB.prepare('SELECT driver FROM maintenance_ledger WHERE id=?').bind(id).first()
         if (!row) return json({ error: 'Entry not found' }, 404)
         if (row.driver !== driver.toUpperCase()) return json({ error: 'Not authorized' }, 403)
-        // Also delete receipt from R2 if it exists
         if (env.R2) {
           await env.R2.delete('maintenance/' + id + '.pdf').catch(() => {})
           await env.R2.delete('maintenance/' + id + '.jpg').catch(() => {})
@@ -314,15 +332,13 @@ export default {
     if (path.startsWith('/api/maintenance-receipt/') && request.method === 'POST') {
       try {
         const entryId = path.split('/')[3]
-        if (!entryId) return json({ error: 'Missing entry id' }, 400)
         if (!env.R2) return json({ error: 'R2 not configured' }, 500)
         const { base64, mediaType } = await request.json()
         const binary = atob(base64)
         const bytes  = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
         const ext   = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
-        const r2Key = 'maintenance/' + entryId + '.' + ext
-        await env.R2.put(r2Key, bytes, { httpMetadata: { contentType: mediaType } })
+        await env.R2.put('maintenance/' + entryId + '.' + ext, bytes, { httpMetadata: { contentType: mediaType } })
         const receiptUrl = '/api/maintenance-receipt/' + entryId
         await env.DB.prepare('UPDATE maintenance_ledger SET receipt_url=? WHERE id=?').bind(receiptUrl, entryId).run()
         return json({ ok: true, url: receiptUrl })
