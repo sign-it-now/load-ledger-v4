@@ -68,10 +68,7 @@ export default {
           body: JSON.stringify({
             model:      'claude-sonnet-4-20250514',
             max_tokens: 1024,
-            messages: [{
-              role:    'user',
-              content: [contentBlock, { type: 'text', text: prompt }],
-            }],
+            messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
           }),
         });
         const raw = await res.text();
@@ -132,8 +129,7 @@ export default {
         const binary = atob(base64)
         const bytes  = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-        const key = 'invoices/' + loadId + '.pdf'
-        await env.R2.put(key, bytes, { httpMetadata: { contentType: 'application/pdf' } })
+        await env.R2.put('invoices/' + loadId + '.pdf', bytes, { httpMetadata: { contentType: 'application/pdf' } })
         const invoiceUrl = '/api/invoice/' + loadId
         await env.DB.prepare('UPDATE loads SET invoice_url=? WHERE id=?').bind(invoiceUrl, loadId).run()
         return json({ ok: true, url: invoiceUrl })
@@ -146,17 +142,11 @@ export default {
     if (path.startsWith('/api/invoice/') && request.method === 'GET') {
       try {
         const loadId = path.replace('/api/invoice/', '')
-        if (!loadId) return json({ error: 'Missing load id' }, 400);
         if (!env.R2) return json({ error: 'R2 not configured' }, 500);
         const object = await env.R2.get('invoices/' + loadId + '.pdf')
         if (!object) return new Response('Invoice not found', { status: 404, headers: CORS })
         return new Response(object.body, {
-          headers: {
-            ...CORS,
-            'Content-Type':        'application/pdf',
-            'Content-Disposition': 'inline',
-            'Cache-Control':       'private, max-age=3600',
-          },
+          headers: { ...CORS, 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
         })
       } catch(e) {
         return json({ error: e.message }, 500);
@@ -167,10 +157,7 @@ export default {
     if (path.startsWith('/api/credentials/') && !path.includes('/file/') && request.method === 'GET') {
       try {
         const driver = path.split('/')[3].toUpperCase()
-        if (!driver) return json({ error: 'Missing driver' }, 400)
-        let row = await env.DB.prepare(
-          'SELECT * FROM driver_credentials WHERE driver=?'
-        ).bind(driver).first()
+        let row = await env.DB.prepare('SELECT * FROM driver_credentials WHERE driver=?').bind(driver).first()
         if (!row) {
           row = {
             driver,
@@ -191,7 +178,6 @@ export default {
     if (path.startsWith('/api/credentials/') && !path.includes('/file/') && request.method === 'PATCH') {
       try {
         const driver = path.split('/')[3].toUpperCase()
-        if (!driver) return json({ error: 'Missing driver' }, 400)
         const b = await request.json()
         await env.DB.prepare(`
           INSERT INTO driver_credentials
@@ -200,26 +186,22 @@ export default {
              authority_snooze, insurance_snooze, heavy_use_tax_snooze, updated_at)
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
           ON CONFLICT(driver) DO UPDATE SET
-            dot_physical           = excluded.dot_physical,
-            drivers_license        = excluded.drivers_license,
-            plates                 = excluded.plates,
-            authority              = excluded.authority,
-            insurance              = excluded.insurance,
-            heavy_use_tax          = excluded.heavy_use_tax,
-            dot_physical_snooze    = excluded.dot_physical_snooze,
-            drivers_license_snooze = excluded.drivers_license_snooze,
-            plates_snooze          = excluded.plates_snooze,
-            authority_snooze       = excluded.authority_snooze,
-            insurance_snooze       = excluded.insurance_snooze,
-            heavy_use_tax_snooze   = excluded.heavy_use_tax_snooze,
-            updated_at             = excluded.updated_at
+            dot_physical=excluded.dot_physical, drivers_license=excluded.drivers_license,
+            plates=excluded.plates, authority=excluded.authority,
+            insurance=excluded.insurance, heavy_use_tax=excluded.heavy_use_tax,
+            dot_physical_snooze=excluded.dot_physical_snooze,
+            drivers_license_snooze=excluded.drivers_license_snooze,
+            plates_snooze=excluded.plates_snooze, authority_snooze=excluded.authority_snooze,
+            insurance_snooze=excluded.insurance_snooze,
+            heavy_use_tax_snooze=excluded.heavy_use_tax_snooze,
+            updated_at=excluded.updated_at
         `).bind(
           driver,
-          b.dot_physical || '', b.drivers_license || '', b.plates || '',
-          b.authority || '', b.insurance || '', b.heavy_use_tax || '',
-          b.dot_physical_snooze || '', b.drivers_license_snooze || '',
-          b.plates_snooze || '', b.authority_snooze || '',
-          b.insurance_snooze || '', b.heavy_use_tax_snooze || '',
+          b.dot_physical||'', b.drivers_license||'', b.plates||'',
+          b.authority||'', b.insurance||'', b.heavy_use_tax||'',
+          b.dot_physical_snooze||'', b.drivers_license_snooze||'',
+          b.plates_snooze||'', b.authority_snooze||'',
+          b.insurance_snooze||'', b.heavy_use_tax_snooze||'',
         ).run()
         return json({ ok: true })
       } catch(e) {
@@ -228,28 +210,19 @@ export default {
     }
 
     // ── UPLOAD CREDENTIAL FILE TO R2 ─────────────────────
-    // POST /api/credentials/:driver/file/:key
-    // Stores file under credentials/DRIVER/key.ext
     if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'POST') {
       try {
-        const parts     = path.split('/')
-        const driver    = parts[3].toUpperCase()
-        const credKey   = parts[5]
-        if (!driver || !credKey) return json({ error: 'Missing driver or key' }, 400)
+        const parts   = path.split('/')
+        const driver  = parts[3].toUpperCase()
+        const credKey = parts[5]
         if (!env.R2) return json({ error: 'R2 not configured' }, 500)
-
         const { base64, mediaType } = await request.json()
-        if (!base64 || !mediaType) return json({ error: 'Missing base64 or mediaType' }, 400)
-
         const binary = atob(base64)
         const bytes  = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-
-        const ext = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
+        const ext   = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
         const r2Key = 'credentials/' + driver + '/' + credKey + '.' + ext
-
         await env.R2.put(r2Key, bytes, { httpMetadata: { contentType: mediaType } })
-
         return json({ ok: true, url: '/api/credentials/' + driver + '/file/' + credKey })
       } catch(e) {
         return json({ error: e.message }, 500)
@@ -257,16 +230,12 @@ export default {
     }
 
     // ── SERVE CREDENTIAL FILE FROM R2 ────────────────────
-    // GET /api/credentials/:driver/file/:key
     if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'GET') {
       try {
         const parts   = path.split('/')
         const driver  = parts[3].toUpperCase()
         const credKey = parts[5]
-        if (!driver || !credKey) return json({ error: 'Missing driver or key' }, 400)
         if (!env.R2) return json({ error: 'R2 not configured' }, 500)
-
-        // Try PDF first, then JPG
         let object = await env.R2.get('credentials/' + driver + '/' + credKey + '.pdf')
         let contentType = 'application/pdf'
         if (!object) {
@@ -274,14 +243,108 @@ export default {
           contentType = 'image/jpeg'
         }
         if (!object) return new Response('File not found', { status: 404, headers: CORS })
-
         return new Response(object.body, {
-          headers: {
-            ...CORS,
-            'Content-Type':        contentType,
-            'Content-Disposition': 'inline',
-            'Cache-Control':       'private, max-age=3600',
-          },
+          headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
+        })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── MAINTENANCE GET (by driver) ──────────────────────
+    if (path.startsWith('/api/maintenance/') && request.method === 'GET') {
+      try {
+        const driver = path.split('/')[3].toUpperCase()
+        if (!driver) return json({ error: 'Missing driver' }, 400)
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM maintenance_ledger WHERE driver=? ORDER BY entry_date DESC, created_at DESC LIMIT 200'
+        ).bind(driver).all()
+        return json(results)
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── MAINTENANCE POST ─────────────────────────────────
+    if (path === '/api/maintenance' && request.method === 'POST') {
+      try {
+        const b  = await request.json()
+        const id = crypto.randomUUID()
+        if (!b.driver) return json({ error: 'Missing driver' }, 400)
+        await env.DB.prepare(`
+          INSERT INTO maintenance_ledger
+            (id, driver, entry_date, category, description, amount, receipt_url, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        `).bind(
+          id,
+          b.driver.toUpperCase(),
+          b.entry_date   || '',
+          b.category     || 'Other',
+          b.description  || '',
+          parseFloat(b.amount) || 0,
+          b.receipt_url  || '',
+        ).run()
+        return json({ id })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── MAINTENANCE DELETE ───────────────────────────────
+    if (path.startsWith('/api/maintenance/') && path.split('/').length === 4 && request.method === 'DELETE') {
+      try {
+        const id = path.split('/')[3]
+        const { driver } = await request.json()
+        const row = await env.DB.prepare('SELECT driver FROM maintenance_ledger WHERE id=?').bind(id).first()
+        if (!row) return json({ error: 'Entry not found' }, 404)
+        if (row.driver !== driver.toUpperCase()) return json({ error: 'Not authorized' }, 403)
+        // Also delete receipt from R2 if it exists
+        if (env.R2) {
+          await env.R2.delete('maintenance/' + id + '.pdf').catch(() => {})
+          await env.R2.delete('maintenance/' + id + '.jpg').catch(() => {})
+        }
+        await env.DB.prepare('DELETE FROM maintenance_ledger WHERE id=?').bind(id).run()
+        return json({ ok: true })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── UPLOAD MAINTENANCE RECEIPT TO R2 ─────────────────
+    if (path.startsWith('/api/maintenance-receipt/') && request.method === 'POST') {
+      try {
+        const entryId = path.split('/')[3]
+        if (!entryId) return json({ error: 'Missing entry id' }, 400)
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500)
+        const { base64, mediaType } = await request.json()
+        const binary = atob(base64)
+        const bytes  = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        const ext   = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
+        const r2Key = 'maintenance/' + entryId + '.' + ext
+        await env.R2.put(r2Key, bytes, { httpMetadata: { contentType: mediaType } })
+        const receiptUrl = '/api/maintenance-receipt/' + entryId
+        await env.DB.prepare('UPDATE maintenance_ledger SET receipt_url=? WHERE id=?').bind(receiptUrl, entryId).run()
+        return json({ ok: true, url: receiptUrl })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── SERVE MAINTENANCE RECEIPT FROM R2 ────────────────
+    if (path.startsWith('/api/maintenance-receipt/') && request.method === 'GET') {
+      try {
+        const entryId = path.split('/')[3]
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500)
+        let object = await env.R2.get('maintenance/' + entryId + '.pdf')
+        let contentType = 'application/pdf'
+        if (!object) {
+          object = await env.R2.get('maintenance/' + entryId + '.jpg')
+          contentType = 'image/jpeg'
+        }
+        if (!object) return new Response('Receipt not found', { status: 404, headers: CORS })
+        return new Response(object.body, {
+          headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
         })
       } catch(e) {
         return json({ error: e.message }, 500)
@@ -299,9 +362,7 @@ export default {
         if (b.fuel   !== undefined) { fields.push('fuel=?');   values.push(parseFloat(b.fuel) || 0); }
         if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
         values.push(id);
-        await env.DB.prepare(
-          'UPDATE loads SET ' + fields.join(', ') + ' WHERE id=?'
-        ).bind(...values).run();
+        await env.DB.prepare('UPDATE loads SET ' + fields.join(', ') + ' WHERE id=?').bind(...values).run();
         return json({ ok: true });
       } catch(e) {
         return json({ error: e.message }, 500);
