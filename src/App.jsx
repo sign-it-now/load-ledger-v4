@@ -3,78 +3,107 @@
 // Load Ledger V4
 
 import { useState, useEffect } from 'react'
-import RateCon from './RateCon.jsx'
-import Invoice from './Invoice.jsx'
-import Loads   from './Loads.jsx'
+import RateCon       from './RateCon.jsx'
+import Invoice       from './Invoice.jsx'
+import Loads         from './Loads.jsx'
+import DriverProfile from './DriverProfile.jsx'
 
 const API = 'https://load-ledger-v4.d49rwgmpj9.workers.dev'
 
+const CRED_LABELS = {
+  dot_physical:    'DOT Physical',
+  drivers_license: "Driver's License",
+  plates:          'Truck Plates',
+  authority:       'Authority (MC#)',
+  insurance:       'Insurance',
+  heavy_use_tax:   'Heavy Use Tax',
+}
+
+function daysUntil(dateStr) {
+  if (!dateStr) return null
+  const exp = new Date(dateStr)
+  const now = new Date()
+  now.setHours(0,0,0,0)
+  exp.setHours(0,0,0,0)
+  return Math.ceil((exp - now) / (1000 * 60 * 60 * 24))
+}
+
 export default function App() {
-  const [tab,    setTab]    = useState('ratecon')
-  const [load,   setLoad]   = useState(newLoad())
-  const [toast,  setToast]  = useState(null)
-  const [loads,  setLoads]  = useState([])
+  const [tab,      setTab]      = useState('ratecon')
+  const [driver,   setDriver]   = useState(null)
+  const [load,     setLoad]     = useState(newLoad())
+  const [loads,    setLoads]    = useState([])
+  const [toast,    setToast]    = useState(null)
+  const [pinInput, setPinInput] = useState('')
+  const [pinError, setPinError] = useState(false)
+  const [pinDriver,setPinDriver]= useState(null)
 
-  // Auth state — check localStorage on startup for auto-login
-  const [driver,     setDriver]     = useState(() => localStorage.getItem('ll_v4_driver') || null)
-  const [pinDriver,  setPinDriver]  = useState(null)
-  const [pinValue,   setPinValue]   = useState('')
-  const [pinError,   setPinError]   = useState('')
-  const [pinLoading, setPinLoading] = useState(false)
+  // ── CREDENTIAL ALERTS ────────────────────────────────────
+  const [credAlerts,    setCredAlerts]    = useState([])  // [{key, label, days}]
+  const [alertIdx,      setAlertIdx]      = useState(0)   // which alert showing
+  const [snoozeInput,   setSnoozeInput]   = useState('')  // date string for snooze
+  const [showSnooze,    setShowSnooze]    = useState(false)
 
-  // Fetch loads from D1 any time driver is set
-  useEffect(() => {
-    if (driver) fetchLoads()
-  }, [driver])
-
+  // ── FETCH LOADS FROM D1 ──────────────────────────────────
   async function fetchLoads() {
     try {
       const res  = await fetch(API + '/api/loads')
       const data = await res.json()
-      if (Array.isArray(data)) setLoads(data)
-    } catch {
-      showToast('Could not load data — check connection')
-    }
-  }
-
-  async function submitPin() {
-    if (!pinValue) return
-    setPinLoading(true)
-    setPinError('')
-    try {
-      const res  = await fetch(API + '/api/auth', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ driver: pinDriver, pin: pinValue }),
-      })
-      const data = await res.json()
-      if (!res.ok || !data.ok) {
-        setPinError(data.error || 'Wrong PIN — try again')
-        setPinValue('')
-      } else {
-        localStorage.setItem('ll_v4_driver', pinDriver)
-        setDriver(pinDriver)
-        setPinDriver(null)
-        setPinValue('')
+      if (Array.isArray(data)) {
+        setLoads(data)
+        try { localStorage.setItem('ll_v4_loads', JSON.stringify(data)) } catch {}
       }
     } catch {
-      setPinError('Connection error — try again')
-      setPinValue('')
-    } finally {
-      setPinLoading(false)
+      try {
+        const saved = localStorage.getItem('ll_v4_loads')
+        if (saved) setLoads(JSON.parse(saved))
+      } catch {}
     }
   }
 
-  function logout() {
-    localStorage.removeItem('ll_v4_driver')
-    setDriver(null)
-    setLoad(newLoad())
-    setLoads([])
-    setTab('ratecon')
-    setPinDriver(null)
-    setPinValue('')
-    setPinError('')
+  // ── FETCH CREDENTIALS AND BUILD ALERTS ──────────────────
+  async function checkCredentials(driverName) {
+    try {
+      const res  = await fetch(API + '/api/credentials/' + driverName)
+      const data = await res.json()
+      const today = new Date().toISOString().split('T')[0]
+      const alerts = []
+
+      Object.keys(CRED_LABELS).forEach(key => {
+        const expDate    = data[key] || ''
+        const snoozeDate = data[key + '_snooze'] || ''
+        const days       = daysUntil(expDate)
+
+        // Skip if snoozed until a future date
+        if (snoozeDate && snoozeDate > today) return
+
+        // Alert if expired or expiring within 30 days
+        if (days !== null && days <= 30) {
+          alerts.push({ key, label: CRED_LABELS[key], days, expDate })
+        }
+        // Alert if not set at all
+        if (!expDate) {
+          alerts.push({ key, label: CRED_LABELS[key], days: null, expDate: '' })
+        }
+      })
+
+      if (alerts.length > 0) {
+        setCredAlerts(alerts)
+        setAlertIdx(0)
+        setShowSnooze(false)
+        setSnoozeInput('')
+      }
+    } catch (err) {
+      console.error('Failed to check credentials:', err)
+    }
   }
+
+  useEffect(() => {
+    if (driver) {
+      fetchLoads()
+      checkCredentials(driver)
+    }
+  }, [driver])
 
   function newLoad() {
     return {
@@ -100,7 +129,7 @@ export default function App() {
 
   function showToast(msg) {
     setToast(msg)
-    setTimeout(() => setToast(null), 2500)
+    setTimeout(() => setToast(null), 3000)
   }
 
   function resetLoad() {
@@ -108,93 +137,302 @@ export default function App() {
     setTab('ratecon')
   }
 
-  // ── PIN SCREEN ────────────────────────────────────────
+  function logout() {
+    setDriver(null)
+    setPinInput('')
+    setPinDriver(null)
+    setPinError(false)
+    resetLoad()
+    setLoads([])
+    setCredAlerts([])
+  }
+
+  // ── PIN HANDLERS ─────────────────────────────────────────
+  function selectDriverForPin(d) {
+    setPinDriver(d)
+    setPinInput('')
+    setPinError(false)
+  }
+
+  async function handlePinKey(key) {
+    if (key === 'DEL') {
+      setPinInput(p => p.slice(0, -1))
+      setPinError(false)
+      return
+    }
+    const next = pinInput + key
+    setPinInput(next)
+    if (next.length === 4) {
+      try {
+        const res  = await fetch(API + '/api/auth', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ driver: pinDriver, pin: next }),
+        })
+        const data = await res.json()
+        if (data.ok) {
+          setDriver(pinDriver)
+          setPinInput('')
+          setPinDriver(null)
+          setPinError(false)
+        } else {
+          setPinError(true)
+          setTimeout(() => { setPinInput(''); setPinError(false) }, 800)
+        }
+      } catch {
+        setPinError(true)
+        setTimeout(() => { setPinInput(''); setPinError(false) }, 800)
+      }
+    }
+  }
+
+  // ── CREDENTIAL ALERT HANDLERS ────────────────────────────
+  const currentAlert = credAlerts[alertIdx] || null
+
+  function dismissAlert() {
+    // OK — dismiss this alert for the session, move to next
+    const next = alertIdx + 1
+    if (next >= credAlerts.length) {
+      setCredAlerts([])
+      setAlertIdx(0)
+    } else {
+      setAlertIdx(next)
+    }
+    setShowSnooze(false)
+    setSnoozeInput('')
+  }
+
+  async function snoozeAlert() {
+    if (!snoozeInput || !currentAlert) return
+    // Save snooze date to D1
+    try {
+      const res  = await fetch(API + '/api/credentials/' + driver)
+      const data = await res.json()
+      const updated = { ...data, [currentAlert.key + '_snooze']: snoozeInput }
+      await fetch(API + '/api/credentials/' + driver, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(updated),
+      })
+    } catch (err) {
+      console.error('Snooze save failed:', err)
+    }
+    dismissAlert()
+  }
+
+  // ── CREDENTIAL ALERT OVERLAY ─────────────────────────────
+  function renderCredAlert() {
+    if (!currentAlert || !driver) return null
+    const { label, days, expDate } = currentAlert
+    const isExpired = days !== null && days < 0
+    const isUnset   = days === null
+    const isSoon    = days !== null && days >= 0 && days <= 30
+
+    const bgColor    = isExpired ? '#2a0a0a' : isUnset ? '#1a1a0a' : '#1a1200'
+    const borderColor= isExpired ? '#e53935' : '#ffb300'
+    const titleColor = isExpired ? '#e53935' : '#ffb300'
+
+    return (
+      <div style={{
+        position:'fixed', top:0, left:0, right:0, bottom:0,
+        background:'rgba(0,0,0,0.85)', zIndex:9999,
+        display:'flex', alignItems:'center', justifyContent:'center',
+        padding:24,
+      }}>
+        <div style={{
+          background: bgColor, border:'2px solid ' + borderColor,
+          borderRadius:14, padding:24, width:'100%', maxWidth:360,
+        }}>
+          <div style={{
+            fontSize:13, color: titleColor, fontFamily:'var(--font-head)',
+            fontWeight:900, letterSpacing:'0.1em', marginBottom:8,
+          }}>
+            ⚠️ CREDENTIAL ALERT
+          </div>
+
+          <div style={{ fontSize:20, fontFamily:'var(--font-head)', fontWeight:900,
+                        color:'var(--white)', marginBottom:8 }}>
+            {label}
+          </div>
+
+          <div style={{ fontSize:14, color: titleColor, fontFamily:'var(--font-head)',
+                        fontWeight:700, marginBottom:16 }}>
+            {isUnset   && 'No expiration date on file. Please update.'}
+            {isExpired && 'EXPIRED ' + Math.abs(days) + ' days ago!'}
+            {isSoon    && (days === 0 ? 'EXPIRES TODAY!' : 'Expires in ' + days + ' day' + (days !== 1 ? 's' : '') + '!')}
+          </div>
+
+          {expDate && (
+            <div style={{ fontSize:11, color:'var(--grey)', marginBottom:16 }}>
+              Current expiration: {new Date(expDate + 'T12:00:00').toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })}
+            </div>
+          )}
+
+          {credAlerts.length > 1 && (
+            <div style={{ fontSize:11, color:'var(--grey)', marginBottom:16 }}>
+              Alert {alertIdx + 1} of {credAlerts.length}
+            </div>
+          )}
+
+          {/* SNOOZE SECTION */}
+          {!showSnooze ? (
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              <button
+                onClick={() => { dismissAlert(); setTab('profile') }}
+                style={{
+                  padding:'14px 0', borderRadius:8, border:'none',
+                  background:'var(--amber)', color:'var(--navy)',
+                  fontSize:14, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
+                }}
+              >
+                UPDATE NOW
+              </button>
+              <button
+                onClick={() => setShowSnooze(true)}
+                style={{
+                  padding:'12px 0', borderRadius:8,
+                  border:'1px solid var(--border)', background:'transparent',
+                  color:'var(--grey)', fontSize:13,
+                  fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                }}
+              >
+                REMIND ME ON A SPECIFIC DATE
+              </button>
+              <button
+                onClick={dismissAlert}
+                style={{
+                  padding:'12px 0', borderRadius:8,
+                  border:'1px solid #333', background:'transparent',
+                  color:'#666', fontSize:12,
+                  fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                }}
+              >
+                OK — DISMISS FOR NOW
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)',
+                            letterSpacing:'0.06em', marginBottom:8 }}>
+                REMIND ME ON THIS DATE
+              </div>
+              <input
+                type="date"
+                value={snoozeInput}
+                onChange={e => setSnoozeInput(e.target.value)}
+                style={{
+                  width:'100%', background:'var(--navy3)',
+                  border:'1px solid var(--amber)', color:'var(--white)',
+                  borderRadius:8, padding:'12px 14px', fontSize:16,
+                  fontFamily:'var(--font-body)', marginBottom:10,
+                  boxSizing:'border-box',
+                }}
+              />
+              <div style={{ display:'flex', gap:8 }}>
+                <button
+                  disabled={!snoozeInput}
+                  onClick={snoozeAlert}
+                  style={{
+                    flex:1, padding:'12px 0', borderRadius:8, border:'none',
+                    background: snoozeInput ? 'var(--amber)' : '#555',
+                    color:'var(--navy)', fontSize:13,
+                    fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
+                  }}
+                >
+                  SET REMINDER
+                </button>
+                <button
+                  onClick={() => { setShowSnooze(false); setSnoozeInput('') }}
+                  style={{
+                    flex:1, padding:'12px 0', borderRadius:8,
+                    border:'1px solid var(--border)', background:'transparent',
+                    color:'var(--grey)', fontSize:13,
+                    fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                  }}
+                >
+                  BACK
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ── PIN SCREEN ───────────────────────────────────────────
   if (!driver) {
     return (
       <div style={{ display:'flex', flexDirection:'column', height:'100dvh', background:'var(--navy)' }}>
-
         <div className="app-header">
           <div className="app-logo">LOAD<span>LEDGER</span></div>
           <div className="badge">V4</div>
         </div>
 
-        <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:32 }}>
-
+        <div className="tab-content" style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
           {!pinDriver ? (
             <>
-              <div style={{ fontFamily:'var(--font-head)', fontSize:13, letterSpacing:'0.15em', color:'var(--grey)', marginBottom:28 }}>
-                WHO ARE YOU?
+              <div className="empty-state" style={{ paddingTop:0 }}>
+                <div className="icon">🚛</div>
+                <h3>SELECT YOUR NAME</h3>
+                <p>Tap your name to enter your PIN</p>
               </div>
-              <div style={{ display:'flex', gap:16 }}>
-                <button
-                  className="driver-btn active"
-                  style={{ fontSize:18, padding:'18px 36px' }}
-                  onClick={() => { setPinDriver('BRUCE'); setPinError('') }}
-                >
-                  BRUCE
-                </button>
-                <button
-                  className="driver-btn active"
-                  style={{ fontSize:18, padding:'18px 36px' }}
-                  onClick={() => { setPinDriver('TIM'); setPinError('') }}
-                >
-                  TIM
-                </button>
+              <div style={{ display:'flex', gap:16, marginTop:8 }}>
+                {['BRUCE','TIM'].map(d => (
+                  <button key={d} className="driver-btn"
+                    style={{ fontSize:20, padding:'18px 36px' }}
+                    onClick={() => selectDriverForPin(d)}>
+                    {d}
+                  </button>
+                ))}
               </div>
             </>
           ) : (
-            <>
-              <div style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, letterSpacing:'0.1em', color:'var(--amber)', marginBottom:6 }}>
-                {pinDriver}
-              </div>
-              <div style={{ fontFamily:'var(--font-head)', fontSize:12, letterSpacing:'0.15em', color:'var(--grey)', marginBottom:24 }}>
-                ENTER YOUR PIN
-              </div>
-              <input
-                type="password"
-                inputMode="numeric"
-                maxLength={8}
-                value={pinValue}
-                autoFocus
-                onChange={e => { setPinValue(e.target.value); setPinError('') }}
-                onKeyDown={e => e.key === 'Enter' && submitPin()}
-                placeholder="••••"
-                style={{
-                  fontSize:       28,
-                  letterSpacing:  '0.3em',
-                  textAlign:      'center',
-                  padding:        '14px 20px',
-                  borderRadius:   12,
-                  border:         pinError ? '2px solid var(--red)' : '2px solid var(--border)',
-                  background:     'var(--navy3)',
-                  color:          'var(--white)',
-                  width:          180,
-                  marginBottom:   12,
-                  fontFamily:     'var(--font-head)',
-                  outline:        'none',
-                }}
-              />
-              {pinError && (
-                <div style={{ color:'var(--red)', fontSize:13, marginBottom:12, fontFamily:'var(--font-head)', fontWeight:700 }}>
-                  {pinError}
+            <div style={{ width:'100%', maxWidth:320, padding:'0 24px' }}>
+              <div style={{ textAlign:'center', marginBottom:24 }}>
+                <div style={{ fontSize:13, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.1em', marginBottom:6 }}>
+                  ENTER PIN FOR
                 </div>
-              )}
-              <button
-                className="scan-btn success"
-                style={{ width:180, marginBottom:12 }}
-                onClick={submitPin}
-                disabled={pinLoading || !pinValue}
-              >
-                {pinLoading ? 'CHECKING...' : 'ENTER'}
+                <div style={{ fontSize:28, fontFamily:'var(--font-head)', fontWeight:900, color:'var(--amber)' }}>
+                  {pinDriver}
+                </div>
+              </div>
+
+              <div style={{ display:'flex', justifyContent:'center', gap:16, marginBottom:32 }}>
+                {[0,1,2,3].map(i => (
+                  <div key={i} style={{
+                    width:18, height:18, borderRadius:'50%',
+                    background: pinError ? '#e53935' : pinInput.length > i ? 'var(--amber)' : 'var(--navy3)',
+                    border:'2px solid ' + (pinError ? '#e53935' : 'var(--border)'),
+                    transition:'background 0.15s',
+                  }} />
+                ))}
+              </div>
+
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12 }}>
+                {['1','2','3','4','5','6','7','8','9','','0','DEL'].map((k,i) => (
+                  k === '' ? <div key={i} /> :
+                  <button key={k} onClick={() => handlePinKey(k)} style={{
+                    padding:'18px 0', borderRadius:12,
+                    border:'1px solid var(--border)',
+                    background: k === 'DEL' ? 'var(--navy3)' : 'var(--navy2)',
+                    color: k === 'DEL' ? 'var(--grey)' : 'var(--white)',
+                    fontSize: k === 'DEL' ? 13 : 22,
+                    fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                    WebkitTapHighlightColor:'transparent',
+                  }}>
+                    {k}
+                  </button>
+                ))}
+              </div>
+
+              <button onClick={() => { setPinDriver(null); setPinInput(''); setPinError(false) }}
+                style={{ width:'100%', marginTop:20, padding:'12px 0', background:'transparent',
+                         border:'none', color:'var(--grey)', fontSize:13,
+                         fontFamily:'var(--font-head)', cursor:'pointer' }}>
+                ← BACK
               </button>
-              <button
-                className="scan-btn secondary"
-                style={{ width:180 }}
-                onClick={() => { setPinDriver(null); setPinValue(''); setPinError('') }}
-              >
-                BACK
-              </button>
-            </>
+            </div>
           )}
         </div>
 
@@ -203,48 +441,37 @@ export default function App() {
     )
   }
 
-  // ── MAIN APP ──────────────────────────────────────────
+  // ── MAIN APP ─────────────────────────────────────────────
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100dvh' }}>
+
+      {/* CREDENTIAL ALERT OVERLAY */}
+      {renderCredAlert()}
 
       {/* HEADER */}
       <div className="app-header">
         <div className="app-logo">LOAD<span>LEDGER</span></div>
-        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-          <div style={{ fontSize:12, color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700 }}>
-            {driver}
-          </div>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)' }}>{driver}</div>
           <div className="badge">V4</div>
-          <button
-            onClick={logout}
-            style={{
-              background:  'transparent',
-              border:      '1px solid var(--border)',
-              color:       'var(--grey)',
-              borderRadius: 6,
-              padding:     '4px 10px',
-              fontSize:    11,
-              fontFamily:  'var(--font-head)',
-              fontWeight:  700,
-              cursor:      'pointer',
-              letterSpacing: '0.05em',
-            }}
-          >
+          <button onClick={logout} style={{
+            padding:'6px 12px', borderRadius:8, border:'1px solid var(--border)',
+            background:'transparent', color:'var(--grey)', fontSize:11,
+            fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+          }}>
             LOGOUT
           </button>
         </div>
       </div>
 
       {/* NEW LOAD BAR */}
-      <div className="driver-bar" style={{ justifyContent:'space-between' }}>
+      <div className="driver-bar" style={{ justifyContent:'space-between', alignItems:'center' }}>
         <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>
           LOGGED IN AS {driver}
         </div>
-        <button
-          className="driver-btn"
-          style={{ flex:'0 0 auto', padding:'10px 14px' }}
-          onClick={resetLoad}
-        >
+        <button className="driver-btn active"
+          style={{ flex:'0 0 auto', padding:'10px 20px' }}
+          onClick={resetLoad}>
           + NEW
         </button>
       </div>
@@ -252,38 +479,23 @@ export default function App() {
       {/* MAIN CONTENT */}
       <div className="tab-content">
         {tab === 'ratecon' && (
-          <RateCon
-            load={load}
-            setLoad={setLoad}
-            driver={driver}
-            api={API}
-            showToast={showToast}
-            onNext={() => setTab('invoice')}
-          />
+          <RateCon load={load} setLoad={setLoad} driver={driver} api={API}
+            showToast={showToast} onNext={() => setTab('invoice')} />
         )}
         {tab === 'invoice' && (
-          <Invoice
-            load={load}
-            setLoad={setLoad}
-            driver={driver}
-            api={API}
-            showToast={showToast}
-            fetchLoads={fetchLoads}
-            resetLoad={resetLoad}
-          />
+          <Invoice load={load} setLoad={setLoad} driver={driver} api={API}
+            showToast={showToast} fetchLoads={fetchLoads} resetLoad={resetLoad} />
         )}
         {tab === 'loads' && (
-          <Loads
-            loads={loads}
-            fetchLoads={fetchLoads}
-            driver={driver}
-            api={API}
-            showToast={showToast}
-          />
+          <Loads loads={loads} setLoads={setLoads} api={API}
+            showToast={showToast} fetchLoads={fetchLoads} />
+        )}
+        {tab === 'profile' && (
+          <DriverProfile driver={driver} api={API} showToast={showToast} />
         )}
       </div>
 
-      {/* TAB BAR */}
+      {/* TAB BAR — 4 tabs */}
       <div className="tab-bar">
         <button className={`tab-item ${tab==='ratecon'?'active':''}`} onClick={()=>setTab('ratecon')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -310,6 +522,13 @@ export default function App() {
             <line x1="3"  y1="18" x2="3.01" y2="18"/>
           </svg>
           Loads
+        </button>
+        <button className={`tab-item ${tab==='profile'?'active':''}`} onClick={()=>setTab('profile')}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+          Profile
         </button>
       </div>
 
