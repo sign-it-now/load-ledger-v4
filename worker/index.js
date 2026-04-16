@@ -139,13 +139,73 @@ export default {
       }
     }
 
+    // ── UPLOAD PDF TO R2 ─────────────────────────────────
+    // Receives base64 PDF + loadId, stores in R2, saves URL to D1
+    if (path === '/api/upload-pdf' && request.method === 'POST') {
+      try {
+        const { base64, loadId, filename } = await request.json();
+        if (!base64 || !loadId) return json({ error: 'Missing base64 or loadId' }, 400);
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500);
+
+        // Decode base64 to bytes
+        const binary  = atob(base64)
+        const bytes   = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i)
+        }
+
+        // Store in R2 under invoices/{loadId}.pdf
+        const key = 'invoices/' + loadId + '.pdf'
+        await env.R2.put(key, bytes, {
+          httpMetadata: { contentType: 'application/pdf' },
+        })
+
+        // Save the key to D1 so we can serve it later
+        const invoiceUrl = '/api/invoice/' + loadId
+        await env.DB.prepare(
+          'UPDATE loads SET invoice_url=? WHERE id=?'
+        ).bind(invoiceUrl, loadId).run()
+
+        return json({ ok: true, url: invoiceUrl })
+      } catch(e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+
+    // ── SERVE PDF FROM R2 ────────────────────────────────
+    // Fetches stored PDF from R2 and streams it to browser
+    if (path.startsWith('/api/invoice/') && request.method === 'GET') {
+      try {
+        const loadId = path.replace('/api/invoice/', '')
+        if (!loadId) return json({ error: 'Missing load id' }, 400);
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500);
+
+        const key    = 'invoices/' + loadId + '.pdf'
+        const object = await env.R2.get(key)
+
+        if (!object) {
+          return new Response('Invoice not found', { status: 404, headers: CORS })
+        }
+
+        return new Response(object.body, {
+          headers: {
+            ...CORS,
+            'Content-Type':        'application/pdf',
+            'Content-Disposition': 'inline',
+            'Cache-Control':       'private, max-age=3600',
+          },
+        })
+      } catch(e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+
     // ── LOADS PATCH (status + fuel update) ──────────────
     if (path.startsWith('/api/loads/') && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
         const b  = await request.json();
 
-        // Build dynamic update — only set fields that were sent
         const fields = [];
         const values = [];
 
@@ -181,6 +241,10 @@ export default {
         ).bind(id).first();
         if (!row)                  return json({ error: 'Load not found' }, 404);
         if (row.driver !== driver) return json({ error: 'Not authorized' }, 403);
+        // Also delete from R2 if it exists
+        if (env.R2) {
+          await env.R2.delete('invoices/' + id + '.pdf').catch(() => {})
+        }
         await env.DB.prepare('DELETE FROM loads WHERE id=?').bind(id).run();
         return json({ ok: true });
       } catch(e) {
