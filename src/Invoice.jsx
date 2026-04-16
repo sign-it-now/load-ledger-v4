@@ -305,12 +305,14 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     } catch (err) { console.error('addScanPage error:', err) }
   }
 
-  // ── GENERATE PDF + SAVE TO D1 ────────────────────────────
-  // RIGHT FIX: D1 POST fires FIRST before doc.save()
+  // ── GENERATE PDF + SAVE TO D1 + UPLOAD TO R2 ─────────────
+  // ORDER: 1) D1 save  2) R2 upload  3) doc.save() download
+  // iOS WebKit kills the POST if doc.save() (Blob download) fires first
   async function generatePDF() {
 
-    // STEP 1 — D1 SAVE FIRST
+    // ── STEP 1: SAVE TO D1 FIRST ─────────────────────────
     showToast('💾 Saving load...')
+    let savedLoadId = null
     try {
       const res = await fetch(api + '/api/loads', {
         method:  'POST',
@@ -341,6 +343,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         showToast('⚠️ Save failed: ' + (data.error || 'unknown'))
         return
       }
+      savedLoadId = data.id
       await fetchLoads()
       showToast('✅ Load saved to reports!')
     } catch (err) {
@@ -348,7 +351,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
       return
     }
 
-    // STEP 2 — BUILD AND DOWNLOAD PDF
+    // ── STEP 2: BUILD PDF ─────────────────────────────────
     const doc = new jsPDF({ unit: 'pt', format: 'letter' })
     const W = 612, M = 40
     let y = 0
@@ -465,42 +468,50 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     comdataScans.forEach((l,i) =>
       addScanPage(doc, l, 'Comdata / Express Code '+(i+1)+' - $'+parseFloat(l.amount).toFixed(2)+' - '+l.label))
 
-    doc.save('Edgerton-Invoice-'+(load.load_number||'draft')+'-'+driver+'.pdf')
+    // ── STEP 3: UPLOAD PDF TO R2 ─────────────────────────
+    // Get raw base64 from jsPDF without triggering download
+    if (savedLoadId) {
+      try {
+        const pdfBase64  = doc.output('datauristring').split(',')[1]
+        const filename   = 'Edgerton-Invoice-'+(load.load_number||'draft')+'-'+driver+'.pdf'
+        await fetch(api + '/api/upload-pdf', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            base64:   pdfBase64,
+            loadId:   savedLoadId,
+            filename,
+          }),
+        })
+        // Silent — don't block or alarm user if upload fails
+        // The PDF download still works regardless
+      } catch (err) {
+        console.error('R2 upload failed (non-fatal):', err)
+      }
+    }
+
+    // ── STEP 4: DOWNLOAD TO PHONE ─────────────────────────
+    const filename = 'Edgerton-Invoice-'+(load.load_number||'draft')+'-'+driver+'.pdf'
+    doc.save(filename)
     showToast('✅ Invoice + all receipts downloaded!')
   }
 
   // ── SHARED INLINE INPUT STYLES ───────────────────────────
   const inlineBox = {
-    marginTop: 10,
-    background: 'var(--navy)',
-    border: '1px solid var(--border)',
-    borderRadius: 8,
-    padding: '10px 12px',
+    marginTop: 10, background: 'var(--navy)',
+    border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px',
   }
   const inlineInput = {
-    flex: 1,
-    background: 'var(--navy3)',
-    border: '1px solid var(--amber)',
-    color: 'var(--white)',
-    borderRadius: 8,
-    padding: '12px 14px',
-    fontSize: 22,
-    fontFamily: 'var(--font-head)',
-    fontWeight: 700,
-    minWidth: 0,
-    WebkitAppearance: 'none',
+    flex: 1, background: 'var(--navy3)', border: '1px solid var(--amber)',
+    color: 'var(--white)', borderRadius: 8, padding: '12px 14px',
+    fontSize: 22, fontFamily: 'var(--font-head)', fontWeight: 700,
+    minWidth: 0, WebkitAppearance: 'none',
   }
   const inlineAdd = {
-    padding: '12px 20px',
-    borderRadius: 8,
-    border: 'none',
-    background: 'var(--amber)',
-    color: 'var(--navy)',
-    fontSize: 15,
-    fontFamily: 'var(--font-head)',
-    fontWeight: 900,
-    cursor: 'pointer',
-    flexShrink: 0,
+    padding: '12px 20px', borderRadius: 8, border: 'none',
+    background: 'var(--amber)', color: 'var(--navy)',
+    fontSize: 15, fontFamily: 'var(--font-head)', fontWeight: 900,
+    cursor: 'pointer', flexShrink: 0,
   }
 
   return (
@@ -560,23 +571,13 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
             {showManualLumper ? 'Cancel' : 'Manual'}
           </button>
         </div>
-        {/* INLINE — never unmounts so keyboard stays up */}
         {showManualLumper && (
           <div style={inlineBox}>
-            <div style={{fontSize:11,color:'var(--grey)',marginBottom:6,fontFamily:'var(--font-head)',letterSpacing:'0.06em'}}>
-              ENTER LUMPER AMOUNT
-            </div>
+            <div style={{fontSize:11,color:'var(--grey)',marginBottom:6,fontFamily:'var(--font-head)',letterSpacing:'0.06em'}}>ENTER LUMPER AMOUNT</div>
             <div style={{display:'flex',gap:8}}>
-              <input
-                type="text"
-                inputMode="decimal"
-                pattern="[0-9.]*"
-                placeholder="0.00"
-                value={manualLumper}
-                onChange={e => setManualLumper(e.target.value)}
-                style={inlineInput}
-                autoFocus
-              />
+              <input type="text" inputMode="decimal" pattern="[0-9.]*" placeholder="0.00"
+                value={manualLumper} onChange={e => setManualLumper(e.target.value)}
+                style={inlineInput} autoFocus />
               <button onClick={addManualLumper} style={inlineAdd}>ADD</button>
             </div>
           </div>
@@ -607,20 +608,11 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         </div>
         {showManualIncidental && (
           <div style={inlineBox}>
-            <div style={{fontSize:11,color:'var(--grey)',marginBottom:6,fontFamily:'var(--font-head)',letterSpacing:'0.06em'}}>
-              ENTER INCIDENTAL AMOUNT
-            </div>
+            <div style={{fontSize:11,color:'var(--grey)',marginBottom:6,fontFamily:'var(--font-head)',letterSpacing:'0.06em'}}>ENTER INCIDENTAL AMOUNT</div>
             <div style={{display:'flex',gap:8}}>
-              <input
-                type="text"
-                inputMode="decimal"
-                pattern="[0-9.]*"
-                placeholder="0.00"
-                value={manualIncidental}
-                onChange={e => setManualIncidental(e.target.value)}
-                style={inlineInput}
-                autoFocus
-              />
+              <input type="text" inputMode="decimal" pattern="[0-9.]*" placeholder="0.00"
+                value={manualIncidental} onChange={e => setManualIncidental(e.target.value)}
+                style={inlineInput} autoFocus />
               <button onClick={addManualIncidental} style={inlineAdd}>ADD</button>
             </div>
           </div>
@@ -666,20 +658,11 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
         </div>
         {showManualComdata && (
           <div style={inlineBox}>
-            <div style={{fontSize:11,color:'var(--grey)',marginBottom:6,fontFamily:'var(--font-head)',letterSpacing:'0.06em'}}>
-              ENTER COMDATA AMOUNT
-            </div>
+            <div style={{fontSize:11,color:'var(--grey)',marginBottom:6,fontFamily:'var(--font-head)',letterSpacing:'0.06em'}}>ENTER COMDATA AMOUNT</div>
             <div style={{display:'flex',gap:8}}>
-              <input
-                type="text"
-                inputMode="decimal"
-                pattern="[0-9.]*"
-                placeholder="0.00"
-                value={manualComdata}
-                onChange={e => setManualComdata(e.target.value)}
-                style={inlineInput}
-                autoFocus
-              />
+              <input type="text" inputMode="decimal" pattern="[0-9.]*" placeholder="0.00"
+                value={manualComdata} onChange={e => setManualComdata(e.target.value)}
+                style={inlineInput} autoFocus />
               <button onClick={addManualComdata} style={inlineAdd}>ADD</button>
             </div>
           </div>
