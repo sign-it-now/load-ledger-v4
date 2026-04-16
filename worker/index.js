@@ -75,9 +75,7 @@ export default {
           }),
         });
         const raw = await res.text();
-        if (!res.ok) {
-          return json({ error: 'Claude API error', status: res.status, detail: raw }, 502);
-        }
+        if (!res.ok) return json({ error: 'Claude API error', status: res.status, detail: raw }, 502);
         const data = JSON.parse(raw);
         return json({ result: data?.content?.[0]?.text ?? '' });
       } catch (e) {
@@ -112,24 +110,12 @@ export default {
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
         `).bind(
           id, driverVal, driverVal,
-          b.broker_name      || '',
-          b.broker_email     || '',
-          b.load_number      || '',
-          b.origin           || '',
-          b.destination      || '',
-          b.pickup_date      || '',
-          b.delivery_date    || '',
-          b.base_pay         || 0,
-          b.lumper_total     || 0,
-          b.incidental_total || 0,
-          b.comdata_total    || 0,
-          b.detention        || 0,
-          b.pallets          || 0,
-          b.net_pay          || 0,
-          b.notes            || '',
-          b.bol_count        || 0,
-          b.fuel             || 0,
-          b.status           || 'invoiced',
+          b.broker_name || '', b.broker_email || '', b.load_number || '',
+          b.origin || '', b.destination || '', b.pickup_date || '', b.delivery_date || '',
+          b.base_pay || 0, b.lumper_total || 0, b.incidental_total || 0,
+          b.comdata_total || 0, b.detention || 0, b.pallets || 0,
+          b.net_pay || 0, b.notes || '', b.bol_count || 0, b.fuel || 0,
+          b.status || 'invoiced',
         ).run();
         return json({ id });
       } catch(e) {
@@ -137,14 +123,14 @@ export default {
       }
     }
 
-    // ── UPLOAD PDF TO R2 ─────────────────────────────────
+    // ── UPLOAD INVOICE PDF TO R2 ─────────────────────────
     if (path === '/api/upload-pdf' && request.method === 'POST') {
       try {
-        const { base64, loadId, filename } = await request.json();
+        const { base64, loadId } = await request.json();
         if (!base64 || !loadId) return json({ error: 'Missing base64 or loadId' }, 400);
         if (!env.R2) return json({ error: 'R2 not configured' }, 500);
-        const binary  = atob(base64)
-        const bytes   = new Uint8Array(binary.length)
+        const binary = atob(base64)
+        const bytes  = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
         const key = 'invoices/' + loadId + '.pdf'
         await env.R2.put(key, bytes, { httpMetadata: { contentType: 'application/pdf' } })
@@ -156,14 +142,13 @@ export default {
       }
     }
 
-    // ── SERVE PDF FROM R2 ────────────────────────────────
+    // ── SERVE INVOICE PDF FROM R2 ────────────────────────
     if (path.startsWith('/api/invoice/') && request.method === 'GET') {
       try {
         const loadId = path.replace('/api/invoice/', '')
         if (!loadId) return json({ error: 'Missing load id' }, 400);
         if (!env.R2) return json({ error: 'R2 not configured' }, 500);
-        const key    = 'invoices/' + loadId + '.pdf'
-        const object = await env.R2.get(key)
+        const object = await env.R2.get('invoices/' + loadId + '.pdf')
         if (!object) return new Response('Invoice not found', { status: 404, headers: CORS })
         return new Response(object.body, {
           headers: {
@@ -179,14 +164,13 @@ export default {
     }
 
     // ── CREDENTIALS GET ──────────────────────────────────
-    if (path.startsWith('/api/credentials/') && request.method === 'GET') {
+    if (path.startsWith('/api/credentials/') && !path.includes('/file/') && request.method === 'GET') {
       try {
         const driver = path.split('/')[3].toUpperCase()
         if (!driver) return json({ error: 'Missing driver' }, 400)
         let row = await env.DB.prepare(
           'SELECT * FROM driver_credentials WHERE driver=?'
         ).bind(driver).first()
-        // If no row yet, return empty defaults
         if (!row) {
           row = {
             driver,
@@ -204,13 +188,11 @@ export default {
     }
 
     // ── CREDENTIALS PATCH ────────────────────────────────
-    if (path.startsWith('/api/credentials/') && request.method === 'PATCH') {
+    if (path.startsWith('/api/credentials/') && !path.includes('/file/') && request.method === 'PATCH') {
       try {
         const driver = path.split('/')[3].toUpperCase()
         if (!driver) return json({ error: 'Missing driver' }, 400)
         const b = await request.json()
-
-        // Upsert — insert if not exists, update if exists
         await env.DB.prepare(`
           INSERT INTO driver_credentials
             (driver, dot_physical, drivers_license, plates, authority, insurance, heavy_use_tax,
@@ -233,20 +215,74 @@ export default {
             updated_at             = excluded.updated_at
         `).bind(
           driver,
-          b.dot_physical           || '',
-          b.drivers_license        || '',
-          b.plates                 || '',
-          b.authority              || '',
-          b.insurance              || '',
-          b.heavy_use_tax          || '',
-          b.dot_physical_snooze    || '',
-          b.drivers_license_snooze || '',
-          b.plates_snooze          || '',
-          b.authority_snooze       || '',
-          b.insurance_snooze       || '',
-          b.heavy_use_tax_snooze   || '',
+          b.dot_physical || '', b.drivers_license || '', b.plates || '',
+          b.authority || '', b.insurance || '', b.heavy_use_tax || '',
+          b.dot_physical_snooze || '', b.drivers_license_snooze || '',
+          b.plates_snooze || '', b.authority_snooze || '',
+          b.insurance_snooze || '', b.heavy_use_tax_snooze || '',
         ).run()
         return json({ ok: true })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── UPLOAD CREDENTIAL FILE TO R2 ─────────────────────
+    // POST /api/credentials/:driver/file/:key
+    // Stores file under credentials/DRIVER/key.ext
+    if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'POST') {
+      try {
+        const parts     = path.split('/')
+        const driver    = parts[3].toUpperCase()
+        const credKey   = parts[5]
+        if (!driver || !credKey) return json({ error: 'Missing driver or key' }, 400)
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500)
+
+        const { base64, mediaType } = await request.json()
+        if (!base64 || !mediaType) return json({ error: 'Missing base64 or mediaType' }, 400)
+
+        const binary = atob(base64)
+        const bytes  = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+
+        const ext = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
+        const r2Key = 'credentials/' + driver + '/' + credKey + '.' + ext
+
+        await env.R2.put(r2Key, bytes, { httpMetadata: { contentType: mediaType } })
+
+        return json({ ok: true, url: '/api/credentials/' + driver + '/file/' + credKey })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── SERVE CREDENTIAL FILE FROM R2 ────────────────────
+    // GET /api/credentials/:driver/file/:key
+    if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'GET') {
+      try {
+        const parts   = path.split('/')
+        const driver  = parts[3].toUpperCase()
+        const credKey = parts[5]
+        if (!driver || !credKey) return json({ error: 'Missing driver or key' }, 400)
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500)
+
+        // Try PDF first, then JPG
+        let object = await env.R2.get('credentials/' + driver + '/' + credKey + '.pdf')
+        let contentType = 'application/pdf'
+        if (!object) {
+          object = await env.R2.get('credentials/' + driver + '/' + credKey + '.jpg')
+          contentType = 'image/jpeg'
+        }
+        if (!object) return new Response('File not found', { status: 404, headers: CORS })
+
+        return new Response(object.body, {
+          headers: {
+            ...CORS,
+            'Content-Type':        contentType,
+            'Content-Disposition': 'inline',
+            'Cache-Control':       'private, max-age=3600',
+          },
+        })
       } catch(e) {
         return json({ error: e.message }, 500)
       }
