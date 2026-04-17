@@ -429,5 +429,5 @@ export default function Tax({ loads }) {
       </div>
 
     </div>
-  )
+  ) 
 }
