@@ -220,7 +220,7 @@ export default {
         const binary = atob(base64)
         const bytes  = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-        const ext   = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
+        const ext = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
         await env.R2.put('credentials/' + driver + '/' + credKey + '.' + ext, bytes, { httpMetadata: { contentType: mediaType } })
         return json({ ok: true, url: '/api/credentials/' + driver + '/file/' + credKey })
       } catch(e) {
@@ -237,10 +237,7 @@ export default {
         if (!env.R2) return json({ error: 'R2 not configured' }, 500)
         let object = await env.R2.get('credentials/' + driver + '/' + credKey + '.pdf')
         let contentType = 'application/pdf'
-        if (!object) {
-          object = await env.R2.get('credentials/' + driver + '/' + credKey + '.jpg')
-          contentType = 'image/jpeg'
-        }
+        if (!object) { object = await env.R2.get('credentials/' + driver + '/' + credKey + '.jpg'); contentType = 'image/jpeg' }
         if (!object) return new Response('File not found', { status: 404, headers: CORS })
         return new Response(object.body, {
           headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
@@ -250,11 +247,10 @@ export default {
       }
     }
 
-    // ── MAINTENANCE GET (by driver) ──────────────────────
+    // ── MAINTENANCE GET ──────────────────────────────────
     if (path.startsWith('/api/maintenance/') && request.method === 'GET') {
       try {
         const driver = path.split('/')[3].toUpperCase()
-        if (!driver) return json({ error: 'Missing driver' }, 400)
         const { results } = await env.DB.prepare(
           'SELECT * FROM maintenance_ledger WHERE driver=? ORDER BY entry_date DESC, created_at DESC LIMIT 200'
         ).bind(driver).all()
@@ -272,17 +268,15 @@ export default {
         if (!b.driver) return json({ error: 'Missing driver' }, 400)
         await env.DB.prepare(`
           INSERT INTO maintenance_ledger
-            (id, driver, entry_date, category, description, amount, paid_by, receipt_url, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            (id, driver, entry_date, category, description, amount, paid_by, asset_id, receipt_url, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         `).bind(
-          id,
-          b.driver.toUpperCase(),
-          b.entry_date   || '',
-          b.category     || 'Other',
-          b.description  || '',
+          id, b.driver.toUpperCase(), b.entry_date || '',
+          b.category || 'Other', b.description || '',
           parseFloat(b.amount) || 0,
-          b.paid_by      || 'TIM',
-          b.receipt_url  || '',
+          b.paid_by || 'TIM',
+          b.asset_id || '',
+          b.receipt_url || '',
         ).run()
         return json({ id })
       } catch(e) {
@@ -290,19 +284,17 @@ export default {
       }
     }
 
-    // ── MAINTENANCE PATCH (paid_by update) ───────────────
+    // ── MAINTENANCE PATCH ────────────────────────────────
     if (path.startsWith('/api/maintenance/') && path.split('/').length === 4 && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3]
         const b  = await request.json()
-        const fields = []
-        const values = []
-        if (b.paid_by !== undefined) { fields.push('paid_by=?'); values.push(b.paid_by); }
+        const fields = []; const values = []
+        if (b.paid_by  !== undefined) { fields.push('paid_by=?');  values.push(b.paid_by); }
+        if (b.asset_id !== undefined) { fields.push('asset_id=?'); values.push(b.asset_id); }
         if (fields.length === 0) return json({ error: 'Nothing to update' }, 400)
         values.push(id)
-        await env.DB.prepare(
-          'UPDATE maintenance_ledger SET ' + fields.join(', ') + ' WHERE id=?'
-        ).bind(...values).run()
+        await env.DB.prepare('UPDATE maintenance_ledger SET ' + fields.join(', ') + ' WHERE id=?').bind(...values).run()
         return json({ ok: true })
       } catch(e) {
         return json({ error: e.message }, 500)
@@ -328,16 +320,15 @@ export default {
       }
     }
 
-    // ── UPLOAD MAINTENANCE RECEIPT TO R2 ─────────────────
+    // ── UPLOAD MAINTENANCE RECEIPT ───────────────────────
     if (path.startsWith('/api/maintenance-receipt/') && request.method === 'POST') {
       try {
         const entryId = path.split('/')[3]
         if (!env.R2) return json({ error: 'R2 not configured' }, 500)
         const { base64, mediaType } = await request.json()
-        const binary = atob(base64)
-        const bytes  = new Uint8Array(binary.length)
+        const binary = atob(base64); const bytes = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-        const ext   = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
+        const ext = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
         await env.R2.put('maintenance/' + entryId + '.' + ext, bytes, { httpMetadata: { contentType: mediaType } })
         const receiptUrl = '/api/maintenance-receipt/' + entryId
         await env.DB.prepare('UPDATE maintenance_ledger SET receipt_url=? WHERE id=?').bind(receiptUrl, entryId).run()
@@ -347,17 +338,14 @@ export default {
       }
     }
 
-    // ── SERVE MAINTENANCE RECEIPT FROM R2 ────────────────
+    // ── SERVE MAINTENANCE RECEIPT ────────────────────────
     if (path.startsWith('/api/maintenance-receipt/') && request.method === 'GET') {
       try {
         const entryId = path.split('/')[3]
         if (!env.R2) return json({ error: 'R2 not configured' }, 500)
         let object = await env.R2.get('maintenance/' + entryId + '.pdf')
         let contentType = 'application/pdf'
-        if (!object) {
-          object = await env.R2.get('maintenance/' + entryId + '.jpg')
-          contentType = 'image/jpeg'
-        }
+        if (!object) { object = await env.R2.get('maintenance/' + entryId + '.jpg'); contentType = 'image/jpeg' }
         if (!object) return new Response('Receipt not found', { status: 404, headers: CORS })
         return new Response(object.body, {
           headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
@@ -367,13 +355,149 @@ export default {
       }
     }
 
-    // ── LOADS PATCH (status + fuel) ──────────────────────
+    // ── ASSETS GET (by driver) ───────────────────────────
+    if (path.startsWith('/api/assets/') && !path.includes('/payments') && request.method === 'GET') {
+      try {
+        const driver = path.split('/')[3].toUpperCase()
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM assets WHERE driver=? ORDER BY created_at ASC'
+        ).bind(driver).all()
+        return json(results)
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── ASSETS POST ──────────────────────────────────────
+    if (path === '/api/assets' && request.method === 'POST') {
+      try {
+        const b  = await request.json()
+        const id = crypto.randomUUID()
+        if (!b.driver) return json({ error: 'Missing driver' }, 400)
+        await env.DB.prepare(`
+          INSERT INTO assets
+            (id, driver, asset_name, asset_type, year, make, model, vin_last6,
+             notes, purchase_price, balance_owed, owed_to, purchase_date,
+             estimated_value, created_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+        `).bind(
+          id, b.driver.toUpperCase(),
+          b.asset_name || '', b.asset_type || '',
+          b.year || '', b.make || '', b.model || '', b.vin_last6 || '',
+          b.notes || '',
+          parseFloat(b.purchase_price) || 0,
+          parseFloat(b.balance_owed)   || 0,
+          b.owed_to || '',
+          b.purchase_date || '',
+          parseFloat(b.estimated_value) || 0,
+        ).run()
+        return json({ id })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── ASSETS PATCH ─────────────────────────────────────
+    if (path.startsWith('/api/assets/') && !path.includes('/payments') && request.method === 'PATCH') {
+      try {
+        const id = path.split('/')[3]
+        const b  = await request.json()
+        const fields = []; const values = []
+        const allowed = ['asset_name','asset_type','year','make','model','vin_last6','notes',
+                         'purchase_price','balance_owed','owed_to','purchase_date','estimated_value']
+        allowed.forEach(key => {
+          if (b[key] !== undefined) {
+            fields.push(key + '=?')
+            values.push(['purchase_price','balance_owed','estimated_value'].includes(key) ? parseFloat(b[key])||0 : b[key])
+          }
+        })
+        if (fields.length === 0) return json({ error: 'Nothing to update' }, 400)
+        values.push(id)
+        await env.DB.prepare('UPDATE assets SET ' + fields.join(', ') + ' WHERE id=?').bind(...values).run()
+        return json({ ok: true })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── ASSETS DELETE ────────────────────────────────────
+    if (path.startsWith('/api/assets/') && !path.includes('/payments') && request.method === 'DELETE') {
+      try {
+        const id = path.split('/')[3]
+        const { driver } = await request.json()
+        const row = await env.DB.prepare('SELECT driver FROM assets WHERE id=?').bind(id).first()
+        if (!row) return json({ error: 'Asset not found' }, 404)
+        if (row.driver !== driver.toUpperCase()) return json({ error: 'Not authorized' }, 403)
+        await env.DB.prepare('DELETE FROM assets WHERE id=?').bind(id).run()
+        await env.DB.prepare("DELETE FROM asset_payments WHERE asset_id=?").bind(id).run()
+        return json({ ok: true })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── ASSET PAYMENTS GET ───────────────────────────────
+    if (path.includes('/api/assets/') && path.includes('/payments') && request.method === 'GET') {
+      try {
+        const assetId = path.split('/')[3]
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM asset_payments WHERE asset_id=? ORDER BY payment_date DESC, created_at DESC'
+        ).bind(assetId).all()
+        return json(results)
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── ASSET PAYMENTS POST ──────────────────────────────
+    if (path.includes('/api/assets/') && path.includes('/payments') && request.method === 'POST') {
+      try {
+        const assetId = path.split('/')[3]
+        const b       = await request.json()
+        const id      = crypto.randomUUID()
+        if (!b.driver) return json({ error: 'Missing driver' }, 400)
+        const amount = parseFloat(b.amount) || 0
+        await env.DB.prepare(`
+          INSERT INTO asset_payments (id, asset_id, driver, payment_date, amount, notes, created_at)
+          VALUES (?,?,?,?,?,?,datetime('now'))
+        `).bind(id, assetId, b.driver.toUpperCase(), b.payment_date || '', amount, b.notes || '').run()
+        // Reduce balance_owed on the asset
+        await env.DB.prepare(
+          'UPDATE assets SET balance_owed = MAX(0, balance_owed - ?) WHERE id=?'
+        ).bind(amount, assetId).run()
+        return json({ id })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── ASSET PAYMENTS DELETE ────────────────────────────
+    if (path.includes('/api/assets/') && path.includes('/payments/') && request.method === 'DELETE') {
+      try {
+        const parts     = path.split('/')
+        const assetId   = parts[3]
+        const paymentId = parts[5]
+        const { driver, amount } = await request.json()
+        const row = await env.DB.prepare('SELECT driver, amount FROM asset_payments WHERE id=?').bind(paymentId).first()
+        if (!row) return json({ error: 'Payment not found' }, 404)
+        if (row.driver !== driver.toUpperCase()) return json({ error: 'Not authorized' }, 403)
+        await env.DB.prepare('DELETE FROM asset_payments WHERE id=?').bind(paymentId).run()
+        // Restore balance_owed
+        await env.DB.prepare(
+          'UPDATE assets SET balance_owed = balance_owed + ? WHERE id=?'
+        ).bind(row.amount, assetId).run()
+        return json({ ok: true })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── LOADS PATCH ──────────────────────────────────────
     if (path.startsWith('/api/loads/') && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
         const b  = await request.json();
-        const fields = [];
-        const values = [];
+        const fields = []; const values = []
         if (b.status !== undefined) { fields.push('status=?'); values.push(b.status); }
         if (b.fuel   !== undefined) { fields.push('fuel=?');   values.push(parseFloat(b.fuel) || 0); }
         if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
