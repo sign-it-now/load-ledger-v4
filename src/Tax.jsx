@@ -42,18 +42,13 @@ const QUARTERS = [
   },
 ]
 
-// ── TAX RATES ────────────────────────────────────────────────
-const SE_RATE    = 0.153  // Self-employment tax (SS + Medicare)
-const SE_DEDUCT  = 0.5    // IRS allows deducting half of SE tax
-const FED_DEFAULT = 12    // Default federal bracket %
+const FED_DEFAULT = 12
 
-// State rates per driver
 const STATE_RATES = {
-  TIM:   { rate: 0.0495, label: 'Illinois',   default: 4.95 },
-  BRUCE: { rate: 0.0530, label: 'Wisconsin',  default: 5.30 },
+  TIM:   { rate: 0.0495, label: 'Illinois',  default: 4.95 },
+  BRUCE: { rate: 0.0530, label: 'Wisconsin', default: 5.30 },
 }
 
-// ── EXPENSE CATEGORIES ───────────────────────────────────────
 const EXPENSE_FIELDS = [
   { key: 'fuel',      label: 'Fuel' },
   { key: 'repairs',   label: 'Repairs & Maintenance' },
@@ -64,9 +59,7 @@ const EXPENSE_FIELDS = [
   { key: 'other',     label: 'Other Expenses' },
 ]
 
-function getStorageKey(driver) {
-  return 'll_v4_tax_' + driver.toLowerCase()
-}
+function getStorageKey(driver) { return 'll_v4_tax_' + driver.toLowerCase() }
 
 function loadStorage(driver) {
   try {
@@ -76,9 +69,7 @@ function loadStorage(driver) {
 }
 
 function saveStorage(driver, data) {
-  try {
-    localStorage.setItem(getStorageKey(driver), JSON.stringify(data))
-  } catch {}
+  try { localStorage.setItem(getStorageKey(driver), JSON.stringify(data)) } catch {}
 }
 
 function daysUntil(dateStr) {
@@ -89,30 +80,24 @@ function daysUntil(dateStr) {
   return Math.round((due - now) / (1000 * 60 * 60 * 24))
 }
 
-function fmt(n) {
-  return '$' + (parseFloat(n) || 0).toFixed(2)
-}
+function fmt(n) { return '$' + (parseFloat(n) || 0).toFixed(2) }
 
 export default function Tax({ loads, driver }) {
 
-  const stateInfo  = STATE_RATES[driver] || STATE_RATES.TIM
+  const stateInfo   = STATE_RATES[driver] || STATE_RATES.TIM
   const driverColor = driver === 'BRUCE' ? '#1e88e5' : '#e53935'
 
   const [taxData, setTaxData] = useState(() => loadStorage(driver))
   const [fedRate, setFedRate] = useState(FED_DEFAULT)
   const [openQ,   setOpenQ]   = useState(null)
 
-  // ── RELOAD WHEN DRIVER CHANGES ───────────────────────────
   useEffect(() => {
     setTaxData(loadStorage(driver))
     setFedRate(FED_DEFAULT)
     setOpenQ(null)
   }, [driver])
 
-  // ── PERSIST TAX DATA ─────────────────────────────────────
-  useEffect(() => {
-    saveStorage(driver, taxData)
-  }, [taxData, driver])
+  useEffect(() => { saveStorage(driver, taxData) }, [taxData, driver])
 
   function getQKey(qIdx)  { return YEAR + '_Q' + (qIdx + 1) }
   function getQData(qIdx) { return taxData[getQKey(qIdx)] || {} }
@@ -126,11 +111,9 @@ export default function Tax({ loads, driver }) {
   }
 
   function togglePaid(qIdx) {
-    const curr = (getQData(qIdx)).paid || false
-    updateQData(qIdx, 'paid', !curr)
+    updateQData(qIdx, 'paid', !(getQData(qIdx).paid || false))
   }
 
-  // ── REVENUE: sum this driver's invoiced loads for quarter ─
   function getQuarterRevenue(qMonths) {
     return loads
       .filter(l => {
@@ -142,19 +125,15 @@ export default function Tax({ loads, driver }) {
       .reduce((sum, l) => sum + (parseFloat(l.net_pay || l.netPay) || 0), 0)
   }
 
-  // ── TAX MATH ─────────────────────────────────────────────
+  // ── TAX MATH — Federal + State only ─────────────────────
   function calcTax(revenue, expenses) {
     const netIncome = Math.max(0, revenue - expenses)
-    const seBase    = netIncome * 0.9235
-    const seTax     = seBase * SE_RATE
-    const adjIncome = Math.max(0, netIncome - seTax * SE_DEDUCT)
-    const fedTax    = adjIncome * (fedRate / 100)
-    const stateTax  = adjIncome * stateInfo.rate
-    const totalTax  = seTax + fedTax + stateTax
-    return { netIncome, seTax, fedTax, stateTax, totalTax }
+    const fedTax    = netIncome * (fedRate / 100)
+    const stateTax  = netIncome * stateInfo.rate
+    const totalTax  = fedTax + stateTax
+    return { netIncome, fedTax, stateTax, totalTax }
   }
 
-  // ── GRAND TOTALS ─────────────────────────────────────────
   const grandTotals = QUARTERS.reduce((acc, q, i) => {
     const qd       = getQData(i)
     const revenue  = getQuarterRevenue(q.months)
@@ -172,37 +151,29 @@ export default function Tax({ loads, driver }) {
 
       {/* ── HEADER CARD ─────────────────────────────────── */}
       <div className="card" style={{ borderLeft: '3px solid ' + driverColor, marginBottom: 14 }}>
-        <div style={{
-          fontFamily:    'var(--font-head)',
-          fontWeight:    900,
-          fontSize:      15,
-          color:         driverColor,
-          marginBottom:  10,
-          letterSpacing: '0.05em',
-        }}>
-          {driver}'S TAX DESK — {YEAR}
+        <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:driverColor, marginBottom:10, letterSpacing:'0.05em' }}>
+          {driver}'S TAX DESK \u2014 {YEAR}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--grey)', marginBottom: 10 }}>
-          {stateInfo.label} resident — state tax {stateInfo.default}% flat rate
+        <div style={{ fontSize:11, color:'var(--grey)', marginBottom:10 }}>
+          {stateInfo.label} resident \u2014 state tax {stateInfo.default}%
         </div>
-
         <div className="amount-row">
           <span className="label">Total Revenue</span>
-          <span className="value" style={{ color: 'var(--amber)' }}>{fmt(grandTotals.revenue)}</span>
+          <span className="value" style={{ color:'var(--amber)' }}>{fmt(grandTotals.revenue)}</span>
         </div>
         <div className="amount-row">
           <span className="label">Total Expenses</span>
-          <span className="value" style={{ color: 'var(--grey)' }}>-{fmt(grandTotals.expenses)}</span>
+          <span className="value" style={{ color:'var(--grey)' }}>-{fmt(grandTotals.expenses)}</span>
         </div>
         <div className="amount-row">
           <span className="label">Est. Tax Owed (All Quarters)</span>
-          <span className="value" style={{ color: '#e53935' }}>{fmt(grandTotals.tax)}</span>
+          <span className="value" style={{ color:'#e53935' }}>{fmt(grandTotals.tax)}</span>
         </div>
         <div className="amount-row">
           <span className="label">Quarterly Payments Made</span>
-          <span className="value" style={{ color: 'var(--green)' }}>{fmt(grandTotals.paid)}</span>
+          <span className="value" style={{ color:'var(--green)' }}>{fmt(grandTotals.paid)}</span>
         </div>
-        <div className="net-total" style={{ marginTop: 12 }}>
+        <div className="net-total" style={{ marginTop:12 }}>
           <span className="label">REMAINING BALANCE</span>
           <span className="value" style={{ color: grandTotals.tax - grandTotals.paid > 0 ? '#e53935' : 'var(--green)' }}>
             {fmt(Math.max(0, grandTotals.tax - grandTotals.paid))}
@@ -212,19 +183,19 @@ export default function Tax({ loads, driver }) {
 
       {/* ── FEDERAL RATE ADJUSTER ────────────────────────── */}
       <div className="card" style={{ marginBottom: 14 }}>
-        <div className="section-title" style={{ marginBottom: 8 }}>Federal Tax Bracket</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className="section-title" style={{ marginBottom:8 }}>Federal Tax Bracket</div>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
           <input
             type="range" min={10} max={32} step={1} value={fedRate}
             onChange={e => setFedRate(Number(e.target.value))}
-            style={{ flex: 1, accentColor: 'var(--amber)' }}
+            style={{ flex:1, accentColor:'var(--amber)' }}
           />
           <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:20, color:'var(--amber)', minWidth:48, textAlign:'right' }}>
             {fedRate}%
           </div>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--grey)', marginTop: 6 }}>
-          SE Tax 15.3% + Federal {fedRate}% + {stateInfo.label} {stateInfo.default}% — Estimated Tax
+        <div style={{ fontSize:11, color:'var(--grey)', marginTop:6 }}>
+          Federal {fedRate}% + {stateInfo.label} {stateInfo.default}% \u2014 Estimated Tax
         </div>
       </div>
 
@@ -233,21 +204,20 @@ export default function Tax({ loads, driver }) {
         const qd       = getQData(qIdx)
         const revenue  = getQuarterRevenue(q.months)
         const expenses = EXPENSE_FIELDS.reduce((s, f) => s + (parseFloat(qd[f.key]) || 0), 0)
-        const { netIncome, seTax, fedTax, stateTax, totalTax } = calcTax(revenue, expenses)
-        const days     = daysUntil(q.due)
-        const isPaid   = qd.paid || false
-        const isOpen   = openQ === qIdx
+        const { netIncome, fedTax, stateTax, totalTax } = calcTax(revenue, expenses)
+        const days   = daysUntil(q.due)
+        const isPaid = qd.paid || false
+        const isOpen = openQ === qIdx
 
         let countdownColor = 'var(--green)'
         let countdownText  = days + ' days away'
-        if (days < 0)             { countdownColor = 'var(--grey)';  countdownText = 'Past due' }
-        if (days >= 0 && days <= 14) { countdownColor = '#e53935';   countdownText = days + ' days — ACT NOW' }
+        if (days < 0)              { countdownColor = 'var(--grey)';   countdownText = 'Past due' }
+        if (days >= 0 && days <= 14) { countdownColor = '#e53935';     countdownText = days + ' days \u2014 ACT NOW' }
         if (days > 14 && days <= 30) { countdownColor = 'var(--amber)'; countdownText = days + ' days away' }
 
         return (
-          <div key={qIdx} className="card" style={{ borderLeft: '3px solid ' + q.color, marginBottom: 12 }}>
+          <div key={qIdx} className="card" style={{ borderLeft:'3px solid ' + q.color, marginBottom:12 }}>
 
-            {/* ── QUARTER HEADER ── */}
             <div
               style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', cursor:'pointer' }}
               onClick={() => setOpenQ(isOpen ? null : qIdx)}
@@ -270,15 +240,11 @@ export default function Tax({ loads, driver }) {
               </div>
             </div>
 
-            {/* ── EXPANDED CONTENT ── */}
             {isOpen && (
-              <div style={{ marginTop: 14 }}>
+              <div style={{ marginTop:14 }}>
 
-                {/* Revenue auto-pulled */}
                 <div style={{ background:'var(--navy3)', borderRadius:8, padding:'10px 12px', marginBottom:12 }}>
-                  <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>
-                    AUTO-PULLED FROM LOADS
-                  </div>
+                  <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>AUTO-PULLED FROM LOADS</div>
                   <div className="amount-row" style={{ marginBottom:0 }}>
                     <span className="label">Gross Revenue</span>
                     <span className="value" style={{ color:'var(--amber)' }}>{fmt(revenue)}</span>
@@ -290,10 +256,7 @@ export default function Tax({ loads, driver }) {
                   )}
                 </div>
 
-                {/* Expense inputs */}
-                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:8 }}>
-                  OPERATING EXPENSES
-                </div>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:8 }}>OPERATING EXPENSES</div>
                 {EXPENSE_FIELDS.map(f => (
                   <div className="field-row" key={f.key} style={{ marginBottom:8 }}>
                     <div className="field-label">{f.label} ($)</div>
@@ -305,7 +268,6 @@ export default function Tax({ loads, driver }) {
                   </div>
                 ))}
 
-                {/* Tax breakdown */}
                 <div style={{ background:'var(--navy3)', borderRadius:8, padding:'10px 12px', marginTop:12, marginBottom:12 }}>
                   <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:8 }}>TAX BREAKDOWN</div>
                   <div className="amount-row"><span className="label">Gross Revenue</span><span className="value">{fmt(revenue)}</span></div>
@@ -315,10 +277,6 @@ export default function Tax({ loads, driver }) {
                     <span className="value" style={{color:'var(--white)'}}>{fmt(netIncome)}</span>
                   </div>
                   <div className="amount-row" style={{ marginTop:8 }}>
-                    <span className="label">SE Tax (15.3%)</span>
-                    <span className="value" style={{color:'#e53935'}}>{fmt(seTax)}</span>
-                  </div>
-                  <div className="amount-row">
                     <span className="label">Federal ({fedRate}%)</span>
                     <span className="value" style={{color:'#e53935'}}>{fmt(fedTax)}</span>
                   </div>
@@ -332,7 +290,6 @@ export default function Tax({ loads, driver }) {
                   </div>
                 </div>
 
-                {/* Notes */}
                 <div className="field-row" style={{ marginBottom:12 }}>
                   <div className="field-label">Notes</div>
                   <textarea
@@ -349,7 +306,6 @@ export default function Tax({ loads, driver }) {
                   />
                 </div>
 
-                {/* Mark paid */}
                 <button
                   className={isPaid ? 'scan-btn secondary' : 'scan-btn success'}
                   style={{ width:'100%' }}
@@ -364,9 +320,8 @@ export default function Tax({ loads, driver }) {
         )
       })}
 
-      {/* ── FOOTER ──────────────────────────────────────── */}
       <div style={{ textAlign:'center', fontSize:11, color:'var(--grey)', marginTop:8, padding:'0 16px' }}>
-        Estimated Tax — Form 1040-ES | Schedule C | IRS.gov
+        Estimated Tax \u2014 Form 1040-ES | Schedule C | IRS.gov
       </div>
 
     </div>
