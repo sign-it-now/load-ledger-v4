@@ -15,6 +15,15 @@ function json(data, status = 200) {
   });
 }
 
+// ── PIN VALIDATION HELPER ────────────────────────────────
+// Returns true if the pin matches the stored secret for the driver
+function validPin(driver, pin, env) {
+  if (!driver || !pin) return false
+  const stored = driver === 'BRUCE' ? env.BRUCE_PIN : driver === 'TIM' ? env.TIM_PIN : null
+  if (!stored) return false
+  return String(pin) === String(stored)
+}
+
 export default {
   async fetch(request, env) {
     const url  = new URL(request.url);
@@ -139,6 +148,7 @@ export default {
     }
 
     // ── SERVE INVOICE PDF FROM R2 ────────────────────────
+    // Invoices are not sensitive personal documents — no PIN required
     if (path.startsWith('/api/invoice/') && request.method === 'GET') {
       try {
         const loadId = path.replace('/api/invoice/', '')
@@ -210,13 +220,18 @@ export default {
     }
 
     // ── UPLOAD CREDENTIAL FILE TO R2 ─────────────────────
+    // Requires valid PIN in request body before storing
     if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'POST') {
       try {
         const parts   = path.split('/')
         const driver  = parts[3].toUpperCase()
         const credKey = parts[5]
         if (!env.R2) return json({ error: 'R2 not configured' }, 500)
-        const { base64, mediaType } = await request.json()
+        const { base64, mediaType, pin } = await request.json()
+        // ── PIN REQUIRED ──
+        if (!validPin(driver, pin, env)) {
+          return json({ error: 'Unauthorized' }, 401)
+        }
         const binary = atob(base64)
         const bytes  = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
@@ -229,18 +244,34 @@ export default {
     }
 
     // ── SERVE CREDENTIAL FILE FROM R2 ────────────────────
+    // ⚠️  PROTECTED — requires valid PIN passed as query param
+    // URL pattern: /api/credentials/TIM/file/insurance?pin=1234
     if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'GET') {
       try {
         const parts   = path.split('/')
         const driver  = parts[3].toUpperCase()
         const credKey = parts[5]
+        // ── PIN REQUIRED — checked from query string ──
+        const pin = url.searchParams.get('pin')
+        if (!validPin(driver, pin, env)) {
+          return new Response('Unauthorized', { status: 401, headers: CORS })
+        }
         if (!env.R2) return json({ error: 'R2 not configured' }, 500)
         let object = await env.R2.get('credentials/' + driver + '/' + credKey + '.pdf')
         let contentType = 'application/pdf'
-        if (!object) { object = await env.R2.get('credentials/' + driver + '/' + credKey + '.jpg'); contentType = 'image/jpeg' }
+        if (!object) {
+          object = await env.R2.get('credentials/' + driver + '/' + credKey + '.jpg')
+          contentType = 'image/jpeg'
+        }
         if (!object) return new Response('File not found', { status: 404, headers: CORS })
         return new Response(object.body, {
-          headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
+          headers: {
+            ...CORS,
+            'Content-Type':        contentType,
+            'Content-Disposition': 'inline',
+            // No caching on sensitive documents
+            'Cache-Control':       'no-store, no-cache, must-revalidate',
+          },
         })
       } catch(e) {
         return json({ error: e.message }, 500)
@@ -274,8 +305,8 @@ export default {
           id, b.driver.toUpperCase(), b.entry_date || '',
           b.category || 'Other', b.description || '',
           parseFloat(b.amount) || 0,
-          b.paid_by || 'TIM',
-          b.asset_id || '',
+          b.paid_by   || 'TIM',
+          b.asset_id  || '',
           b.receipt_url || '',
         ).run()
         return json({ id })
@@ -355,7 +386,7 @@ export default {
       }
     }
 
-    // ── ASSETS GET (by driver) ───────────────────────────
+    // ── ASSETS GET ───────────────────────────────────────
     if (path.startsWith('/api/assets/') && !path.includes('/payments') && request.method === 'GET') {
       try {
         const driver = path.split('/')[3].toUpperCase()
@@ -385,8 +416,8 @@ export default {
           b.asset_name || '', b.asset_type || '',
           b.year || '', b.make || '', b.model || '', b.vin_last6 || '',
           b.notes || '',
-          parseFloat(b.purchase_price) || 0,
-          parseFloat(b.balance_owed)   || 0,
+          parseFloat(b.purchase_price)  || 0,
+          parseFloat(b.balance_owed)    || 0,
           b.owed_to || '',
           b.purchase_date || '',
           parseFloat(b.estimated_value) || 0,
@@ -429,7 +460,7 @@ export default {
         if (!row) return json({ error: 'Asset not found' }, 404)
         if (row.driver !== driver.toUpperCase()) return json({ error: 'Not authorized' }, 403)
         await env.DB.prepare('DELETE FROM assets WHERE id=?').bind(id).run()
-        await env.DB.prepare("DELETE FROM asset_payments WHERE asset_id=?").bind(id).run()
+        await env.DB.prepare('DELETE FROM asset_payments WHERE asset_id=?').bind(id).run()
         return json({ ok: true })
       } catch(e) {
         return json({ error: e.message }, 500)
@@ -450,7 +481,7 @@ export default {
     }
 
     // ── ASSET PAYMENTS POST ──────────────────────────────
-    if (path.includes('/api/assets/') && path.includes('/payments') && request.method === 'POST') {
+    if (path.includes('/api/assets/') && path.includes('/payments') && !path.includes('/payments/') && request.method === 'POST') {
       try {
         const assetId = path.split('/')[3]
         const b       = await request.json()
@@ -461,7 +492,6 @@ export default {
           INSERT INTO asset_payments (id, asset_id, driver, payment_date, amount, notes, created_at)
           VALUES (?,?,?,?,?,?,datetime('now'))
         `).bind(id, assetId, b.driver.toUpperCase(), b.payment_date || '', amount, b.notes || '').run()
-        // Reduce balance_owed on the asset
         await env.DB.prepare(
           'UPDATE assets SET balance_owed = MAX(0, balance_owed - ?) WHERE id=?'
         ).bind(amount, assetId).run()
@@ -477,15 +507,12 @@ export default {
         const parts     = path.split('/')
         const assetId   = parts[3]
         const paymentId = parts[5]
-        const { driver, amount } = await request.json()
+        const { driver } = await request.json()
         const row = await env.DB.prepare('SELECT driver, amount FROM asset_payments WHERE id=?').bind(paymentId).first()
         if (!row) return json({ error: 'Payment not found' }, 404)
         if (row.driver !== driver.toUpperCase()) return json({ error: 'Not authorized' }, 403)
         await env.DB.prepare('DELETE FROM asset_payments WHERE id=?').bind(paymentId).run()
-        // Restore balance_owed
-        await env.DB.prepare(
-          'UPDATE assets SET balance_owed = balance_owed + ? WHERE id=?'
-        ).bind(row.amount, assetId).run()
+        await env.DB.prepare('UPDATE assets SET balance_owed = balance_owed + ? WHERE id=?').bind(row.amount, assetId).run()
         return json({ ok: true })
       } catch(e) {
         return json({ error: e.message }, 500)
