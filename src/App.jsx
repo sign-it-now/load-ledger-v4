@@ -82,11 +82,6 @@ export default function App() {
     if (driver) { fetchLoads(); checkCredentials(driver) }
   }, [driver])
 
-  // ── RESET TAX TAB IF BRUCE SELECTED ─────────────────────
-  useEffect(() => {
-    if (driver === 'BRUCE' && tab === 'tax') setTab('loads')
-  }, [driver])
-
   function newLoad() {
     return {
       id:null, broker_name:'', broker_email:'', load_number:'',
@@ -293,7 +288,7 @@ export default function App() {
         {tab === 'profile'     && <DriverProfile driver={driver} api={API} showToast={showToast} pin={pin} />}
         {tab === 'maintenance' && <Maintenance driver={driver} api={API} showToast={showToast} onEntriesChange={setMaintenanceEntries} />}
         {tab === 'assets'      && <Assets driver={driver} api={API} showToast={showToast} maintenanceEntries={maintenanceEntries} />}
-        {tab === 'tax'         && driver === 'TIM' && <Tax loads={loads} />}
+        {tab === 'tax'         && <Tax loads={loads} driver={driver} />}
       </div>
 
       {/* TAB BAR */}
@@ -322,12 +317,10 @@ export default function App() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
           Assets
         </button>
-        {driver === 'TIM' && (
-          <button className={`tab-item ${tab==='tax'?'active':''}`} onClick={() => setTab('tax')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/></svg>
-            Tax
-          </button>
-        )}
+        <button className={`tab-item ${tab==='tax'?'active':''}`} onClick={() => setTab('tax')}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/></svg>
+          Tax
+        </button>
       </div>
 
       {toast && <div className="toast">{toast}</div>}
