@@ -14,28 +14,63 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const [deleting,      setDeleting]      = useState(false)
   const [updating,      setUpdating]      = useState(null)
 
-  // ── ACTUAL DATE RANGE LABEL PER PERIOD ──────────────────
-  function getPeriodDateLabel(period) {
+  // ── PERIOD OFFSET — how many periods back/forward ────────
+  // 0 = current, -1 = one period back, +1 = one period forward
+  const [offset, setOffset] = useState(0)
+
+  // ── RESET OFFSET WHEN PERIOD TYPE CHANGES ────────────────
+  function changePeriod(p) {
+    setPeriod(p)
+    setOffset(0)
+  }
+
+  // ── BUILD THE REFERENCE DATE FOR A GIVEN OFFSET ──────────
+  function getRefDate(period, offset) {
     const now = new Date()
-    const mo  = now.toLocaleString('en-US', { month: 'long' }).toUpperCase()
-    const yr  = now.getFullYear()
-    const day = now.getDate()
+    if (period === 'daily') {
+      const d = new Date(now)
+      d.setDate(d.getDate() + offset)
+      return d
+    }
+    if (period === 'weekly') {
+      const d = new Date(now)
+      d.setDate(d.getDate() + offset * 7)
+      return d
+    }
+    if (period === 'monthly') {
+      const d = new Date(now.getFullYear(), now.getMonth() + offset, 1)
+      return d
+    }
+    if (period === 'yearly') {
+      const d = new Date(now.getFullYear() + offset, 0, 1)
+      return d
+    }
+    return now
+  }
+
+  // ── HUMAN-READABLE LABEL FOR THE CURRENT OFFSET ──────────
+  function getPeriodDateLabel(period, offset) {
+    const ref = getRefDate(period, offset)
+    const mo  = ref.toLocaleString('en-US', { month: 'long' }).toUpperCase()
+    const yr  = ref.getFullYear()
+    const day = ref.getDate()
 
     if (period === 'daily') {
+      const now = new Date()
+      now.setHours(0,0,0,0)
+      ref.setHours(0,0,0,0)
+      if (offset === 0)  return 'TODAY — ' + mo + ' ' + day + ', ' + yr
+      if (offset === -1) return 'YESTERDAY — ' + mo + ' ' + day + ', ' + yr
       return mo + ' ' + day + ', ' + yr
     }
     if (period === 'weekly') {
-      const start = new Date(now)
-      start.setDate(now.getDate() - 6)
+      const start = new Date(ref)
+      start.setDate(ref.getDate() - 6)
       const startMo  = start.toLocaleString('en-US', { month: 'long' }).toUpperCase()
       const startDay = start.getDate()
       const startYr  = start.getFullYear()
-      if (startYr !== yr) {
-        return startMo + ' ' + startDay + ', ' + startYr + ' \u2013 ' + mo + ' ' + day + ', ' + yr
-      }
-      if (startMo !== mo) {
-        return startMo + ' ' + startDay + ' \u2013 ' + mo + ' ' + day + ', ' + yr
-      }
+      if (startYr !== yr) return startMo + ' ' + startDay + ', ' + startYr + ' \u2013 ' + mo + ' ' + day + ', ' + yr
+      if (startMo !== mo) return startMo + ' ' + startDay + ' \u2013 ' + mo + ' ' + day + ', ' + yr
       return mo + ' ' + startDay + ' \u2013 ' + day + ', ' + yr
     }
     if (period === 'monthly') {
@@ -45,6 +80,31 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       return String(yr)
     }
     return ''
+  }
+
+  // ── CHECK IF DATE FALLS IN THE SELECTED PERIOD + OFFSET ──
+  function inPeriod(dateStr, period, offset) {
+    if (!dateStr) return false
+    const d   = new Date(dateStr)
+    const ref = getRefDate(period, offset)
+
+    if (period === 'daily') {
+      const r = new Date(ref); r.setHours(0,0,0,0)
+      const t = new Date(d);   t.setHours(0,0,0,0)
+      return r.getTime() === t.getTime()
+    }
+    if (period === 'weekly') {
+      const end   = new Date(ref); end.setHours(23,59,59,999)
+      const start = new Date(ref); start.setDate(ref.getDate() - 6); start.setHours(0,0,0,0)
+      return d >= start && d <= end
+    }
+    if (period === 'monthly') {
+      return d.getMonth() === ref.getMonth() && d.getFullYear() === ref.getFullYear()
+    }
+    if (period === 'yearly') {
+      return d.getFullYear() === ref.getFullYear()
+    }
+    return false
   }
 
   async function patchLoad(load, localIdx, fields) {
@@ -99,19 +159,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
   function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
 
-  function inPeriod(dateStr, period) {
-    if (!dateStr) return false
-    const d = new Date(dateStr), now = new Date()
-    if (period === 'daily')   return d.toDateString() === now.toDateString()
-    if (period === 'weekly') {
-      const start = new Date(now); start.setDate(now.getDate()-6); start.setHours(0,0,0,0)
-      return d >= start
-    }
-    if (period === 'monthly') return d.getMonth()===now.getMonth() && d.getFullYear()===now.getFullYear()
-    if (period === 'yearly')  return d.getFullYear()===now.getFullYear()
-    return false
-  }
-
   function advanceKept(load) {
     const c = parseFloat(load.comdata_total    || load.comdataTotal    || 0)
     const l = parseFloat(load.lumper_total     || load.lumperTotal     || 0)
@@ -122,15 +169,14 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const bruceLoads = loads.filter(l => l.driver === 'BRUCE')
   const timLoads   = loads.filter(l => l.driver === 'TIM')
 
-  // ── FILTER BY DELIVERY DATE FIRST, FALL BACK TO INVOICE DATE ──
-  function bruceCutForPeriod(period) {
-    const inRange   = loads.filter(l => inPeriod(l.delivery_date || l.date || l.created_at, period))
+  function bruceCutForPeriod(period, offset) {
+    const inRange   = loads.filter(l => inPeriod(l.delivery_date || l.date || l.created_at, period, offset))
     const totalBase = inRange.reduce((s,l) => s + parseFloat(l.base_pay || 0), 0)
     return { totalBase, bruceGross: totalBase * BRUCE_CUT, loadCount: inRange.length }
   }
 
-  function driverStats(dLoads, period) {
-    const inRange = dLoads.filter(l => inPeriod(l.delivery_date || l.date || l.created_at, period))
+  function driverStats(dLoads, period, offset) {
+    const inRange = dLoads.filter(l => inPeriod(l.delivery_date || l.date || l.created_at, period, offset))
     const billed  = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
     const paid    = inRange.filter(l => l.status === 'paid')
     return {
@@ -170,10 +216,10 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const totalPaid     = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s + (parseFloat(l.net_pay||l.netPay)||0), 0)
   const totalUnpaid   = totalNet - totalPaid
 
-  const bruceStats     = driverStats(bruceLoads, period)
-  const timStats       = driverStats(timLoads,   period)
-  const brucePeriodCut = bruceCutForPeriod(period)
-  const dateLabel      = getPeriodDateLabel(period)
+  const bruceStats     = driverStats(bruceLoads, period, offset)
+  const timStats       = driverStats(timLoads,   period, offset)
+  const brucePeriodCut = bruceCutForPeriod(period, offset)
+  const dateLabel      = getPeriodDateLabel(period, offset)
 
   if (loads.length === 0) {
     return (
@@ -188,6 +234,13 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const ledgerRow   = { display:'flex', justifyContent:'space-between', alignItems:'baseline', padding:'8px 0', borderBottom:'1px solid #ebebeb' }
   const ledgerLabel = { fontSize:15, color:'#444', fontWeight:400 }
   const ledgerValue = { fontSize:15, fontWeight:600, color:'#111', textAlign:'right', minWidth:90 }
+
+  // ── NAV ARROW BUTTON STYLE ───────────────────────────────
+  const navBtn = {
+    padding:'8px 18px', borderRadius:8, border:'1px solid var(--border)',
+    background:'var(--navy3)', color:'var(--white)',
+    fontSize:18, fontWeight:900, cursor:'pointer', lineHeight:1,
+  }
 
   return (
     <div>
@@ -234,9 +287,11 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       {/* ── REPORTS TAB ─────────────────────────────────── */}
       {view === 'reports' && (
         <div>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
+
+          {/* PERIOD TYPE SELECTOR */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:12 }}>
             {['daily','weekly','monthly','yearly'].map(p => (
-              <button key={p} onClick={() => setPeriod(p)} style={{
+              <button key={p} onClick={() => changePeriod(p)} style={{
                 padding:'9px 4px', borderRadius:8, border:'none',
                 fontFamily:'var(--font-head)', fontWeight:700, fontSize:11,
                 letterSpacing:'0.05em', cursor:'pointer',
@@ -246,12 +301,31 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             ))}
           </div>
 
-          {/* ── BILLING REPORT ── */}
-          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:4 }}>
-            BILLING REPORT
+          {/* ── PERIOD NAVIGATION ARROWS ── */}
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16, gap:10 }}>
+            <button style={navBtn} onClick={() => setOffset(o => o - 1)}>‹</button>
+            <div style={{ flex:1, textAlign:'center' }}>
+              <div style={{ fontFamily:'var(--font-head)', fontSize:15, fontWeight:900, color:'var(--white)', letterSpacing:'0.04em' }}>
+                {dateLabel}
+              </div>
+              {offset !== 0 && (
+                <button onClick={() => setOffset(0)} style={{
+                  marginTop:6, padding:'4px 12px', borderRadius:6,
+                  border:'1px solid var(--amber)', background:'transparent',
+                  color:'var(--amber)', fontSize:11,
+                  fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                }}>
+                  BACK TO CURRENT
+                </button>
+              )}
+            </div>
+            <button style={{ ...navBtn, color: offset >= 0 ? 'var(--grey)' : 'var(--white)', cursor: offset >= 0 ? 'default' : 'pointer' }}
+              onClick={() => { if (offset < 0) setOffset(o => o + 1) }}>›</button>
           </div>
-          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:14, fontWeight:900, color:'var(--white)', letterSpacing:'0.06em', marginBottom:14 }}>
-            {dateLabel}
+
+          {/* ── BILLING REPORT ── */}
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:14 }}>
+            BILLING REPORT
           </div>
 
           <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
@@ -279,11 +353,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
           </div>
 
           {/* ── DRIVER PAY REPORT ── */}
-          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:4 }}>
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:6 }}>
             DRIVER PAY REPORT
-          </div>
-          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:14, fontWeight:900, color:'var(--white)', letterSpacing:'0.06em', marginBottom:6 }}>
-            {dateLabel}
           </div>
           <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:12, textAlign:'center' }}>
             BASE RATE SPLIT: BRUCE 20% / TIM 80%
@@ -314,11 +385,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
           </div>
 
           {/* ── ADVANCE KEPT REPORT ── */}
-          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:4 }}>
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:6 }}>
             ADVANCE KEPT REPORT
-          </div>
-          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:14, fontWeight:900, color:'var(--white)', letterSpacing:'0.06em', marginBottom:6 }}>
-            {dateLabel}
           </div>
           <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:12, textAlign:'center' }}>
             COMDATA \u2212 LUMPERS \u2212 INCIDENTALS = KEPT BY DRIVER
@@ -357,6 +425,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
               <span className="value" style={{color:'var(--amber)',fontSize:18,fontWeight:900}}>{fmt(bruceStats.advanceKept+timStats.advanceKept)}</span>
             </div>
           </div>
+
         </div>
       )}
 
@@ -419,20 +488,18 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                   padding:'10px 16px', display:'flex',
                   alignItems:'center', justifyContent:'space-between',
                 }}>
-                  <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                      <div style={{
-                        padding:'2px 8px', borderRadius:8,
-                        background: isBruce ? '#1e88e5' : '#e53935',
-                        color:'#fff', fontSize:10,
-                        fontFamily:'var(--font-head)', fontWeight:700,
-                      }}>
-                        {load.driver || '-'}
-                      </div>
-                      <span style={{ fontSize:18, fontFamily:'var(--font-head)', fontWeight:900, color:'#ffffff', letterSpacing:'0.03em' }}>
-                        # {load.load_number || '-'}
-                      </span>
+                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    <div style={{
+                      padding:'2px 8px', borderRadius:8,
+                      background: isBruce ? '#1e88e5' : '#e53935',
+                      color:'#fff', fontSize:10,
+                      fontFamily:'var(--font-head)', fontWeight:700,
+                    }}>
+                      {load.driver || '-'}
                     </div>
+                    <span style={{ fontSize:18, fontFamily:'var(--font-head)', fontWeight:900, color:'#ffffff', letterSpacing:'0.03em' }}>
+                      # {load.load_number || '-'}
+                    </span>
                   </div>
                   <span style={{
                     padding:'4px 12px', borderRadius:8, fontSize:11,
@@ -473,7 +540,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     )}
                   </div>
 
-                  <div style={{ borderTop:'1px solid #ccc', marginBottom:0 }}>
+                  <div style={{ borderTop:'1px solid #ccc' }}>
                     <div style={ledgerRow}><span style={ledgerLabel}>Trucking Rate</span><span style={ledgerValue}>{fmt(basePay)}</span></div>
                     {lumperTotal > 0 && <div style={ledgerRow}><span style={ledgerLabel}>Lumper Fees</span><span style={ledgerValue}>{fmt(lumperTotal)}</span></div>}
                     {incTotal    > 0 && <div style={ledgerRow}><span style={ledgerLabel}>Incidentals</span><span style={ledgerValue}>{fmt(incTotal)}</span></div>}
@@ -497,12 +564,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     display:'flex', justifyContent:'space-between', alignItems:'baseline',
                     padding:'10px 0 14px 0', borderTop:'3px double #333', marginTop:4,
                   }}>
-                    <span style={{ fontSize:15, fontWeight:800, color:'#111', fontFamily:'var(--font-head)', letterSpacing:'0.03em' }}>
-                      NET BILLABLE TOTAL
-                    </span>
-                    <span style={{ fontSize:26, fontWeight:900, color:'#111', fontFamily:'var(--font-head)' }}>
-                      {fmt(netPayVal)}
-                    </span>
+                    <span style={{ fontSize:15, fontWeight:800, color:'#111', fontFamily:'var(--font-head)', letterSpacing:'0.03em' }}>NET BILLABLE TOTAL</span>
+                    <span style={{ fontSize:26, fontWeight:900, color:'#111', fontFamily:'var(--font-head)' }}>{fmt(netPayVal)}</span>
                   </div>
 
                   <div style={{ display:'flex', gap:8, flexWrap:'wrap', borderTop:'1px solid #e8e8e8', paddingTop:12 }}>
