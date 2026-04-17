@@ -122,14 +122,15 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const bruceLoads = loads.filter(l => l.driver === 'BRUCE')
   const timLoads   = loads.filter(l => l.driver === 'TIM')
 
+  // ── FILTER BY DELIVERY DATE FIRST, FALL BACK TO INVOICE DATE ──
   function bruceCutForPeriod(period) {
-    const inRange   = loads.filter(l => inPeriod(l.date || l.created_at, period))
+    const inRange   = loads.filter(l => inPeriod(l.delivery_date || l.date || l.created_at, period))
     const totalBase = inRange.reduce((s,l) => s + parseFloat(l.base_pay || 0), 0)
     return { totalBase, bruceGross: totalBase * BRUCE_CUT, loadCount: inRange.length }
   }
 
   function driverStats(dLoads, period) {
-    const inRange = dLoads.filter(l => inPeriod(l.date || l.created_at, period))
+    const inRange = dLoads.filter(l => inPeriod(l.delivery_date || l.date || l.created_at, period))
     const billed  = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
     const paid    = inRange.filter(l => l.status === 'paid')
     return {
@@ -233,7 +234,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       {/* ── REPORTS TAB ─────────────────────────────────── */}
       {view === 'reports' && (
         <div>
-          {/* PERIOD SELECTOR */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
             {['daily','weekly','monthly','yearly'].map(p => (
               <button key={p} onClick={() => setPeriod(p)} style={{
