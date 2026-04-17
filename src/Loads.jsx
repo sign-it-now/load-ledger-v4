@@ -14,7 +14,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const [deleting,      setDeleting]      = useState(false)
   const [updating,      setUpdating]      = useState(null)
 
-  // ── PATCH STATUS IN D1 ───────────────────────────────────
   async function patchLoad(load, localIdx, fields) {
     setUpdating(load.id || localIdx)
     try {
@@ -41,7 +40,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     } finally { setUpdating(null) }
   }
 
-  // ── DELETE FROM D1 ───────────────────────────────────────
   async function deleteLoad(load, localIdx) {
     setDeleting(true)
     try {
@@ -107,7 +105,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       paid:            paid.reduce((s,l)    => s + (parseFloat(l.net_pay||l.netPay)||0), 0),
       advanceKept:     inRange.reduce((s,l) => s + advanceKept(l), 0),
       timGross:        inRange.reduce((s,l) => s + parseFloat(l.base_pay||0) * TIM_CUT, 0),
-      bruceGross:      inRange.reduce((s,l) => s + parseFloat(l.base_pay||0) * BRUCE_CUT, 0),
       totalFuel:       inRange.reduce((s,l) => s + parseFloat(l.fuel||0), 0),
       comdataTotal:    inRange.reduce((s,l) => s + parseFloat(l.comdata_total||l.comdataTotal||0), 0),
       lumperTotal:     inRange.reduce((s,l) => s + parseFloat(l.lumper_total||l.lumperTotal||0), 0),
@@ -153,13 +150,16 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     )
   }
 
-  // ── SHARED CARD STYLES ───────────────────────────────────
-  const rowStyle = {
-    display:'flex', justifyContent:'space-between', alignItems:'center',
-    padding:'9px 0', borderBottom:'1px solid #e8e8e8',
+  // ── LEDGER ROW STYLES ────────────────────────────────────
+  const ledgerRow = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    padding: '8px 0',
+    borderBottom: '1px solid #ebebeb',
   }
-  const labelStyle = { fontSize:14, color:'#555', fontWeight:500 }
-  const valueStyle = { fontSize:14, fontWeight:700, color:'#222' }
+  const ledgerLabel = { fontSize: 15, color: '#444', fontWeight: 400 }
+  const ledgerValue = { fontSize: 15, fontWeight: 600, color: '#111', textAlign: 'right', minWidth: 90 }
 
   return (
     <div>
@@ -206,7 +206,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       {/* ── REPORTS TAB ─────────────────────────────────── */}
       {view === 'reports' && (
         <div>
-          {/* PERIOD SELECTOR */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
             {['daily','weekly','monthly','yearly'].map(p => (
               <button key={p} onClick={() => setPeriod(p)} style={{
@@ -219,7 +218,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             ))}
           </div>
 
-          {/* ── BILLING REPORT ── */}
           <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:10 }}>
             {periodLabel[period]} — BILLING REPORT
           </div>
@@ -248,7 +246,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt((bruceStats.billed+timStats.billed)-(bruceStats.paid+timStats.paid))}</span></div>
           </div>
 
-          {/* ── DRIVER PAY REPORT ── */}
           <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:10 }}>
             {periodLabel[period]} — DRIVER PAY REPORT
           </div>
@@ -280,7 +277,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             </div>
           </div>
 
-          {/* ── ADVANCE KEPT REPORT ── */}
           <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:10 }}>
             {periodLabel[period]} — ADVANCE KEPT REPORT
           </div>
@@ -363,7 +359,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             const isBruce    = load.driver === 'BRUCE'
             const invoiceUrl = load.invoice_url ? api + load.invoice_url : null
 
-            // Billing line items
             const basePay      = parseFloat(load.base_pay         || 0)
             const lumperTotal  = parseFloat(load.lumper_total     || load.lumperTotal     || 0)
             const incTotal     = parseFloat(load.incidental_total || load.incidentalTotal || 0)
@@ -371,145 +366,178 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             const pallets      = parseFloat(load.pallets          || 0)
             const comdataTotal = parseFloat(load.comdata_total    || load.comdataTotal    || 0)
             const subtotal     = basePay + lumperTotal + incTotal + detention + pallets
+            const hasAdditions = lumperTotal > 0 || incTotal > 0 || detention > 0 || pallets > 0
 
             return (
               <div key={load.id || idx} style={{
-                marginBottom:16, borderRadius:12, overflow:'hidden',
-                boxShadow:'0 2px 12px rgba(0,0,0,0.25)',
-                border:'1px solid ' + (isBruce ? '#1e88e5' : '#e53935'),
+                marginBottom: 16,
+                borderRadius: 10,
+                overflow: 'hidden',
+                boxShadow: '0 1px 8px rgba(0,0,0,0.18)',
+                border: '1px solid #d0d0d0',
+                background: '#ffffff',
               }}>
 
-                {/* ── DARK HEADER ── */}
+                {/* ── HEADER STRIP — minimal, just identity ── */}
                 <div style={{
                   background: isBruce ? '#0d1e33' : '#1a0808',
-                  padding:'10px 14px',
-                  display:'flex', alignItems:'center', justifyContent:'space-between',
+                  padding: '10px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
                 }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                    <div style={{
-                      padding:'3px 10px', borderRadius:10, fontSize:11,
-                      fontFamily:'var(--font-head)', fontWeight:700,
-                      background: isBruce ? '#1e88e5' : '#e53935', color:'#fff',
-                    }}>
-                      {load.driver || '-'}
-                    </div>
-                    <div style={{ fontSize:12, color:'#aaa', fontFamily:'var(--font-head)' }}>
-                      Load # {load.load_number || '-'}
+                  {/* DRIVER + LOAD NUMBER — load# big now */}
+                  <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                      <div style={{
+                        padding:'2px 8px', borderRadius:8,
+                        background: isBruce ? '#1e88e5' : '#e53935',
+                        color:'#fff', fontSize:10,
+                        fontFamily:'var(--font-head)', fontWeight:700,
+                      }}>
+                        {load.driver || '-'}
+                      </div>
+                      <span style={{
+                        fontSize: 18,
+                        fontFamily: 'var(--font-head)',
+                        fontWeight: 900,
+                        color: '#ffffff',
+                        letterSpacing: '0.03em',
+                      }}>
+                        # {load.load_number || '-'}
+                      </span>
                     </div>
                   </div>
+
+                  {/* STATUS */}
                   <span style={{
-                    padding:'3px 10px', borderRadius:10, fontSize:11,
+                    padding:'4px 12px', borderRadius:8, fontSize:11,
                     fontFamily:'var(--font-head)', fontWeight:700,
                     background: load.status==='paid'   ? '#1b5e20' :
                                 load.status==='billed' ? '#0d47a1' : '#333',
                     color:      load.status==='paid'   ? '#a5d6a7' :
                                 load.status==='billed' ? '#90caf9' : '#aaa',
                   }}>
-                    {(load.status || 'invoiced').toUpperCase()}
+                    {(load.status || 'INVOICED').toUpperCase()}
                   </span>
                 </div>
 
-                {/* ── WHITE BILLING BODY ── */}
-                <div style={{ background:'#ffffff', padding:'16px' }}>
+                {/* ── WHITE LEDGER BODY ── */}
+                <div style={{ padding:'16px 18px' }}>
 
-                  {/* BROKER */}
-                  <div style={{ fontSize:19, fontWeight:800, color:'#111', marginBottom:3, lineHeight:1.2 }}>
+                  {/* BROKER NAME */}
+                  <div style={{ fontSize:17, fontWeight:800, color:'#111', marginBottom:2, lineHeight:1.2 }}>
                     {load.broker_name || 'Unknown Broker'}
                   </div>
 
                   {/* ROUTE */}
-                  <div style={{ fontSize:13, color:'#444', marginBottom:10, lineHeight:1.4 }}>
+                  <div style={{ fontSize:13, color:'#555', marginBottom:12, lineHeight:1.4 }}>
                     {load.origin || '-'} → {load.destination || '-'}
                   </div>
 
-                  {/* DATES */}
-                  <div style={{ display:'flex', gap:20, marginBottom:14, flexWrap:'wrap' }}>
+                  {/* DATES ROW */}
+                  <div style={{ display:'flex', gap:24, marginBottom:14 }}>
                     <div>
                       <div style={{ fontSize:10, color:'#888', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:2 }}>DELIVERY DATE</div>
-                      <div style={{ fontSize:14, fontWeight:700, color:'#b8860b' }}>{load.delivery_date || '-'}</div>
+                      <div style={{ fontSize:14, fontWeight:700, color:'#333' }}>{load.delivery_date || '-'}</div>
                     </div>
                     <div>
                       <div style={{ fontSize:10, color:'#888', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:2 }}>INVOICED</div>
-                      <div style={{ fontSize:14, fontWeight:700, color:'#444' }}>
+                      <div style={{ fontSize:14, fontWeight:700, color:'#333' }}>
                         {(load.created_at || load.date) ? new Date(load.created_at || load.date).toLocaleDateString('en-US') : '-'}
                       </div>
                     </div>
-                    {(load.bol_count > 0) && (
+                    {load.bol_count > 0 && (
                       <div>
                         <div style={{ fontSize:10, color:'#888', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:2 }}>BOLs</div>
-                        <div style={{ fontSize:14, fontWeight:700, color:'#444' }}>{load.bol_count}</div>
+                        <div style={{ fontSize:14, fontWeight:700, color:'#333' }}>{load.bol_count}</div>
                       </div>
                     )}
                   </div>
 
-                  {/* ── BILLING LINE ITEMS ── */}
-                  <div style={{ borderTop:'2px solid #e0e0e0', paddingTop:10, marginBottom:10 }}>
+                  {/* ── LEDGER LINE ITEMS ── */}
+                  <div style={{ borderTop:'1px solid #ccc', marginBottom:0 }}>
 
-                    <div style={rowStyle}>
-                      <span style={labelStyle}>Trucking Rate</span>
-                      <span style={valueStyle}>{fmt(basePay)}</span>
+                    <div style={ledgerRow}>
+                      <span style={ledgerLabel}>Trucking Rate</span>
+                      <span style={ledgerValue}>{fmt(basePay)}</span>
                     </div>
 
                     {lumperTotal > 0 && (
-                      <div style={rowStyle}>
-                        <span style={labelStyle}>Lumper Fees</span>
-                        <span style={valueStyle}>{fmt(lumperTotal)}</span>
+                      <div style={ledgerRow}>
+                        <span style={ledgerLabel}>Lumper Fees</span>
+                        <span style={ledgerValue}>{fmt(lumperTotal)}</span>
                       </div>
                     )}
 
                     {incTotal > 0 && (
-                      <div style={rowStyle}>
-                        <span style={labelStyle}>Incidentals</span>
-                        <span style={valueStyle}>{fmt(incTotal)}</span>
+                      <div style={ledgerRow}>
+                        <span style={ledgerLabel}>Incidentals</span>
+                        <span style={ledgerValue}>{fmt(incTotal)}</span>
                       </div>
                     )}
 
                     {detention > 0 && (
-                      <div style={rowStyle}>
-                        <span style={labelStyle}>Detention</span>
-                        <span style={valueStyle}>{fmt(detention)}</span>
+                      <div style={ledgerRow}>
+                        <span style={ledgerLabel}>Detention</span>
+                        <span style={ledgerValue}>{fmt(detention)}</span>
                       </div>
                     )}
 
                     {pallets > 0 && (
-                      <div style={rowStyle}>
-                        <span style={labelStyle}>Pallets</span>
-                        <span style={valueStyle}>{fmt(pallets)}</span>
+                      <div style={ledgerRow}>
+                        <span style={ledgerLabel}>Pallets</span>
+                        <span style={ledgerValue}>{fmt(pallets)}</span>
                       </div>
                     )}
 
-                    {/* SUBTOTAL — only show if there are additions */}
-                    {(lumperTotal > 0 || incTotal > 0 || detention > 0 || pallets > 0) && (
-                      <div style={{ ...rowStyle, borderBottom:'none' }}>
-                        <span style={{ ...labelStyle, fontWeight:700, color:'#333' }}>SUBTOTAL</span>
-                        <span style={{ ...valueStyle, color:'#333' }}>{fmt(subtotal)}</span>
+                    {/* SUBTOTAL — only if there are additions beyond base */}
+                    {hasAdditions && (
+                      <div style={{ ...ledgerRow, borderBottom:'1px solid #bbb' }}>
+                        <span style={{ ...ledgerLabel, fontWeight:700, color:'#222' }}>Subtotal</span>
+                        <span style={{ ...ledgerValue, color:'#222' }}>{fmt(subtotal)}</span>
                       </div>
                     )}
 
                     {comdataTotal > 0 && (
-                      <div style={{ ...rowStyle, borderBottom:'none' }}>
-                        <span style={labelStyle}>Comdata / Express Codes</span>
-                        <span style={{ ...valueStyle, color:'#c62828' }}>-{fmt(comdataTotal)}</span>
+                      <div style={ledgerRow}>
+                        <span style={ledgerLabel}>Comdata / Express Codes</span>
+                        <span style={{ ...ledgerValue, color:'#c62828' }}>({fmt(comdataTotal)})</span>
                       </div>
                     )}
+
                   </div>
 
-                  {/* NET BILLABLE TOTAL */}
+                  {/* ── NET BILLABLE TOTAL — clean, no box ── */}
                   <div style={{
-                    background:'#1a1a2e', borderRadius:8, padding:'12px 16px',
-                    display:'flex', justifyContent:'space-between', alignItems:'center',
-                    marginBottom:14,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline',
+                    padding: '10px 0 14px 0',
+                    borderTop: '3px double #333',
+                    marginTop: 4,
                   }}>
-                    <span style={{ fontSize:13, fontWeight:800, color:'#fff', fontFamily:'var(--font-head)', letterSpacing:'0.05em' }}>
+                    <span style={{
+                      fontSize: 15,
+                      fontWeight: 800,
+                      color: '#111',
+                      fontFamily: 'var(--font-head)',
+                      letterSpacing: '0.03em',
+                    }}>
                       NET BILLABLE TOTAL
                     </span>
-                    <span style={{ fontSize:28, fontWeight:900, color:'#4caf50', fontFamily:'var(--font-head)' }}>
+                    <span style={{
+                      fontSize: 26,
+                      fontWeight: 900,
+                      color: '#111',
+                      fontFamily: 'var(--font-head)',
+                    }}>
                       {fmt(netPayVal)}
                     </span>
                   </div>
 
-                  {/* ACTION BUTTONS */}
-                  <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                  {/* ── ACTION BUTTONS ── */}
+                  <div style={{ display:'flex', gap:8, flexWrap:'wrap', borderTop:'1px solid #e8e8e8', paddingTop:12 }}>
                     {load.status !== 'billed' && load.status !== 'paid' && (
                       <button
                         className="scan-btn secondary"
@@ -541,8 +569,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                         style={{
                           display:'flex', alignItems:'center', justifyContent:'center',
                           padding:'11px 12px', borderRadius:8,
-                          border:'1px solid #b8860b', background:'#fff8e1',
-                          color:'#b8860b', fontSize:13,
+                          border:'1px solid #999', background:'#f5f5f5',
+                          color:'#333', fontSize:13,
                           fontFamily:'var(--font-head)', fontWeight:700,
                           textDecoration:'none', flexShrink:0,
                         }}
@@ -554,7 +582,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                       <button
                         style={{
                           padding:'11px 12px', borderRadius:8,
-                          border:'1px solid #ddd', background:'#f5f5f5',
+                          border:'1px solid #ddd', background:'#f9f9f9',
                           color:'#999', fontSize:13,
                           fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
                         }}
