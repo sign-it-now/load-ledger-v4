@@ -14,6 +14,39 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const [deleting,      setDeleting]      = useState(false)
   const [updating,      setUpdating]      = useState(null)
 
+  // ── ACTUAL DATE RANGE LABEL PER PERIOD ──────────────────
+  function getPeriodDateLabel(period) {
+    const now = new Date()
+    const mo  = now.toLocaleString('en-US', { month: 'long' }).toUpperCase()
+    const yr  = now.getFullYear()
+    const day = now.getDate()
+
+    if (period === 'daily') {
+      return mo + ' ' + day + ', ' + yr
+    }
+    if (period === 'weekly') {
+      const start = new Date(now)
+      start.setDate(now.getDate() - 6)
+      const startMo  = start.toLocaleString('en-US', { month: 'long' }).toUpperCase()
+      const startDay = start.getDate()
+      const startYr  = start.getFullYear()
+      if (startYr !== yr) {
+        return startMo + ' ' + startDay + ', ' + startYr + ' \u2013 ' + mo + ' ' + day + ', ' + yr
+      }
+      if (startMo !== mo) {
+        return startMo + ' ' + startDay + ' \u2013 ' + mo + ' ' + day + ', ' + yr
+      }
+      return mo + ' ' + startDay + ' \u2013 ' + day + ', ' + yr
+    }
+    if (period === 'monthly') {
+      return mo + ' ' + yr
+    }
+    if (period === 'yearly') {
+      return String(yr)
+    }
+    return ''
+  }
+
   async function patchLoad(load, localIdx, fields) {
     setUpdating(load.id || localIdx)
     try {
@@ -139,7 +172,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const bruceStats     = driverStats(bruceLoads, period)
   const timStats       = driverStats(timLoads,   period)
   const brucePeriodCut = bruceCutForPeriod(period)
-  const periodLabel    = { daily:'TODAY', weekly:'THIS WEEK', monthly:'THIS MONTH', yearly:'THIS YEAR' }
+  const dateLabel      = getPeriodDateLabel(period)
 
   if (loads.length === 0) {
     return (
@@ -151,15 +184,9 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   }
 
   // ── LEDGER ROW STYLES ────────────────────────────────────
-  const ledgerRow = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    padding: '8px 0',
-    borderBottom: '1px solid #ebebeb',
-  }
-  const ledgerLabel = { fontSize: 15, color: '#444', fontWeight: 400 }
-  const ledgerValue = { fontSize: 15, fontWeight: 600, color: '#111', textAlign: 'right', minWidth: 90 }
+  const ledgerRow   = { display:'flex', justifyContent:'space-between', alignItems:'baseline', padding:'8px 0', borderBottom:'1px solid #ebebeb' }
+  const ledgerLabel = { fontSize:15, color:'#444', fontWeight:400 }
+  const ledgerValue = { fontSize:15, fontWeight:600, color:'#111', textAlign:'right', minWidth:90 }
 
   return (
     <div>
@@ -206,6 +233,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       {/* ── REPORTS TAB ─────────────────────────────────── */}
       {view === 'reports' && (
         <div>
+          {/* PERIOD SELECTOR */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
             {['daily','weekly','monthly','yearly'].map(p => (
               <button key={p} onClick={() => setPeriod(p)} style={{
@@ -218,8 +246,12 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             ))}
           </div>
 
-          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:10 }}>
-            {periodLabel[period]} — BILLING REPORT
+          {/* ── BILLING REPORT ── */}
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:4 }}>
+            BILLING REPORT
+          </div>
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:14, fontWeight:900, color:'var(--white)', letterSpacing:'0.06em', marginBottom:14 }}>
+            {dateLabel}
           </div>
 
           <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
@@ -246,8 +278,12 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt((bruceStats.billed+timStats.billed)-(bruceStats.paid+timStats.paid))}</span></div>
           </div>
 
-          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:10 }}>
-            {periodLabel[period]} — DRIVER PAY REPORT
+          {/* ── DRIVER PAY REPORT ── */}
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:4 }}>
+            DRIVER PAY REPORT
+          </div>
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:14, fontWeight:900, color:'var(--white)', letterSpacing:'0.06em', marginBottom:6 }}>
+            {dateLabel}
           </div>
           <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:12, textAlign:'center' }}>
             BASE RATE SPLIT: BRUCE 20% / TIM 80%
@@ -277,11 +313,15 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             </div>
           </div>
 
-          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:10 }}>
-            {periodLabel[period]} — ADVANCE KEPT REPORT
+          {/* ── ADVANCE KEPT REPORT ── */}
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:4 }}>
+            ADVANCE KEPT REPORT
+          </div>
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:14, fontWeight:900, color:'var(--white)', letterSpacing:'0.06em', marginBottom:6 }}>
+            {dateLabel}
           </div>
           <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:12, textAlign:'center' }}>
-            COMDATA − LUMPERS − INCIDENTALS = KEPT BY DRIVER
+            COMDATA \u2212 LUMPERS \u2212 INCIDENTALS = KEPT BY DRIVER
           </div>
 
           <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
@@ -324,7 +364,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       {view !== 'reports' && (
         <div>
 
-          {/* SUMMARY TOTALS */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
             <div className="card" style={{ padding:12, textAlign:'center', marginBottom:0 }}>
               <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:4 }}>TOTAL</div>
@@ -370,23 +409,16 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
             return (
               <div key={load.id || idx} style={{
-                marginBottom: 16,
-                borderRadius: 10,
-                overflow: 'hidden',
-                boxShadow: '0 1px 8px rgba(0,0,0,0.18)',
-                border: '1px solid #d0d0d0',
-                background: '#ffffff',
+                marginBottom:16, borderRadius:10, overflow:'hidden',
+                boxShadow:'0 1px 8px rgba(0,0,0,0.18)',
+                border:'1px solid #d0d0d0', background:'#ffffff',
               }}>
 
-                {/* ── HEADER STRIP — minimal, just identity ── */}
                 <div style={{
                   background: isBruce ? '#0d1e33' : '#1a0808',
-                  padding: '10px 16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
+                  padding:'10px 16px', display:'flex',
+                  alignItems:'center', justifyContent:'space-between',
                 }}>
-                  {/* DRIVER + LOAD NUMBER — load# big now */}
                   <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
                     <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                       <div style={{
@@ -397,19 +429,11 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                       }}>
                         {load.driver || '-'}
                       </div>
-                      <span style={{
-                        fontSize: 18,
-                        fontFamily: 'var(--font-head)',
-                        fontWeight: 900,
-                        color: '#ffffff',
-                        letterSpacing: '0.03em',
-                      }}>
+                      <span style={{ fontSize:18, fontFamily:'var(--font-head)', fontWeight:900, color:'#ffffff', letterSpacing:'0.03em' }}>
                         # {load.load_number || '-'}
                       </span>
                     </div>
                   </div>
-
-                  {/* STATUS */}
                   <span style={{
                     padding:'4px 12px', borderRadius:8, fontSize:11,
                     fontFamily:'var(--font-head)', fontWeight:700,
@@ -422,20 +446,14 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                   </span>
                 </div>
 
-                {/* ── WHITE LEDGER BODY ── */}
                 <div style={{ padding:'16px 18px' }}>
-
-                  {/* BROKER NAME */}
                   <div style={{ fontSize:17, fontWeight:800, color:'#111', marginBottom:2, lineHeight:1.2 }}>
                     {load.broker_name || 'Unknown Broker'}
                   </div>
-
-                  {/* ROUTE */}
                   <div style={{ fontSize:13, color:'#555', marginBottom:12, lineHeight:1.4 }}>
-                    {load.origin || '-'} → {load.destination || '-'}
+                    {load.origin || '-'} \u2192 {load.destination || '-'}
                   </div>
 
-                  {/* DATES ROW */}
                   <div style={{ display:'flex', gap:24, marginBottom:14 }}>
                     <div>
                       <div style={{ fontSize:10, color:'#888', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:2 }}>DELIVERY DATE</div>
@@ -455,106 +473,52 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     )}
                   </div>
 
-                  {/* ── LEDGER LINE ITEMS ── */}
                   <div style={{ borderTop:'1px solid #ccc', marginBottom:0 }}>
-
-                    <div style={ledgerRow}>
-                      <span style={ledgerLabel}>Trucking Rate</span>
-                      <span style={ledgerValue}>{fmt(basePay)}</span>
-                    </div>
-
-                    {lumperTotal > 0 && (
-                      <div style={ledgerRow}>
-                        <span style={ledgerLabel}>Lumper Fees</span>
-                        <span style={ledgerValue}>{fmt(lumperTotal)}</span>
-                      </div>
-                    )}
-
-                    {incTotal > 0 && (
-                      <div style={ledgerRow}>
-                        <span style={ledgerLabel}>Incidentals</span>
-                        <span style={ledgerValue}>{fmt(incTotal)}</span>
-                      </div>
-                    )}
-
-                    {detention > 0 && (
-                      <div style={ledgerRow}>
-                        <span style={ledgerLabel}>Detention</span>
-                        <span style={ledgerValue}>{fmt(detention)}</span>
-                      </div>
-                    )}
-
-                    {pallets > 0 && (
-                      <div style={ledgerRow}>
-                        <span style={ledgerLabel}>Pallets</span>
-                        <span style={ledgerValue}>{fmt(pallets)}</span>
-                      </div>
-                    )}
-
-                    {/* SUBTOTAL — only if there are additions beyond base */}
+                    <div style={ledgerRow}><span style={ledgerLabel}>Trucking Rate</span><span style={ledgerValue}>{fmt(basePay)}</span></div>
+                    {lumperTotal > 0 && <div style={ledgerRow}><span style={ledgerLabel}>Lumper Fees</span><span style={ledgerValue}>{fmt(lumperTotal)}</span></div>}
+                    {incTotal    > 0 && <div style={ledgerRow}><span style={ledgerLabel}>Incidentals</span><span style={ledgerValue}>{fmt(incTotal)}</span></div>}
+                    {detention   > 0 && <div style={ledgerRow}><span style={ledgerLabel}>Detention</span><span style={ledgerValue}>{fmt(detention)}</span></div>}
+                    {pallets     > 0 && <div style={ledgerRow}><span style={ledgerLabel}>Pallets</span><span style={ledgerValue}>{fmt(pallets)}</span></div>}
                     {hasAdditions && (
                       <div style={{ ...ledgerRow, borderBottom:'1px solid #bbb' }}>
                         <span style={{ ...ledgerLabel, fontWeight:700, color:'#222' }}>Subtotal</span>
                         <span style={{ ...ledgerValue, color:'#222' }}>{fmt(subtotal)}</span>
                       </div>
                     )}
-
                     {comdataTotal > 0 && (
                       <div style={ledgerRow}>
                         <span style={ledgerLabel}>Comdata / Express Codes</span>
                         <span style={{ ...ledgerValue, color:'#c62828' }}>({fmt(comdataTotal)})</span>
                       </div>
                     )}
-
                   </div>
 
-                  {/* ── NET BILLABLE TOTAL — clean, no box ── */}
                   <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'baseline',
-                    padding: '10px 0 14px 0',
-                    borderTop: '3px double #333',
-                    marginTop: 4,
+                    display:'flex', justifyContent:'space-between', alignItems:'baseline',
+                    padding:'10px 0 14px 0', borderTop:'3px double #333', marginTop:4,
                   }}>
-                    <span style={{
-                      fontSize: 15,
-                      fontWeight: 800,
-                      color: '#111',
-                      fontFamily: 'var(--font-head)',
-                      letterSpacing: '0.03em',
-                    }}>
+                    <span style={{ fontSize:15, fontWeight:800, color:'#111', fontFamily:'var(--font-head)', letterSpacing:'0.03em' }}>
                       NET BILLABLE TOTAL
                     </span>
-                    <span style={{
-                      fontSize: 26,
-                      fontWeight: 900,
-                      color: '#111',
-                      fontFamily: 'var(--font-head)',
-                    }}>
+                    <span style={{ fontSize:26, fontWeight:900, color:'#111', fontFamily:'var(--font-head)' }}>
                       {fmt(netPayVal)}
                     </span>
                   </div>
 
-                  {/* ── ACTION BUTTONS ── */}
                   <div style={{ display:'flex', gap:8, flexWrap:'wrap', borderTop:'1px solid #e8e8e8', paddingTop:12 }}>
                     {load.status !== 'billed' && load.status !== 'paid' && (
-                      <button
-                        className="scan-btn secondary"
+                      <button className="scan-btn secondary"
                         style={{ flex:1, padding:'11px 12px', fontSize:13, opacity: isUpdating ? 0.5 : 1 }}
                         disabled={isUpdating}
-                        onClick={() => patchLoad(load, realIdx, { status:'billed' })}
-                      >
+                        onClick={() => patchLoad(load, realIdx, { status:'billed' })}>
                         {isUpdating ? 'SAVING...' : 'MARK BILLED'}
                       </button>
                     )}
                     {load.status !== 'paid' && (
-                      <button
-                        className="scan-btn success"
+                      <button className="scan-btn success"
                         style={{ flex:1, padding:'11px 12px', fontSize:13, opacity: isUpdating ? 0.5 : 1 }}
                         disabled={isUpdating}
-                        onClick={() => patchLoad(load, realIdx, { status:'paid' })}
-                      >
+                        onClick={() => patchLoad(load, realIdx, { status:'paid' })}>
                         {isUpdating ? 'SAVING...' : 'MARK PAID'}
                       </button>
                     )}
@@ -564,34 +528,25 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                       </div>
                     )}
                     {invoiceUrl && (
-                      <a
-                        href={invoiceUrl} target="_blank" rel="noopener noreferrer"
+                      <a href={invoiceUrl} target="_blank" rel="noopener noreferrer"
                         style={{
                           display:'flex', alignItems:'center', justifyContent:'center',
-                          padding:'11px 12px', borderRadius:8,
-                          border:'1px solid #999', background:'#f5f5f5',
-                          color:'#333', fontSize:13,
-                          fontFamily:'var(--font-head)', fontWeight:700,
-                          textDecoration:'none', flexShrink:0,
-                        }}
-                      >
+                          padding:'11px 12px', borderRadius:8, border:'1px solid #999',
+                          background:'#f5f5f5', color:'#333', fontSize:13,
+                          fontFamily:'var(--font-head)', fontWeight:700, textDecoration:'none', flexShrink:0,
+                        }}>
                         📄 VIEW INVOICE
                       </a>
                     )}
                     {!isPending && (
                       <button
-                        style={{
-                          padding:'11px 12px', borderRadius:8,
-                          border:'1px solid #ddd', background:'#f9f9f9',
-                          color:'#999', fontSize:13,
-                          fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                        }}
-                        onClick={() => setConfirmDelete(load.id || realIdx)}
-                      >DELETE</button>
+                        style={{ padding:'11px 12px', borderRadius:8, border:'1px solid #ddd', background:'#f9f9f9', color:'#999', fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}
+                        onClick={() => setConfirmDelete(load.id || realIdx)}>
+                        DELETE
+                      </button>
                     )}
                   </div>
 
-                  {/* INLINE CONFIRM DELETE */}
                   {isPending && (
                     <div style={{ marginTop:10, background:'#fff3f3', border:'1px solid #e53935', borderRadius:8, padding:'12px 14px' }}>
                       <div style={{ fontSize:13, color:'#c62828', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:10 }}>
@@ -604,8 +559,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                           fontSize:13, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
                         }}>{deleting ? 'DELETING...' : 'CONFIRM DELETE'}</button>
                         <button disabled={deleting} onClick={() => setConfirmDelete(null)} style={{
-                          flex:1, padding:'10px 0', borderRadius:8,
-                          border:'1px solid #ccc', background:'#f5f5f5', color:'#666',
+                          flex:1, padding:'10px 0', borderRadius:8, border:'1px solid #ccc',
+                          background:'#f5f5f5', color:'#666',
                           fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
                         }}>CANCEL</button>
                       </div>
