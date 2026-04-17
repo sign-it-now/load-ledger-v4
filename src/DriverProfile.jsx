@@ -36,48 +36,42 @@ function statusLabel(days) {
   return 'Good — ' + days + ' days remaining'
 }
 
-export default function DriverProfile({ driver, api, showToast }) {
-  const [creds,       setCreds]       = useState(null)
-  const [editing,     setEditing]     = useState(null)
-  const [editVal,     setEditVal]     = useState('')
-  const [saving,      setSaving]      = useState(false)
-  const [uploading,   setUploading]   = useState(null) // key of file uploading
-  const [fileUrls,    setFileUrls]    = useState({})   // keyed by cred key — tracks which have files
+// pin prop — passed from App after login, held in memory only, never stored
+export default function DriverProfile({ driver, api, showToast, pin }) {
+  const [creds,      setCreds]      = useState(null)
+  const [editing,    setEditing]    = useState(null)
+  const [editVal,    setEditVal]    = useState('')
+  const [saving,     setSaving]     = useState(false)
+  const [uploading,  setUploading]  = useState(null)
+  const [fileUrls,   setFileUrls]   = useState({})
 
   const fileInputRef = useRef()
   const uploadKey    = useRef(null)
 
-  useEffect(() => {
-    fetchCreds()
-  }, [driver])
+  useEffect(() => { fetchCreds() }, [driver])
 
   async function fetchCreds() {
     try {
       const res  = await fetch(api + '/api/credentials/' + driver)
       const data = await res.json()
       setCreds(data)
-      // Check which credentials have files in R2
-      checkFilesExist(data)
+      checkFilesExist()
     } catch (err) {
       console.error('Failed to load credentials:', err)
     }
   }
 
-  // Check R2 for each credential file by doing a HEAD-style GET
-  // If the file exists the URL will load, if not it 404s — we track this in state
-  async function checkFilesExist(data) {
+  // Check which credential files exist by probing with PIN
+  async function checkFilesExist() {
+    if (!pin) return
     const checks = {}
     await Promise.all(
       CREDENTIALS.map(async ({ key }) => {
         try {
-          const url = api + '/api/credentials/' + driver + '/file/' + key
+          const url = api + '/api/credentials/' + driver + '/file/' + key + '?pin=' + encodeURIComponent(pin)
           const res = await fetch(url, { method: 'GET' })
-          if (res.ok) {
-            checks[key] = url
-          }
-        } catch {
-          // file doesn't exist — that's fine
-        }
+          if (res.ok) checks[key] = url
+        } catch { /* file doesn't exist */ }
       })
     )
     setFileUrls(checks)
@@ -89,9 +83,8 @@ export default function DriverProfile({ driver, api, showToast }) {
     const updated = { ...creds, [key]: value, [key + '_snooze']: '' }
     try {
       const res = await fetch(api + '/api/credentials/' + driver, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(updated),
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
       })
       if (!res.ok) throw new Error('Save failed')
       setCreds(updated)
@@ -105,7 +98,6 @@ export default function DriverProfile({ driver, api, showToast }) {
     }
   }
 
-  // ── FILE UPLOAD ──────────────────────────────────────────
   function openFileUpload(key) {
     uploadKey.current = key
     fileInputRef.current.click()
@@ -117,31 +109,23 @@ export default function DriverProfile({ driver, api, showToast }) {
     const key = uploadKey.current
     setUploading(key)
     showToast('📤 Uploading...')
-
     try {
-      // Read file as base64
       const base64 = await new Promise((resolve, reject) => {
         const reader = new FileReader()
         reader.onerror = reject
         reader.onload  = () => resolve(reader.result.split(',')[1])
         reader.readAsDataURL(file)
       })
-
       const mediaType = file.type === 'application/pdf' ? 'application/pdf' : 'image/jpeg'
-
+      // PIN sent in request body — required by worker
       const res = await fetch(api + '/api/credentials/' + driver + '/file/' + key, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ base64, mediaType }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64, mediaType, pin }),
       })
-
       if (!res.ok) throw new Error('Upload failed')
-
-      // Update local file URL so VIEW button appears immediately
-      setFileUrls(prev => ({
-        ...prev,
-        [key]: api + '/api/credentials/' + driver + '/file/' + key,
-      }))
+      // Build authenticated view URL with PIN as query param
+      const viewUrl = api + '/api/credentials/' + driver + '/file/' + key + '?pin=' + encodeURIComponent(pin)
+      setFileUrls(prev => ({ ...prev, [key]: viewUrl }))
       showToast('✅ File uploaded!')
     } catch (err) {
       showToast('⚠️ Upload failed: ' + err.message)
@@ -152,28 +136,19 @@ export default function DriverProfile({ driver, api, showToast }) {
     }
   }
 
-  function startEdit(key) {
-    setEditing(key)
-    setEditVal(creds?.[key] || '')
-  }
-
-  function cancelEdit() {
-    setEditing(null)
-    setEditVal('')
-  }
+  function startEdit(key) { setEditing(key); setEditVal(creds?.[key] || '') }
+  function cancelEdit()   { setEditing(null); setEditVal('') }
 
   if (!creds) {
     return (
       <div className="empty-state">
-        <div className="icon">🪪</div>
-        <h3>LOADING...</h3>
+        <div className="icon">🪪</div><h3>LOADING...</h3>
       </div>
     )
   }
 
   return (
     <div>
-      {/* Hidden file input — shared across all credentials */}
       <input
         ref={fileInputRef}
         type="file"
@@ -183,27 +158,23 @@ export default function DriverProfile({ driver, api, showToast }) {
       />
 
       <div className="card" style={{ marginBottom:14 }}>
-        <div className="section-title" style={{ marginBottom:4 }}>
-          DRIVER CREDENTIALS
-        </div>
+        <div className="section-title" style={{ marginBottom:4 }}>DRIVER CREDENTIALS</div>
         <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4 }}>
           {driver} — set expiration dates and upload documents
         </div>
       </div>
 
       {CREDENTIALS.map(({ key, label, icon }) => {
-        const dateVal   = creds[key] || ''
-        const days      = daysUntil(dateVal)
-        const color     = statusColor(days)
-        const isEdit    = editing === key
+        const dateVal     = creds[key] || ''
+        const days        = daysUntil(dateVal)
+        const color       = statusColor(days)
+        const isEdit      = editing === key
         const isUploading = uploading === key
-        const fileUrl   = fileUrls[key] || null
+        const fileUrl     = fileUrls[key] || null
 
         return (
-          <div className="card" key={key} style={{
-            borderLeft: '3px solid ' + color,
-            marginBottom: 10,
-          }}>
+          <div className="card" key={key} style={{ borderLeft:'3px solid ' + color, marginBottom:10 }}>
+
             {/* HEADER ROW */}
             <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom: isEdit ? 14 : 0 }}>
               <div style={{ display:'flex', alignItems:'center', gap:10, flex:1 }}>
@@ -222,110 +193,61 @@ export default function DriverProfile({ driver, api, showToast }) {
                   )}
                 </div>
               </div>
-
-              {/* ACTION BUTTONS — only show when not editing */}
               {!isEdit && (
-                <div style={{ display:'flex', flexDirection:'column', gap:6, flexShrink:0, marginLeft:8 }}>
-                  <button
-                    onClick={() => startEdit(key)}
-                    style={{
-                      padding:'7px 12px', borderRadius:8,
-                      border:'1px solid var(--border)',
-                      background:'var(--navy3)', color:'var(--grey)',
-                      fontSize:11, fontFamily:'var(--font-head)',
-                      fontWeight:700, cursor:'pointer',
-                    }}
-                  >
-                    {dateVal ? 'UPDATE' : 'SET DATE'}
-                  </button>
-                </div>
+                <button onClick={() => startEdit(key)} style={{
+                  padding:'7px 12px', borderRadius:8, border:'1px solid var(--border)',
+                  background:'var(--navy3)', color:'var(--grey)',
+                  fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer', flexShrink:0,
+                }}>
+                  {dateVal ? 'UPDATE' : 'SET DATE'}
+                </button>
               )}
             </div>
 
-            {/* FILE BUTTONS — always visible below header when not editing */}
+            {/* FILE BUTTONS */}
             {!isEdit && (
-              <div style={{ display:'flex', gap:8, marginTop: dateVal || fileUrl ? 10 : 6 }}>
-                {/* UPLOAD BUTTON */}
-                <button
-                  disabled={isUploading}
-                  onClick={() => openFileUpload(key)}
-                  style={{
-                    flex:1, padding:'9px 0', borderRadius:8,
-                    border:'1px solid var(--border)',
-                    background:'var(--navy3)',
-                    color: isUploading ? 'var(--grey)' : 'var(--white)',
-                    fontSize:12, fontFamily:'var(--font-head)',
-                    fontWeight:700, cursor:'pointer',
-                  }}
-                >
+              <div style={{ display:'flex', gap:8, marginTop:10 }}>
+                <button disabled={isUploading} onClick={() => openFileUpload(key)} style={{
+                  flex:1, padding:'9px 0', borderRadius:8, border:'1px solid var(--border)',
+                  background:'var(--navy3)', color: isUploading ? 'var(--grey)' : 'var(--white)',
+                  fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                }}>
                   {isUploading ? '📤 Uploading...' : fileUrl ? '📎 Replace File' : '📎 Upload File'}
                 </button>
-
-                {/* VIEW BUTTON — only if file exists in R2 */}
                 {fileUrl && (
-                  <a
-                    href={fileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      flex:1, padding:'9px 0', borderRadius:8,
-                      border:'1px solid var(--amber)',
-                      background:'transparent', color:'var(--amber)',
-                      fontSize:12, fontFamily:'var(--font-head)',
-                      fontWeight:700, cursor:'pointer',
-                      textDecoration:'none',
-                      display:'flex', alignItems:'center', justifyContent:'center',
-                    }}
-                  >
+                  <a href={fileUrl} target="_blank" rel="noopener noreferrer" style={{
+                    flex:1, padding:'9px 0', borderRadius:8, border:'1px solid var(--amber)',
+                    background:'transparent', color:'var(--amber)',
+                    fontSize:12, fontFamily:'var(--font-head)', fontWeight:700,
+                    textDecoration:'none', display:'flex', alignItems:'center', justifyContent:'center',
+                  }}>
                     👁 VIEW FILE
                   </a>
                 )}
               </div>
             )}
 
-            {/* INLINE DATE EDITOR */}
+            {/* DATE EDITOR */}
             {isEdit && (
               <div>
-                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)',
-                              letterSpacing:'0.06em', marginBottom:8 }}>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:8 }}>
                   SET EXPIRATION DATE FOR {label.toUpperCase()}
                 </div>
-                <input
-                  type="date"
-                  value={editVal}
-                  onChange={e => setEditVal(e.target.value)}
-                  style={{
-                    width:'100%', background:'var(--navy3)',
-                    border:'1px solid var(--amber)', color:'var(--white)',
-                    borderRadius:8, padding:'12px 14px', fontSize:16,
-                    fontFamily:'var(--font-body)', marginBottom:10,
-                    boxSizing:'border-box',
-                  }}
-                />
+                <input type="date" value={editVal} onChange={e => setEditVal(e.target.value)}
+                  style={{ width:'100%', background:'var(--navy3)', border:'1px solid var(--amber)',
+                           color:'var(--white)', borderRadius:8, padding:'12px 14px', fontSize:16,
+                           fontFamily:'var(--font-body)', marginBottom:10, boxSizing:'border-box' }} />
                 <div style={{ display:'flex', gap:8 }}>
-                  <button
-                    disabled={saving || !editVal}
-                    onClick={() => saveCred(key, editVal)}
-                    style={{
-                      flex:1, padding:'12px 0', borderRadius:8, border:'none',
-                      background: saving || !editVal ? '#555' : 'var(--amber)',
-                      color:'var(--navy)', fontSize:14,
-                      fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
-                    }}
-                  >
-                    {saving ? 'SAVING...' : 'SAVE'}
-                  </button>
-                  <button
-                    onClick={cancelEdit}
-                    style={{
-                      flex:1, padding:'12px 0', borderRadius:8,
-                      border:'1px solid var(--border)', background:'transparent',
-                      color:'var(--grey)', fontSize:14,
-                      fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                    }}
-                  >
-                    CANCEL
-                  </button>
+                  <button disabled={saving || !editVal} onClick={() => saveCred(key, editVal)} style={{
+                    flex:1, padding:'12px 0', borderRadius:8, border:'none',
+                    background: saving || !editVal ? '#555' : 'var(--amber)', color:'var(--navy)',
+                    fontSize:14, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
+                  }}>{saving ? 'SAVING...' : 'SAVE'}</button>
+                  <button onClick={cancelEdit} style={{
+                    flex:1, padding:'12px 0', borderRadius:8, border:'1px solid var(--border)',
+                    background:'transparent', color:'var(--grey)',
+                    fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                  }}>CANCEL</button>
                 </div>
               </div>
             )}
