@@ -4,7 +4,6 @@
 import { useState, useEffect } from 'react'
 
 const ASSET_TYPES = ['Truck', 'Trailer', 'Refer Unit', 'Other Equipment']
-
 const TYPE_ICONS = {
   'Truck':           '🚛',
   'Trailer':         '🚚',
@@ -12,26 +11,29 @@ const TYPE_ICONS = {
   'Other Equipment': '⚙️',
 }
 
-export default function Assets({ driver, api, showToast, maintenanceEntries }) {
-  const [assets,       setAssets]       = useState([])
-  const [payments,     setPayments]     = useState({}) // keyed by asset.id
-  const [loading,      setLoading]      = useState(true)
-  const [showForm,     setShowForm]     = useState(false)
-  const [editAsset,    setEditAsset]    = useState(null) // asset being edited
-  const [expandedId,   setExpandedId]   = useState(null) // expanded asset card
-  const [confirmDel,   setConfirmDel]   = useState(null)
-  const [deleting,     setDeleting]     = useState(false)
-  const [saving,       setSaving]       = useState(false)
-  const [showPayForm,  setShowPayForm]  = useState(null) // asset id for payment form
-  const [confirmDelPay,setConfirmDelPay]= useState(null)
+export default function Assets({ driver, api, showToast, maintenanceEntries, role }) {
+  const [assets,        setAssets]        = useState([])
+  const [payments,      setPayments]      = useState({})
+  const [loading,       setLoading]       = useState(true)
+  const [showForm,      setShowForm]      = useState(false)
+  const [editAsset,     setEditAsset]     = useState(null)
+  const [expandedId,    setExpandedId]    = useState(null)
+  const [confirmDel,    setConfirmDel]    = useState(null)
+  const [deleting,      setDeleting]      = useState(false)
+  const [saving,        setSaving]        = useState(false)
+  const [showPayForm,   setShowPayForm]   = useState(null)
+  const [confirmDelPay, setConfirmDelPay] = useState(null)
+
+  const isBookkeeper = role === 'bookkeeper'
 
   const [form, setForm] = useState({
     asset_name: '', asset_type: 'Truck', year: '', make: '', model: '',
     vin_last6: '', notes: '', purchase_price: '', balance_owed: '',
     owed_to: '', purchase_date: '', estimated_value: '',
   })
-
-  const [payForm, setPayForm] = useState({ payment_date: new Date().toISOString().split('T')[0], amount: '', notes: '' })
+  const [payForm, setPayForm] = useState({
+    payment_date: new Date().toISOString().split('T')[0], amount: '', notes: '',
+  })
 
   useEffect(() => { fetchAssets() }, [driver])
 
@@ -42,7 +44,6 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
       const data = await res.json()
       const list = Array.isArray(data) ? data : []
       setAssets(list)
-      // Fetch payments for each asset
       const payMap = {}
       await Promise.all(list.map(async a => {
         try {
@@ -61,7 +62,6 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
 
   function fmt(n) { return '$' + (parseFloat(n)||0).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }) }
 
-  // Total repairs spent on an asset from maintenance entries
   function repairsForAsset(assetId) {
     if (!maintenanceEntries) return 0
     return maintenanceEntries
@@ -206,7 +206,6 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
     return <div className="empty-state"><div className="icon">⚙️</div><h3>LOADING...</h3></div>
   }
 
-  // Total all-time fleet values
   const totalPurchaseValue  = assets.reduce((s,a) => s + (parseFloat(a.purchase_price)||0), 0)
   const totalEstimatedValue = assets.reduce((s,a) => s + (parseFloat(a.estimated_value)||0), 0)
   const totalOwed           = assets.reduce((s,a) => s + (parseFloat(a.balance_owed)||0), 0)
@@ -229,11 +228,14 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
           </div>
         </div>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-          <div style={{ background:'#1a0a2a', borderRadius:8, padding:'10px 12px', border:'1px solid #7b1fa2' }}>
-            <div style={{ fontSize:10, color:'#ce93d8', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:4 }}>TOTAL OWED</div>
-            <div style={{ fontFamily:'var(--font-head)', fontSize:16, fontWeight:900, color:'#ce93d8' }}>{fmt(totalOwed)}</div>
-          </div>
-          <div style={{ background:'#2a0a0a', borderRadius:8, padding:'10px 12px', border:'1px solid #555' }}>
+          {/* Only show total owed to drivers, not bookkeeper */}
+          {!isBookkeeper && (
+            <div style={{ background:'#1a0a2a', borderRadius:8, padding:'10px 12px', border:'1px solid #7b1fa2' }}>
+              <div style={{ fontSize:10, color:'#ce93d8', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:4 }}>TOTAL OWED</div>
+              <div style={{ fontFamily:'var(--font-head)', fontSize:16, fontWeight:900, color:'#ce93d8' }}>{fmt(totalOwed)}</div>
+            </div>
+          )}
+          <div style={{ background:'#2a0a0a', borderRadius:8, padding:'10px 12px', border:'1px solid #555', gridColumn: isBookkeeper ? 'span 2' : 'auto' }}>
             <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:4 }}>TOTAL REPAIRS</div>
             <div style={{ fontFamily:'var(--font-head)', fontSize:16, fontWeight:900, color:'#e53935' }}>{fmt(totalRepairs)}</div>
           </div>
@@ -253,8 +255,6 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
           <div className="section-title" style={{ marginBottom:12 }}>
             {editAsset ? 'EDIT ASSET' : 'NEW ASSET'}
           </div>
-
-          {/* ASSET TYPE */}
           <div style={{ marginBottom:10 }}>
             <div className="field-label" style={{ marginBottom:6 }}>Asset Type</div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
@@ -270,16 +270,12 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
               ))}
             </div>
           </div>
-
-          {/* NAME */}
           <div className="field-row" style={{ marginBottom:10 }}>
             <div className="field-label">Asset Name</div>
             <input type="text" value={form.asset_name} onChange={e=>setForm(p=>({...p,asset_name:e.target.value}))}
               placeholder="e.g. Peterbilt 579, Utility Reefer Trailer"
               style={{ background:'var(--navy3)', border:'1px solid var(--border)', color:'var(--white)', borderRadius:8, padding:'10px 12px', fontSize:15, width:'100%', boxSizing:'border-box' }} />
           </div>
-
-          {/* YEAR / MAKE / MODEL */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:10 }}>
             <div>
               <div className="field-label" style={{ marginBottom:4 }}>Year</div>
@@ -300,73 +296,62 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
                 style={{ background:'var(--navy3)', border:'1px solid var(--border)', color:'var(--white)', borderRadius:8, padding:'10px 8px', fontSize:14, width:'100%', boxSizing:'border-box' }} />
             </div>
           </div>
-
-          {/* VIN LAST 6 */}
           <div className="field-row" style={{ marginBottom:10 }}>
             <div className="field-label">VIN Last 6 Digits</div>
             <input type="text" value={form.vin_last6} onChange={e=>setForm(p=>({...p,vin_last6:e.target.value.toUpperCase()}))}
               placeholder="ED234685"
               style={{ background:'var(--navy3)', border:'1px solid var(--border)', color:'var(--white)', borderRadius:8, padding:'10px 12px', fontSize:15, fontFamily:'var(--font-head)', fontWeight:700, width:'100%', boxSizing:'border-box', letterSpacing:'0.1em' }} />
           </div>
-
-          {/* PURCHASE DATE */}
           <div className="field-row" style={{ marginBottom:10 }}>
             <div className="field-label">Purchase Date</div>
             <input type="date" value={form.purchase_date} onChange={e=>setForm(p=>({...p,purchase_date:e.target.value}))}
               style={{ background:'var(--navy3)', border:'1px solid var(--border)', color:'var(--white)', borderRadius:8, padding:'10px 12px', fontSize:15, width:'100%', boxSizing:'border-box' }} />
           </div>
-
-          {/* PURCHASE PRICE / EST VALUE */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
             <div>
               <div className="field-label" style={{ marginBottom:4 }}>Purchase Price ($)</div>
               <input type="text" inputMode="decimal" pattern="[0-9.]*" value={form.purchase_price}
-                onChange={e=>setForm(p=>({...p,purchase_price:e.target.value}))}
-                placeholder="0.00"
+                onChange={e=>setForm(p=>({...p,purchase_price:e.target.value}))} placeholder="0.00"
                 style={{ background:'var(--navy3)', border:'1px solid var(--amber)', color:'var(--white)', borderRadius:8, padding:'10px 8px', fontSize:18, fontFamily:'var(--font-head)', fontWeight:700, width:'100%', boxSizing:'border-box' }} />
             </div>
             <div>
               <div className="field-label" style={{ marginBottom:4 }}>Est. Current Value ($)</div>
               <input type="text" inputMode="decimal" pattern="[0-9.]*" value={form.estimated_value}
-                onChange={e=>setForm(p=>({...p,estimated_value:e.target.value}))}
-                placeholder="0.00"
+                onChange={e=>setForm(p=>({...p,estimated_value:e.target.value}))} placeholder="0.00"
                 style={{ background:'var(--navy3)', border:'1px solid var(--green)', color:'var(--white)', borderRadius:8, padding:'10px 8px', fontSize:18, fontFamily:'var(--font-head)', fontWeight:700, width:'100%', boxSizing:'border-box' }} />
             </div>
           </div>
 
-          {/* BALANCE OWED / OWED TO */}
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
-            <div>
-              <div className="field-label" style={{ marginBottom:4 }}>Balance Owed ($)</div>
-              <input type="text" inputMode="decimal" pattern="[0-9.]*" value={form.balance_owed}
-                onChange={e=>setForm(p=>({...p,balance_owed:e.target.value}))}
-                placeholder="0.00"
-                style={{ background:'var(--navy3)', border:'1px solid #ce93d8', color:'var(--white)', borderRadius:8, padding:'10px 8px', fontSize:18, fontFamily:'var(--font-head)', fontWeight:700, width:'100%', boxSizing:'border-box' }} />
+          {/* Balance owed — only shown to drivers in form */}
+          {!isBookkeeper && (
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
+              <div>
+                <div className="field-label" style={{ marginBottom:4 }}>Balance Owed ($)</div>
+                <input type="text" inputMode="decimal" pattern="[0-9.]*" value={form.balance_owed}
+                  onChange={e=>setForm(p=>({...p,balance_owed:e.target.value}))} placeholder="0.00"
+                  style={{ background:'var(--navy3)', border:'1px solid #ce93d8', color:'var(--white)', borderRadius:8, padding:'10px 8px', fontSize:18, fontFamily:'var(--font-head)', fontWeight:700, width:'100%', boxSizing:'border-box' }} />
+              </div>
+              <div>
+                <div className="field-label" style={{ marginBottom:4 }}>Owed To</div>
+                <input type="text" value={form.owed_to} onChange={e=>setForm(p=>({...p,owed_to:e.target.value}))}
+                  placeholder="Edgerton"
+                  style={{ background:'var(--navy3)', border:'1px solid var(--border)', color:'var(--white)', borderRadius:8, padding:'10px 8px', fontSize:14, width:'100%', boxSizing:'border-box' }} />
+              </div>
             </div>
-            <div>
-              <div className="field-label" style={{ marginBottom:4 }}>Owed To</div>
-              <input type="text" value={form.owed_to} onChange={e=>setForm(p=>({...p,owed_to:e.target.value}))}
-                placeholder="Edgerton"
-                style={{ background:'var(--navy3)', border:'1px solid var(--border)', color:'var(--white)', borderRadius:8, padding:'10px 8px', fontSize:14, width:'100%', boxSizing:'border-box' }} />
-            </div>
-          </div>
+          )}
 
-          {/* NOTES */}
           <div style={{ marginBottom:14 }}>
             <div className="field-label" style={{ marginBottom:4 }}>Condition Notes</div>
             <textarea value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))}
               placeholder="Pacar motor, mid roof sleeper, tires 80%, new water pump..."
               style={{ width:'100%', minHeight:80, background:'var(--navy3)', border:'1px solid var(--border)', color:'var(--white)', borderRadius:8, padding:'10px 12px', fontSize:14, fontFamily:'var(--font-body)', resize:'vertical', boxSizing:'border-box' }} />
           </div>
-
           <div style={{ display:'flex', gap:8 }}>
             <button disabled={saving} onClick={saveAsset} style={{
               flex:1, padding:'14px 0', borderRadius:8, border:'none',
               background: saving ? '#555' : 'var(--amber)', color:'var(--navy)',
               fontSize:15, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
-            }}>
-              {saving ? 'SAVING...' : editAsset ? 'UPDATE ASSET' : 'SAVE ASSET'}
-            </button>
+            }}>{saving ? 'SAVING...' : editAsset ? 'UPDATE ASSET' : 'SAVE ASSET'}</button>
             <button onClick={() => { setShowForm(false); setEditAsset(null) }} style={{
               flex:1, padding:'14px 0', borderRadius:8, border:'1px solid var(--border)',
               background:'transparent', color:'var(--grey)',
@@ -376,35 +361,28 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
         </div>
       )}
 
-      {/* EMPTY STATE */}
       {assets.length === 0 && !showForm && (
         <div className="empty-state">
-          <div className="icon">⚙️</div>
-          <h3>NO ASSETS YET</h3>
+          <div className="icon">⚙️</div><h3>NO ASSETS YET</h3>
           <p>Tap + ADD ASSET to record your truck or trailer</p>
         </div>
       )}
 
       {/* ASSET CARDS */}
       {assets.map(asset => {
-        const repairs     = repairsForAsset(asset.id)
-        const paidDown    = totalPaidDown(asset.id)
-        const balance     = parseFloat(asset.balance_owed) || 0
-        const isExpanded  = expandedId === asset.id
+        const repairs       = repairsForAsset(asset.id)
+        const paidDown      = totalPaidDown(asset.id)
+        const balance       = parseFloat(asset.balance_owed) || 0
+        const isExpanded    = expandedId === asset.id
         const assetPayments = payments[asset.id] || []
-        const isPendingDel = confirmDel === asset.id
+        const isPendingDel  = confirmDel === asset.id
 
         return (
           <div className="load-card" key={asset.id} style={{ borderLeft:'3px solid var(--amber)', marginBottom:12 }}>
             <div style={{ flex:1 }}>
 
-              {/* ASSET HEADER */}
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:6 }}>
-                <div style={{
-                  display:'inline-flex', alignItems:'center', gap:4,
-                  padding:'2px 8px', borderRadius:10, background:'var(--amber)',
-                  color:'var(--navy)', fontSize:10, fontFamily:'var(--font-head)', fontWeight:700,
-                }}>
+                <div style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'2px 8px', borderRadius:10, background:'var(--amber)', color:'var(--navy)', fontSize:10, fontFamily:'var(--font-head)', fontWeight:700 }}>
                   {TYPE_ICONS[asset.asset_type] || '⚙️'} {asset.asset_type}
                 </div>
                 {asset.purchase_date && (
@@ -414,12 +392,9 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
                 )}
               </div>
 
-              {/* NAME */}
               <div style={{ fontFamily:'var(--font-head)', fontSize:18, fontWeight:900, color:'var(--white)', marginBottom:2 }}>
                 {asset.asset_name}
               </div>
-
-              {/* YEAR MAKE MODEL VIN */}
               {(asset.year || asset.make || asset.model) && (
                 <div style={{ fontSize:13, color:'var(--grey)', marginBottom:2 }}>
                   {[asset.year, asset.make, asset.model].filter(Boolean).join(' ')}
@@ -447,8 +422,8 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
                 </div>
               </div>
 
-              {/* BALANCE OWED */}
-              {balance > 0 && (
+              {/* Balance owed — hidden from bookkeeper */}
+              {!isBookkeeper && balance > 0 && (
                 <div style={{ background:'#1a0a2a', border:'1px solid #7b1fa2', borderRadius:8, padding:'10px 12px', marginBottom:10 }}>
                   <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
                     <span style={{ fontSize:11, color:'#ce93d8', fontFamily:'var(--font-head)', fontWeight:700 }}>
@@ -464,7 +439,6 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
                 </div>
               )}
 
-              {/* CONDITION NOTES — show/hide */}
               {asset.notes && (
                 <div style={{ fontSize:12, color:'var(--grey)', marginBottom:10, lineHeight:1.5 }}>
                   {asset.notes}
@@ -473,20 +447,21 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
 
               {/* ACTION BUTTONS */}
               <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom: isExpanded ? 12 : 0 }}>
-                <button onClick={() => setExpandedId(isExpanded ? null : asset.id)} style={{
-                  flex:1, padding:'9px 0', borderRadius:8, border:'1px solid var(--border)',
-                  background:'var(--navy3)', color:'var(--white)',
-                  fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                }}>
-                  {isExpanded ? '▲ HIDE PAYMENTS' : '💰 PAYMENTS (' + assetPayments.length + ')'}
-                </button>
+                {/* Payments button — hidden from bookkeeper */}
+                {!isBookkeeper && (
+                  <button onClick={() => setExpandedId(isExpanded ? null : asset.id)} style={{
+                    flex:1, padding:'9px 0', borderRadius:8, border:'1px solid var(--border)',
+                    background:'var(--navy3)', color:'var(--white)',
+                    fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                  }}>
+                    {isExpanded ? '▲ HIDE PAYMENTS' : '💰 PAYMENTS (' + assetPayments.length + ')'}
+                  </button>
+                )}
                 <button onClick={() => startEdit(asset)} style={{
                   flex:1, padding:'9px 0', borderRadius:8, border:'1px solid var(--border)',
                   background:'var(--navy3)', color:'var(--grey)',
                   fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                }}>
-                  ✏️ EDIT
-                </button>
+                }}>✏️ EDIT</button>
                 {!isPendingDel && (
                   <button onClick={() => setConfirmDel(asset.id)} style={{
                     padding:'9px 12px', borderRadius:8, border:'1px solid #555',
@@ -496,7 +471,6 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
                 )}
               </div>
 
-              {/* CONFIRM DELETE ASSET */}
               {isPendingDel && (
                 <div style={{ marginTop:8, background:'#2a0a0a', border:'1px solid #e53935', borderRadius:8, padding:'12px 14px' }}>
                   <div style={{ fontSize:12, color:'#e53935', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:10 }}>
@@ -517,19 +491,15 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
                 </div>
               )}
 
-              {/* PAYMENTS SECTION — expanded */}
-              {isExpanded && (
+              {/* PAYMENT SECTION — hidden from bookkeeper */}
+              {!isBookkeeper && isExpanded && (
                 <div style={{ borderTop:'1px solid var(--border)', paddingTop:12 }}>
                   <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:10 }}>
                     PAYMENT HISTORY
                   </div>
-
-                  {/* ADD PAYMENT */}
                   {showPayForm === asset.id ? (
                     <div style={{ background:'var(--navy3)', borderRadius:8, padding:'12px', marginBottom:10, border:'1px solid var(--amber)' }}>
-                      <div style={{ fontSize:11, color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:10 }}>
-                        RECORD PAYMENT
-                      </div>
+                      <div style={{ fontSize:11, color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:10 }}>RECORD PAYMENT</div>
                       <div className="field-row" style={{ marginBottom:8 }}>
                         <div className="field-label">Date</div>
                         <input type="date" value={payForm.payment_date}
@@ -539,15 +509,13 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
                       <div className="field-row" style={{ marginBottom:8 }}>
                         <div className="field-label">Amount ($)</div>
                         <input type="text" inputMode="decimal" pattern="[0-9.]*" value={payForm.amount}
-                          onChange={e=>setPayForm(p=>({...p,amount:e.target.value}))}
-                          placeholder="0.00"
+                          onChange={e=>setPayForm(p=>({...p,amount:e.target.value}))} placeholder="0.00"
                           style={{ background:'var(--navy)', border:'1px solid var(--amber)', color:'var(--white)', borderRadius:8, padding:'8px 10px', fontSize:20, fontFamily:'var(--font-head)', fontWeight:700, width:'100%', boxSizing:'border-box' }} />
                       </div>
                       <div className="field-row" style={{ marginBottom:10 }}>
                         <div className="field-label">Notes (optional)</div>
                         <input type="text" value={payForm.notes}
-                          onChange={e=>setPayForm(p=>({...p,notes:e.target.value}))}
-                          placeholder="e.g. Monthly installment"
+                          onChange={e=>setPayForm(p=>({...p,notes:e.target.value}))} placeholder="e.g. Monthly installment"
                           style={{ background:'var(--navy)', border:'1px solid var(--border)', color:'var(--white)', borderRadius:8, padding:'8px 10px', fontSize:14, width:'100%', boxSizing:'border-box' }} />
                       </div>
                       <div style={{ display:'flex', gap:8 }}>
@@ -568,24 +536,15 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
                       width:'100%', padding:'10px 0', borderRadius:8,
                       border:'1px solid var(--amber)', background:'transparent', color:'var(--amber)',
                       fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer', marginBottom:10,
-                    }}>
-                      + RECORD PAYMENT
-                    </button>
+                    }}>+ RECORD PAYMENT</button>
                   )}
-
-                  {/* PAYMENT LIST */}
                   {assetPayments.length === 0 && (
-                    <div style={{ textAlign:'center', fontSize:12, color:'var(--grey)', padding:'10px 0' }}>
-                      No payments recorded yet
-                    </div>
+                    <div style={{ textAlign:'center', fontSize:12, color:'var(--grey)', padding:'10px 0' }}>No payments recorded yet</div>
                   )}
                   {assetPayments.map(pay => (
-                    <div key={pay.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
-                                               padding:'8px 0', borderBottom:'1px solid var(--border)' }}>
+                    <div key={pay.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid var(--border)' }}>
                       <div>
-                        <div style={{ fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, color:'var(--green)' }}>
-                          {fmt(pay.amount)}
-                        </div>
+                        <div style={{ fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, color:'var(--green)' }}>{fmt(pay.amount)}</div>
                         <div style={{ fontSize:10, color:'var(--grey)', marginTop:2 }}>
                           {pay.payment_date ? new Date(pay.payment_date + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '-'}
                           {pay.notes ? ' — ' + pay.notes : ''}
@@ -593,29 +552,16 @@ export default function Assets({ driver, api, showToast, maintenanceEntries }) {
                       </div>
                       {confirmDelPay === pay.id ? (
                         <div style={{ display:'flex', gap:6 }}>
-                          <button onClick={() => deletePayment(asset.id, pay)} style={{
-                            padding:'6px 10px', borderRadius:6, border:'none',
-                            background:'#e53935', color:'#fff',
-                            fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                          }}>DELETE</button>
-                          <button onClick={() => setConfirmDelPay(null)} style={{
-                            padding:'6px 10px', borderRadius:6, border:'1px solid #555',
-                            background:'transparent', color:'#aaa',
-                            fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                          }}>CANCEL</button>
+                          <button onClick={() => deletePayment(asset.id, pay)} style={{ padding:'6px 10px', borderRadius:6, border:'none', background:'#e53935', color:'#fff', fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>DELETE</button>
+                          <button onClick={() => setConfirmDelPay(null)} style={{ padding:'6px 10px', borderRadius:6, border:'1px solid #555', background:'transparent', color:'#aaa', fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>CANCEL</button>
                         </div>
                       ) : (
-                        <button onClick={() => setConfirmDelPay(pay.id)} style={{
-                          padding:'6px 10px', borderRadius:6, border:'1px solid #555',
-                          background:'transparent', color:'#888',
-                          fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                        }}>REMOVE</button>
+                        <button onClick={() => setConfirmDelPay(pay.id)} style={{ padding:'6px 10px', borderRadius:6, border:'1px solid #555', background:'transparent', color:'#888', fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>REMOVE</button>
                       )}
                     </div>
                   ))}
                 </div>
               )}
-
             </div>
           </div>
         )
