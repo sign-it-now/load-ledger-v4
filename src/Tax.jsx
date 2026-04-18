@@ -282,12 +282,14 @@ export default function Tax({ loads, driver }) {
     }))
   }
 
+  // ── REVENUE — uses delivery_date first for correct quarter ─
   function getQuarterRevenue(qMonths) {
     return loads
       .filter(l => {
         if (l.driver !== driver) return false
-        if (!l.date && !l.created_at) return false
-        const d = new Date(l.date || l.created_at)
+        const dateStr = l.delivery_date || l.date || l.created_at
+        if (!dateStr) return false
+        const d = new Date(dateStr)
         return d.getFullYear() === YEAR && qMonths.includes(d.getMonth())
       })
       .reduce((sum, l) => sum + (parseFloat(l.net_pay || l.netPay) || 0), 0)
@@ -376,7 +378,6 @@ export default function Tax({ loads, driver }) {
         return (
           <div key={qIdx} className="card" style={{borderLeft:'3px solid '+q.color, marginBottom:12}}>
 
-            {/* HEADER */}
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', cursor:'pointer'}}
               onClick={() => setOpenQ(isOpen ? null : qIdx)}>
               <div>
@@ -397,21 +398,24 @@ export default function Tax({ loads, driver }) {
               </div>
             </div>
 
-            {/* EXPANDED */}
             {isOpen && (
               <div style={{marginTop:14}}>
 
-                {/* AUTO REVENUE */}
                 <div style={{background:'var(--navy3)', borderRadius:8, padding:'10px 12px', marginBottom:16}}>
-                  <div style={{fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6}}>AUTO-PULLED FROM LOADS</div>
+                  <div style={{fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6}}>
+                    AUTO-PULLED FROM LOADS — BY DELIVERY DATE
+                  </div>
                   <div className="amount-row" style={{marginBottom:0}}>
                     <span className="label">Gross Revenue</span>
                     <span className="value" style={{color:'var(--amber)'}}>{fmt(revenue)}</span>
                   </div>
-                  {revenue === 0 && <div style={{fontSize:11, color:'var(--grey)', marginTop:6}}>No invoiced {driver} loads found for this quarter</div>}
+                  {revenue === 0 && (
+                    <div style={{fontSize:11, color:'var(--grey)', marginTop:6}}>
+                      No {driver} loads delivered in this quarter
+                    </div>
+                  )}
                 </div>
 
-                {/* PINNED FUEL */}
                 <PinnedSection
                   entries={getPinnedEntries(qIdx, 'fuel')}
                   label="Fuel"
@@ -420,7 +424,6 @@ export default function Tax({ loads, driver }) {
                   onRemove={(id)      => removePinnedEntry(qIdx, 'fuel', id)}
                 />
 
-                {/* PINNED REPAIRS */}
                 <PinnedSection
                   entries={getPinnedEntries(qIdx, 'repair')}
                   label="Repairs & Maintenance"
@@ -431,7 +434,6 @@ export default function Tax({ loads, driver }) {
 
                 <div style={{borderTop:'1px solid var(--border)', margin:'14px 0'}} />
 
-                {/* DROP ENTRIES */}
                 {dropEntries.length > 0 && (
                   <div style={{marginBottom:12}}>
                     <div style={{fontSize:12, color:'var(--white)', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.04em', marginBottom:8}}>
@@ -459,7 +461,6 @@ export default function Tax({ loads, driver }) {
                   </div>
                 )}
 
-                {/* ADD EXPENSE DROPDOWN */}
                 <div style={{position:'relative', marginBottom:16}}>
                   <button
                     onClick={() => {
@@ -526,7 +527,6 @@ export default function Tax({ loads, driver }) {
                   )}
                 </div>
 
-                {/* TAX BREAKDOWN */}
                 <div style={{background:'var(--navy3)', borderRadius:8, padding:'10px 12px', marginBottom:12}}>
                   <div style={{fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:8}}>TAX BREAKDOWN</div>
                   <div className="amount-row"><span className="label">Gross Revenue</span><span className="value">{fmt(revenue)}</span></div>
@@ -549,7 +549,6 @@ export default function Tax({ loads, driver }) {
                   </div>
                 </div>
 
-                {/* NOTES */}
                 <div className="field-row" style={{marginBottom:12}}>
                   <div className="field-label">Notes</div>
                   <textarea
@@ -560,7 +559,6 @@ export default function Tax({ loads, driver }) {
                   />
                 </div>
 
-                {/* MARK PAID */}
                 <button
                   className={isPaid ? 'scan-btn secondary' : 'scan-btn success'}
                   style={{width:'100%'}}
