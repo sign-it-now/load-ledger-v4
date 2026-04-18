@@ -15,13 +15,18 @@ function json(data, status = 200) {
   });
 }
 
-// ── PIN VALIDATION HELPER ────────────────────────────────
-// Returns true if the pin matches the stored secret for the driver
-function validPin(driver, pin, env) {
-  if (!driver || !pin) return false
+// ── USER VALIDATION — checks D1 users table, falls back to env PIN ──
+async function validUser(driver, credential, env) {
+  if (!driver || !credential) return false
+  try {
+    const user = await env.DB.prepare(
+      'SELECT password FROM users WHERE UPPER(driver_name) = UPPER(?)'
+    ).bind(driver).first()
+    if (user && user.password === credential) return true
+  } catch {}
+  // Fallback to legacy env PIN secrets
   const stored = driver === 'BRUCE' ? env.BRUCE_PIN : driver === 'TIM' ? env.TIM_PIN : null
-  if (!stored) return false
-  return String(pin) === String(stored)
+  return stored ? String(credential) === String(stored) : false
 }
 
 export default {
@@ -33,17 +38,18 @@ export default {
       return new Response(null, { headers: CORS });
     }
 
-    // ── AUTH ─────────────────────────────────────────────
-    if (path === '/api/auth' && request.method === 'POST') {
+    // ── AUTH LOGIN — email + password ────────────────────
+    if (path === '/api/auth/login' && request.method === 'POST') {
       try {
-        const { driver, pin } = await request.json();
-        if (!driver || !pin) return json({ error: 'Missing driver or pin' }, 400);
-        const valid = ['BRUCE', 'TIM'];
-        if (!valid.includes(driver)) return json({ error: 'Invalid driver' }, 400);
-        const stored = driver === 'BRUCE' ? env.BRUCE_PIN : env.TIM_PIN;
-        if (!stored) return json({ error: 'PIN not configured on server' }, 500);
-        if (String(pin) !== String(stored)) return json({ error: 'Wrong PIN' }, 401);
-        return json({ ok: true, driver });
+        const { email, password } = await request.json();
+        if (!email || !password) return json({ error: 'Missing email or password' }, 400);
+        const user = await env.DB.prepare(
+          'SELECT * FROM users WHERE LOWER(email) = LOWER(?)'
+        ).bind(email.trim()).first();
+        if (!user || user.password !== password) {
+          return json({ error: 'Invalid email or password' }, 401);
+        }
+        return json({ ok: true, driver_name: user.driver_name, role: user.role });
       } catch(e) {
         return json({ error: e.message }, 500);
       }
@@ -148,7 +154,6 @@ export default {
     }
 
     // ── SERVE INVOICE PDF FROM R2 ────────────────────────
-    // Invoices are not sensitive personal documents — no PIN required
     if (path.startsWith('/api/invoice/') && request.method === 'GET') {
       try {
         const loadId = path.replace('/api/invoice/', '')
@@ -220,7 +225,6 @@ export default {
     }
 
     // ── UPLOAD CREDENTIAL FILE TO R2 ─────────────────────
-    // Requires valid PIN in request body before storing
     if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'POST') {
       try {
         const parts   = path.split('/')
@@ -228,8 +232,7 @@ export default {
         const credKey = parts[5]
         if (!env.R2) return json({ error: 'R2 not configured' }, 500)
         const { base64, mediaType, pin } = await request.json()
-        // ── PIN REQUIRED ──
-        if (!validPin(driver, pin, env)) {
+        if (!(await validUser(driver, pin, env))) {
           return json({ error: 'Unauthorized' }, 401)
         }
         const binary = atob(base64)
@@ -244,16 +247,13 @@ export default {
     }
 
     // ── SERVE CREDENTIAL FILE FROM R2 ────────────────────
-    // ⚠️  PROTECTED — requires valid PIN passed as query param
-    // URL pattern: /api/credentials/TIM/file/insurance?pin=1234
     if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'GET') {
       try {
         const parts   = path.split('/')
         const driver  = parts[3].toUpperCase()
         const credKey = parts[5]
-        // ── PIN REQUIRED — checked from query string ──
-        const pin = url.searchParams.get('pin')
-        if (!validPin(driver, pin, env)) {
+        const pin     = url.searchParams.get('pin')
+        if (!(await validUser(driver, pin, env))) {
           return new Response('Unauthorized', { status: 401, headers: CORS })
         }
         if (!env.R2) return json({ error: 'R2 not configured' }, 500)
@@ -265,13 +265,7 @@ export default {
         }
         if (!object) return new Response('File not found', { status: 404, headers: CORS })
         return new Response(object.body, {
-          headers: {
-            ...CORS,
-            'Content-Type':        contentType,
-            'Content-Disposition': 'inline',
-            // No caching on sensitive documents
-            'Cache-Control':       'no-store, no-cache, must-revalidate',
-          },
+          headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'no-store, no-cache, must-revalidate' },
         })
       } catch(e) {
         return json({ error: e.message }, 500)
@@ -339,7 +333,10 @@ export default {
         const { driver } = await request.json()
         const row = await env.DB.prepare('SELECT driver FROM maintenance_ledger WHERE id=?').bind(id).first()
         if (!row) return json({ error: 'Entry not found' }, 404)
-        if (row.driver !== driver.toUpperCase()) return json({ error: 'Not authorized' }, 403)
+        // Allow bookkeeper (NICOLE) or matching driver to delete
+        if (row.driver !== driver.toUpperCase() && driver.toUpperCase() !== 'NICOLE') {
+          return json({ error: 'Not authorized' }, 403)
+        }
         if (env.R2) {
           await env.R2.delete('maintenance/' + id + '.pdf').catch(() => {})
           await env.R2.delete('maintenance/' + id + '.jpg').catch(() => {})
@@ -458,7 +455,9 @@ export default {
         const { driver } = await request.json()
         const row = await env.DB.prepare('SELECT driver FROM assets WHERE id=?').bind(id).first()
         if (!row) return json({ error: 'Asset not found' }, 404)
-        if (row.driver !== driver.toUpperCase()) return json({ error: 'Not authorized' }, 403)
+        if (row.driver !== driver.toUpperCase() && driver.toUpperCase() !== 'NICOLE') {
+          return json({ error: 'Not authorized' }, 403)
+        }
         await env.DB.prepare('DELETE FROM assets WHERE id=?').bind(id).run()
         await env.DB.prepare('DELETE FROM asset_payments WHERE asset_id=?').bind(id).run()
         return json({ ok: true })
@@ -510,7 +509,9 @@ export default {
         const { driver } = await request.json()
         const row = await env.DB.prepare('SELECT driver, amount FROM asset_payments WHERE id=?').bind(paymentId).first()
         if (!row) return json({ error: 'Payment not found' }, 404)
-        if (row.driver !== driver.toUpperCase()) return json({ error: 'Not authorized' }, 403)
+        if (row.driver !== driver.toUpperCase() && driver.toUpperCase() !== 'NICOLE') {
+          return json({ error: 'Not authorized' }, 403)
+        }
         await env.DB.prepare('DELETE FROM asset_payments WHERE id=?').bind(paymentId).run()
         await env.DB.prepare('UPDATE assets SET balance_owed = balance_owed + ? WHERE id=?').bind(row.amount, assetId).run()
         return json({ ok: true })
@@ -542,8 +543,10 @@ export default {
         const id  = path.split('/')[3];
         const { driver } = await request.json();
         const row = await env.DB.prepare('SELECT driver FROM loads WHERE id=?').bind(id).first();
-        if (!row)                  return json({ error: 'Load not found' }, 404);
-        if (row.driver !== driver) return json({ error: 'Not authorized' }, 403);
+        if (!row) return json({ error: 'Load not found' }, 404);
+        if (row.driver !== driver && driver.toUpperCase() !== 'NICOLE') {
+          return json({ error: 'Not authorized' }, 403);
+        }
         if (env.R2) await env.R2.delete('invoices/' + id + '.pdf').catch(() => {})
         await env.DB.prepare('DELETE FROM loads WHERE id=?').bind(id).run();
         return json({ ok: true });
