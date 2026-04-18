@@ -4,7 +4,6 @@
 import { useState, useEffect, useRef } from 'react'
 
 const CATEGORIES = ['Repair', 'Parts', 'Maintenance', 'Equipment', 'Fuel', 'Other']
-
 const CAT_COLORS = {
   Repair:      '#e53935',
   Parts:       '#1e88e5',
@@ -13,7 +12,6 @@ const CAT_COLORS = {
   Fuel:        '#00acc1',
   Other:       '#757575',
 }
-
 const CAT_ICONS = {
   Repair:      '🔧',
   Parts:       '⚙️',
@@ -22,7 +20,6 @@ const CAT_ICONS = {
   Fuel:        '⛽',
   Other:       '📝',
 }
-
 const TYPE_ICONS = {
   'Truck':           '🚛',
   'Trailer':         '🚚',
@@ -30,7 +27,7 @@ const TYPE_ICONS = {
   'Other Equipment': '⚙️',
 }
 
-export default function Maintenance({ driver, api, showToast, onEntriesChange }) {
+export default function Maintenance({ driver, api, showToast, onEntriesChange, role }) {
   const [entries,       setEntries]       = useState([])
   const [assets,        setAssets]        = useState([])
   const [loading,       setLoading]       = useState(true)
@@ -43,6 +40,8 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange })
   const [toggling,      setToggling]      = useState(null)
   const [scanning,      setScanning]      = useState(false)
   const [scannedImage,  setScannedImage]  = useState(null)
+
+  const isBookkeeper = role === 'bookkeeper'
 
   const [form, setForm] = useState({
     entry_date:  new Date().toISOString().split('T')[0],
@@ -255,9 +254,14 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange })
 
   function fmt(n) { return '$'+(parseFloat(n)||0).toFixed(2) }
 
-  const filtered      = filter==='All'?entries:entries.filter(e=>e.category===filter)
-  const totalAll      = entries.reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
-  const totalMonth    = entries.filter(e=>{if(!e.entry_date)return false;const d=new Date(e.entry_date),now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear()}).reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
+  // ── BOOKKEEPER FILTER: hide EDGERTON paid entries from Nicole ──
+  const visibleEntries = isBookkeeper
+    ? entries.filter(e => e.paid_by !== 'EDGERTON')
+    : entries
+
+  const filtered      = filter==='All' ? visibleEntries : visibleEntries.filter(e=>e.category===filter)
+  const totalAll      = visibleEntries.reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
+  const totalMonth    = visibleEntries.filter(e=>{if(!e.entry_date)return false;const d=new Date(e.entry_date),now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear()}).reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
   const totalEdgerton = entries.filter(e=>e.paid_by==='EDGERTON').reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
   const totalTimPaid  = entries.filter(e=>e.paid_by!=='EDGERTON').reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
   const totalFiltered = filtered.reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
@@ -282,37 +286,39 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange })
             <div style={{fontFamily:'var(--font-head)',fontSize:18,fontWeight:900,color:'var(--amber)'}}>{fmt(totalAll)}</div>
           </div>
         </div>
-        <div style={{borderTop:'1px solid var(--border)',paddingTop:10}}>
-          <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.08em',marginBottom:8}}>PAYMENT SUMMARY — ALL TIME</div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-            <div style={{background:'#1a2a0a',borderRadius:8,padding:'10px 12px',border:'1px solid #2e7d32'}}>
-              <div style={{fontSize:10,color:'#66bb6a',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>TIM PAID</div>
-              <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#66bb6a'}}>{fmt(totalTimPaid)}</div>
-              <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>No reimbursement needed</div>
+
+        {/* Payment summary — only shown to drivers, not bookkeeper */}
+        {!isBookkeeper && (
+          <div style={{borderTop:'1px solid var(--border)',paddingTop:10}}>
+            <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.08em',marginBottom:8}}>PAYMENT SUMMARY — ALL TIME</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div style={{background:'#1a2a0a',borderRadius:8,padding:'10px 12px',border:'1px solid #2e7d32'}}>
+                <div style={{fontSize:10,color:'#66bb6a',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>TIM PAID</div>
+                <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#66bb6a'}}>{fmt(totalTimPaid)}</div>
+                <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>No reimbursement needed</div>
+              </div>
+              <div style={{background:'#1a0a2a',borderRadius:8,padding:'10px 12px',border:'1px solid #7b1fa2'}}>
+                <div style={{fontSize:10,color:'#ce93d8',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>EDGERTON PAID</div>
+                <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#ce93d8'}}>{fmt(totalEdgerton)}</div>
+                <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>Tim owes Edgerton</div>
+              </div>
             </div>
-            <div style={{background:'#1a0a2a',borderRadius:8,padding:'10px 12px',border:'1px solid #7b1fa2'}}>
-              <div style={{fontSize:10,color:'#ce93d8',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>EDGERTON PAID</div>
-              <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#ce93d8'}}>{fmt(totalEdgerton)}</div>
-              <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>Tim owes Edgerton</div>
-            </div>
+            {totalEdgerton>0&&(
+              <div style={{marginTop:8,padding:'10px 12px',background:'#2a0a2a',border:'1px solid #ce93d8',borderRadius:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,color:'#ce93d8'}}>TOTAL REIMBURSEMENT OWED</span>
+                <span style={{fontSize:18,fontFamily:'var(--font-head)',fontWeight:900,color:'#ce93d8'}}>{fmt(totalEdgerton)}</span>
+              </div>
+            )}
           </div>
-          {totalEdgerton>0&&(
-            <div style={{marginTop:8,padding:'10px 12px',background:'#2a0a2a',border:'1px solid #ce93d8',borderRadius:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,color:'#ce93d8'}}>TOTAL REIMBURSEMENT OWED</span>
-              <span style={{fontSize:18,fontFamily:'var(--font-head)',fontWeight:900,color:'#ce93d8'}}>{fmt(totalEdgerton)}</span>
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
-      {!showForm&&<button className="scan-btn success" style={{marginBottom:14}} onClick={()=>setShowForm(true)}>+ ADD ENTRY</button>}
+      {!showForm && <button className="scan-btn success" style={{marginBottom:14}} onClick={()=>setShowForm(true)}>+ ADD ENTRY</button>}
 
       {/* NEW ENTRY FORM */}
       {showForm&&(
         <div className="card" style={{marginBottom:14,border:'1px solid var(--amber)'}}>
           <div className="section-title" style={{marginBottom:12}}>NEW ENTRY</div>
-
-          {/* SCAN RECEIPT */}
           <div style={{marginBottom:14}}>
             <button disabled={scanning} onClick={()=>scanInputRef.current.click()} style={{
               width:'100%',padding:'14px 0',borderRadius:8,border:'1px solid var(--border)',
@@ -330,15 +336,11 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange })
               </div>
             )}
           </div>
-
-          {/* DATE */}
           <div className="field-row" style={{marginBottom:10}}>
             <div className="field-label">Date</div>
             <input type="date" value={form.entry_date} onChange={e=>setForm(p=>({...p,entry_date:e.target.value}))}
               style={{background:'var(--navy3)',border:'1px solid var(--border)',color:'var(--white)',borderRadius:8,padding:'10px 12px',fontSize:15,width:'100%',boxSizing:'border-box'}} />
           </div>
-
-          {/* ASSET PICKER */}
           {assets.length > 0 && (
             <div style={{marginBottom:10}}>
               <div className="field-label" style={{marginBottom:6}}>Link to Asset (optional)</div>
@@ -349,9 +351,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange })
                   color:form.asset_id===''?'var(--white)':'var(--grey)',
                   fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,cursor:'pointer',
                   outline:form.asset_id===''?'1px solid var(--border)':'none',
-                }}>
-                  — No specific asset
-                </button>
+                }}>— No specific asset</button>
                 {assets.map(a=>(
                   <button key={a.id} onClick={()=>setForm(p=>({...p,asset_id:a.id}))} style={{
                     padding:'9px 12px',borderRadius:8,border:'none',textAlign:'left',
@@ -359,16 +359,11 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange })
                     color:form.asset_id===a.id?'var(--white)':'var(--grey)',
                     fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,cursor:'pointer',
                     outline:form.asset_id===a.id?'1px solid var(--amber)':'none',
-                  }}>
-                    {TYPE_ICONS[a.asset_type]||'⚙️'} {a.asset_name}
-                    {a.year?' — '+a.year:''}
-                  </button>
+                  }}>{TYPE_ICONS[a.asset_type]||'⚙️'} {a.asset_name}{a.year?' — '+a.year:''}</button>
                 ))}
               </div>
             </div>
           )}
-
-          {/* CATEGORY */}
           <div style={{marginBottom:10}}>
             <div className="field-label" style={{marginBottom:6}}>Category</div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
@@ -382,16 +377,12 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange })
               ))}
             </div>
           </div>
-
-          {/* DESCRIPTION */}
           <div className="field-row" style={{marginBottom:10}}>
             <div className="field-label">Description</div>
             <input type="text" value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))}
               placeholder="e.g. Oil change, new brake pads..."
               style={{background:'var(--navy3)',border:'1px solid var(--border)',color:'var(--white)',borderRadius:8,padding:'10px 12px',fontSize:15,width:'100%',boxSizing:'border-box'}} />
           </div>
-
-          {/* AMOUNT */}
           <div className="field-row" style={{marginBottom:12}}>
             <div className="field-label">Amount ($) {scannedImage?'— auto-filled':''}</div>
             <input type="text" inputMode="decimal" pattern="[0-9.]*" value={form.amount}
@@ -399,27 +390,29 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange })
               style={{background:'var(--navy3)',border:scannedImage?'1px solid var(--green)':'1px solid var(--amber)',color:'var(--white)',borderRadius:8,padding:'10px 12px',fontSize:22,fontFamily:'var(--font-head)',fontWeight:700,width:'100%',boxSizing:'border-box'}} />
           </div>
 
-          {/* PAID BY */}
-          <div style={{marginBottom:14}}>
-            <div className="field-label" style={{marginBottom:8}}>Paid By</div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-              <button onClick={()=>setForm(p=>({...p,paid_by:'TIM'}))} style={{
-                padding:'12px 0',borderRadius:8,border:'none',
-                background:form.paid_by==='TIM'?'#2e7d32':'var(--navy3)',
-                color:form.paid_by==='TIM'?'#fff':'var(--grey)',
-                fontSize:13,fontFamily:'var(--font-head)',fontWeight:900,cursor:'pointer',
-                borderLeft:form.paid_by==='TIM'?'3px solid #66bb6a':'3px solid transparent',
-              }}>✅ TIM PAID</button>
-              <button onClick={()=>setForm(p=>({...p,paid_by:'EDGERTON'}))} style={{
-                padding:'12px 0',borderRadius:8,border:'none',
-                background:form.paid_by==='EDGERTON'?'#4a148c':'var(--navy3)',
-                color:form.paid_by==='EDGERTON'?'#fff':'var(--grey)',
-                fontSize:13,fontFamily:'var(--font-head)',fontWeight:900,cursor:'pointer',
-                borderLeft:form.paid_by==='EDGERTON'?'3px solid #ce93d8':'3px solid transparent',
-              }}>🏢 EDGERTON PAID</button>
+          {/* Paid By — only shown to drivers, not bookkeeper */}
+          {!isBookkeeper && (
+            <div style={{marginBottom:14}}>
+              <div className="field-label" style={{marginBottom:8}}>Paid By</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                <button onClick={()=>setForm(p=>({...p,paid_by:'TIM'}))} style={{
+                  padding:'12px 0',borderRadius:8,border:'none',
+                  background:form.paid_by==='TIM'?'#2e7d32':'var(--navy3)',
+                  color:form.paid_by==='TIM'?'#fff':'var(--grey)',
+                  fontSize:13,fontFamily:'var(--font-head)',fontWeight:900,cursor:'pointer',
+                  borderLeft:form.paid_by==='TIM'?'3px solid #66bb6a':'3px solid transparent',
+                }}>✅ TIM PAID</button>
+                <button onClick={()=>setForm(p=>({...p,paid_by:'EDGERTON'}))} style={{
+                  padding:'12px 0',borderRadius:8,border:'none',
+                  background:form.paid_by==='EDGERTON'?'#4a148c':'var(--navy3)',
+                  color:form.paid_by==='EDGERTON'?'#fff':'var(--grey)',
+                  fontSize:13,fontFamily:'var(--font-head)',fontWeight:900,cursor:'pointer',
+                  borderLeft:form.paid_by==='EDGERTON'?'3px solid #ce93d8':'3px solid transparent',
+                }}>🏢 EDGERTON PAID</button>
+              </div>
+              {form.paid_by==='EDGERTON'&&<div style={{fontSize:11,color:'#ce93d8',marginTop:6,fontFamily:'var(--font-head)'}}>⚠️ Tim will owe reimbursement to Edgerton for this amount</div>}
             </div>
-            {form.paid_by==='EDGERTON'&&<div style={{fontSize:11,color:'#ce93d8',marginTop:6,fontFamily:'var(--font-head)'}}>⚠️ Tim will owe reimbursement to Edgerton for this amount</div>}
-          </div>
+          )}
 
           <div style={{display:'flex',gap:8}}>
             <button disabled={saving} onClick={saveEntry} style={{
@@ -449,17 +442,15 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange })
       </div>
 
       {filter!=='All'&&<div style={{textAlign:'center',fontFamily:'var(--font-head)',fontSize:13,color:CAT_COLORS[filter],letterSpacing:'0.08em',marginBottom:10}}>{CAT_ICONS[filter]} {filter.toUpperCase()} TOTAL: {fmt(totalFiltered)}</div>}
-
       {filtered.length===0&&<div className="empty-state"><div className="icon">🔧</div><h3>NO ENTRIES</h3><p>{filter==='All'?'Tap + ADD ENTRY to get started':'No '+filter+' entries yet'}</p></div>}
 
       {filtered.map(entry=>{
-        const isPending=confirmDelete===entry.id
-        const isUploading=uploading===entry.id
-        const isToggling=toggling===entry.id
-        const catColor=CAT_COLORS[entry.category]||'var(--grey)'
-        const isEdgerton=entry.paid_by==='EDGERTON'
-        const linkedAsset=assets.find(a=>a.id===entry.asset_id)
-
+        const isPending   = confirmDelete===entry.id
+        const isUploading = uploading===entry.id
+        const isToggling  = toggling===entry.id
+        const catColor    = CAT_COLORS[entry.category]||'var(--grey)'
+        const isEdgerton  = entry.paid_by==='EDGERTON'
+        const linkedAsset = assets.find(a=>a.id===entry.asset_id)
         return (
           <div className="load-card" key={entry.id} style={{borderLeft:'3px solid '+catColor}}>
             <div style={{flex:1}}>
@@ -471,25 +462,25 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange })
                   {entry.entry_date?new Date(entry.entry_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'-'}
                 </div>
               </div>
-
-              {/* LINKED ASSET BADGE */}
               {linkedAsset&&(
                 <div style={{display:'inline-flex',alignItems:'center',gap:4,padding:'2px 8px',borderRadius:6,background:'var(--navy3)',border:'1px solid var(--border)',fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',marginBottom:6}}>
                   {TYPE_ICONS[linkedAsset.asset_type]||'⚙️'} {linkedAsset.asset_name}
                 </div>
               )}
-
               <div style={{fontSize:15,color:'var(--white)',fontWeight:600,marginBottom:4}}>{entry.description||'-'}</div>
               <div style={{fontFamily:'var(--font-head)',fontSize:22,fontWeight:900,color:'#e53935',marginBottom:8}}>{fmt(entry.amount)}</div>
 
-              <div style={{marginBottom:10}}>
-                <button disabled={isToggling} onClick={()=>togglePaidBy(entry)} style={{
-                  padding:'8px 14px',borderRadius:8,border:'none',cursor:'pointer',
-                  background:isEdgerton?'#4a148c':'#2e7d32',color:'#fff',
-                  fontSize:12,fontFamily:'var(--font-head)',fontWeight:900,opacity:isToggling?0.6:1,
-                }}>{isToggling?'SAVING...':isEdgerton?'🏢 EDGERTON PAID — tap to change':'✅ TIM PAID — tap to change'}</button>
-                {isEdgerton&&<div style={{fontSize:10,color:'#ce93d8',marginTop:4,fontFamily:'var(--font-head)'}}>Reimbursement owed to Edgerton</div>}
-              </div>
+              {/* Paid by toggle — only shown to drivers, not bookkeeper */}
+              {!isBookkeeper && (
+                <div style={{marginBottom:10}}>
+                  <button disabled={isToggling} onClick={()=>togglePaidBy(entry)} style={{
+                    padding:'8px 14px',borderRadius:8,border:'none',cursor:'pointer',
+                    background:isEdgerton?'#4a148c':'#2e7d32',color:'#fff',
+                    fontSize:12,fontFamily:'var(--font-head)',fontWeight:900,opacity:isToggling?0.6:1,
+                  }}>{isToggling?'SAVING...':isEdgerton?'🏢 EDGERTON PAID — tap to change':'✅ TIM PAID — tap to change'}</button>
+                  {isEdgerton&&<div style={{fontSize:10,color:'#ce93d8',marginTop:4,fontFamily:'var(--font-head)'}}>Reimbursement owed to Edgerton</div>}
+                </div>
+              )}
 
               <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
                 <button disabled={isUploading} onClick={()=>openReceiptUpload(entry.id)} style={{
@@ -509,7 +500,6 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange })
                   }}>DELETE</button>
                 )}
               </div>
-
               {isPending&&(
                 <div style={{marginTop:10,background:'#2a0a0a',border:'1px solid #e53935',borderRadius:8,padding:'12px 14px'}}>
                   <div style={{fontSize:12,color:'#e53935',fontFamily:'var(--font-head)',fontWeight:700,marginBottom:10}}>DELETE THIS ENTRY? CANNOT BE UNDONE.</div>
