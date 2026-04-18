@@ -7,10 +7,10 @@ import { useState, useEffect } from 'react'
 const YEAR = 2026
 
 const QUARTERS = [
-  { label:'Q1', title:'January \u2013 March',     months:[0,1,2],    due:'2026-04-15', dueLabel:'April 15, 2026',     color:'#1e88e5' },
-  { label:'Q2', title:'April \u2013 May',          months:[3,4],      due:'2026-06-15', dueLabel:'June 15, 2026',      color:'#8e24aa' },
-  { label:'Q3', title:'June \u2013 August',        months:[5,6,7],    due:'2026-09-15', dueLabel:'September 15, 2026', color:'#e65100' },
-  { label:'Q4', title:'September \u2013 December', months:[8,9,10,11],due:'2027-01-15', dueLabel:'January 15, 2027',   color:'#2e7d32' },
+  { label:'Q1', title:'January – March',     months:[0,1,2],    due:'2026-04-15', dueLabel:'April 15, 2026',     color:'#1e88e5' },
+  { label:'Q2', title:'April – May',          months:[3,4],      due:'2026-06-15', dueLabel:'June 15, 2026',      color:'#8e24aa' },
+  { label:'Q3', title:'June – August',        months:[5,6,7],    due:'2026-09-15', dueLabel:'September 15, 2026', color:'#e65100' },
+  { label:'Q4', title:'September – December', months:[8,9,10,11],due:'2027-01-15', dueLabel:'January 15, 2027',   color:'#2e7d32' },
 ]
 
 const FED_DEFAULT = 12
@@ -217,7 +217,6 @@ export default function Tax({ loads, driver }) {
     updateQData(qIdx, 'paid', !(getQData(qIdx).paid || false))
   }
 
-  // ── PINNED HELPERS ───────────────────────────────────────
   function getPinnedEntries(qIdx, type) {
     return (getQData(qIdx))['pinned_' + type] || []
   }
@@ -249,7 +248,6 @@ export default function Tax({ loads, driver }) {
     }))
   }
 
-  // ── DROPDOWN HELPERS ─────────────────────────────────────
   function getDropEntries(qIdx) {
     return (getQData(qIdx)).drop_expenses || []
   }
@@ -284,7 +282,6 @@ export default function Tax({ loads, driver }) {
     }))
   }
 
-  // ── REVENUE ──────────────────────────────────────────────
   function getQuarterRevenue(qMonths) {
     return loads
       .filter(l => {
@@ -328,10 +325,10 @@ export default function Tax({ loads, driver }) {
       {/* ── HEADER CARD ─────────────────────────────────── */}
       <div className="card" style={{ borderLeft:'3px solid '+driverColor, marginBottom:14 }}>
         <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:driverColor, marginBottom:10, letterSpacing:'0.05em' }}>
-          {driver}'S TAX DESK \u2014 {YEAR}
+          {driver}'S TAX DESK — {YEAR}
         </div>
         <div style={{ fontSize:11, color:'var(--grey)', marginBottom:10 }}>
-          {stateInfo.label} resident \u2014 state tax {stateInfo.default}%
+          {stateInfo.label} resident — state tax {stateInfo.default}%
         </div>
         <div className="amount-row"><span className="label">Total Revenue</span><span className="value" style={{color:'var(--amber)'}}>{fmt(grandTotals.revenue)}</span></div>
         <div className="amount-row"><span className="label">Total Expenses</span><span className="value" style={{color:'var(--grey)'}}>-{fmt(grandTotals.expenses)}</span></div>
@@ -355,25 +352,25 @@ export default function Tax({ loads, driver }) {
           <div style={{fontFamily:'var(--font-head)', fontWeight:900, fontSize:20, color:'var(--amber)', minWidth:48, textAlign:'right'}}>{fedRate}%</div>
         </div>
         <div style={{fontSize:11, color:'var(--grey)', marginTop:6}}>
-          Federal {fedRate}% + {stateInfo.label} {stateInfo.default}% \u2014 Estimated Tax
+          Federal {fedRate}% + {stateInfo.label} {stateInfo.default}% — Estimated Tax
         </div>
       </div>
 
       {/* ── QUARTER CARDS ────────────────────────────────── */}
       {QUARTERS.map((q, qIdx) => {
-        const revenue    = getQuarterRevenue(q.months)
-        const expenses   = getExpenseTotal(qIdx)
+        const revenue     = getQuarterRevenue(q.months)
+        const expenses    = getExpenseTotal(qIdx)
         const { netIncome, fedTax, stateTax, totalTax } = calcTax(revenue, expenses)
-        const days       = daysUntil(q.due)
-        const isPaid     = (getQData(qIdx)).paid || false
-        const isOpen     = openQ === qIdx
+        const days        = daysUntil(q.due)
+        const isPaid      = (getQData(qIdx)).paid || false
+        const isOpen      = openQ === qIdx
         const dropEntries = getDropEntries(qIdx)
-        const isMenuOpen = menuOpen && menuQIdx === qIdx
+        const isMenuOpen  = menuOpen && menuQIdx === qIdx
 
         let countdownColor = 'var(--green)'
         let countdownText  = days + ' days away'
         if (days < 0)                { countdownColor='var(--grey)';  countdownText='Past due' }
-        if (days >= 0 && days <= 14) { countdownColor='#e53935';      countdownText=days+' days \u2014 ACT NOW' }
+        if (days >= 0 && days <= 14) { countdownColor='#e53935';      countdownText=days+' days — ACT NOW' }
         if (days > 14 && days <= 30) { countdownColor='var(--amber)'; countdownText=days+' days away' }
 
         return (
@@ -384,11 +381,11 @@ export default function Tax({ loads, driver }) {
               onClick={() => setOpenQ(isOpen ? null : qIdx)}>
               <div>
                 <div style={{fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:q.color, letterSpacing:'0.05em'}}>
-                  {q.label} \u2014 {q.title}
+                  {q.label} — {q.title}
                 </div>
                 <div style={{fontSize:11, color:'var(--grey)', marginTop:3}}>Due: {q.dueLabel}</div>
                 <div style={{fontSize:11, color:countdownColor, marginTop:2, fontWeight:700}}>
-                  {isPaid ? '\u2713 PAYMENT MADE' : countdownText}
+                  {isPaid ? '✓ PAYMENT MADE' : countdownText}
                 </div>
               </div>
               <div style={{textAlign:'right'}}>
@@ -396,7 +393,7 @@ export default function Tax({ loads, driver }) {
                   {fmt(totalTax)}
                 </div>
                 <div style={{fontSize:10, color:'var(--grey)', marginTop:2}}>estimated tax</div>
-                <div style={{fontSize:12, color:'var(--grey)', marginTop:4}}>{isOpen ? '\u25b2' : '\u25bc'}</div>
+                <div style={{fontSize:12, color:'var(--grey)', marginTop:4}}>{isOpen ? '▲' : '▼'}</div>
               </div>
             </div>
 
@@ -414,7 +411,7 @@ export default function Tax({ loads, driver }) {
                   {revenue === 0 && <div style={{fontSize:11, color:'var(--grey)', marginTop:6}}>No invoiced {driver} loads found for this quarter</div>}
                 </div>
 
-                {/* ── PINNED FUEL ── */}
+                {/* PINNED FUEL */}
                 <PinnedSection
                   entries={getPinnedEntries(qIdx, 'fuel')}
                   label="Fuel"
@@ -423,7 +420,7 @@ export default function Tax({ loads, driver }) {
                   onRemove={(id)      => removePinnedEntry(qIdx, 'fuel', id)}
                 />
 
-                {/* ── PINNED REPAIRS ── */}
+                {/* PINNED REPAIRS */}
                 <PinnedSection
                   entries={getPinnedEntries(qIdx, 'repair')}
                   label="Repairs & Maintenance"
@@ -434,7 +431,7 @@ export default function Tax({ loads, driver }) {
 
                 <div style={{borderTop:'1px solid var(--border)', margin:'14px 0'}} />
 
-                {/* ── ADDITIONAL DROP ENTRIES ── */}
+                {/* DROP ENTRIES */}
                 {dropEntries.length > 0 && (
                   <div style={{marginBottom:12}}>
                     <div style={{fontSize:12, color:'var(--white)', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.04em', marginBottom:8}}>
@@ -462,7 +459,7 @@ export default function Tax({ loads, driver }) {
                   </div>
                 )}
 
-                {/* ── ADD EXPENSE DROPDOWN ── */}
+                {/* ADD EXPENSE DROPDOWN */}
                 <div style={{position:'relative', marginBottom:16}}>
                   <button
                     onClick={() => {
@@ -476,7 +473,7 @@ export default function Tax({ loads, driver }) {
                       fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
                     }}
                   >
-                    + ADD EXPENSE FROM LIST {isMenuOpen ? '\u25b2' : '\u25bc'}
+                    + ADD EXPENSE FROM LIST {isMenuOpen ? '▲' : '▼'}
                   </button>
 
                   {isMenuOpen && (
@@ -502,7 +499,7 @@ export default function Tax({ loads, driver }) {
                               {cat.label}
                             </span>
                             <span style={{fontSize:12, color:'var(--grey)'}}>
-                              {openCatIdx === catIdx ? '\u25b2' : '\u25bc'}
+                              {openCatIdx === catIdx ? '▲' : '▼'}
                             </span>
                           </div>
                           {openCatIdx === catIdx && (
@@ -529,7 +526,7 @@ export default function Tax({ loads, driver }) {
                   )}
                 </div>
 
-                {/* ── TAX BREAKDOWN ── */}
+                {/* TAX BREAKDOWN */}
                 <div style={{background:'var(--navy3)', borderRadius:8, padding:'10px 12px', marginBottom:12}}>
                   <div style={{fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:8}}>TAX BREAKDOWN</div>
                   <div className="amount-row"><span className="label">Gross Revenue</span><span className="value">{fmt(revenue)}</span></div>
@@ -569,7 +566,7 @@ export default function Tax({ loads, driver }) {
                   style={{width:'100%'}}
                   onClick={() => togglePaid(qIdx)}
                 >
-                  {isPaid ? '\u21a9 UNMARK PAYMENT' : '\u2713 MARK PAYMENT MADE \u2014 ' + fmt(totalTax)}
+                  {isPaid ? '↩ UNMARK PAYMENT' : '✓ MARK PAYMENT MADE — ' + fmt(totalTax)}
                 </button>
 
               </div>
@@ -579,7 +576,7 @@ export default function Tax({ loads, driver }) {
       })}
 
       <div style={{textAlign:'center', fontSize:11, color:'var(--grey)', marginTop:8, padding:'0 16px'}}>
-        Estimated Tax \u2014 Form 1040-ES | Schedule C | IRS.gov
+        Estimated Tax — Form 1040-ES | Schedule C | IRS.gov
       </div>
 
     </div>
