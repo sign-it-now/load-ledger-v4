@@ -30,22 +30,47 @@ function daysUntil(dateStr) {
 }
 
 export default function App() {
-  const [tab,       setTab]       = useState('ratecon')
-  const [driver,    setDriver]    = useState(null)
-  const [pin,       setPin]       = useState(null)
-  const [load,      setLoad]      = useState(newLoad())
-  const [loads,     setLoads]     = useState([])
-  const [toast,     setToast]     = useState(null)
-  const [pinInput,  setPinInput]  = useState('')
-  const [pinError,  setPinError]  = useState(false)
-  const [pinDriver, setPinDriver] = useState(null)
+  const [tab,             setTab]             = useState('loads')
+  const [driver,          setDriver]          = useState(null)    // logged-in user: BRUCE, TIM, NICOLE
+  const [role,            setRole]            = useState(null)    // 'driver' or 'bookkeeper'
+  const [sessionPassword, setSessionPassword] = useState(null)   // in-memory for credential file access
+  const [viewDriver,      setViewDriver]      = useState('BRUCE') // Nicole's selected driver context
+  const [load,            setLoad]            = useState(newLoad())
+  const [loads,           setLoads]           = useState([])
+  const [toast,           setToast]           = useState(null)
+
+  // ── LOGIN STATE ──────────────────────────────────────────
+  const [email,        setEmail]        = useState('')
+  const [password,     setPassword]     = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [loginLoading, setLoginLoading] = useState(false)
+  const [loginError,   setLoginError]   = useState('')
 
   const [maintenanceEntries, setMaintenanceEntries] = useState([])
+  const [credAlerts,         setCredAlerts]         = useState([])
+  const [alertIdx,           setAlertIdx]           = useState(0)
+  const [snoozeInput,        setSnoozeInput]        = useState('')
+  const [showSnooze,         setShowSnooze]         = useState(false)
 
-  const [credAlerts,  setCredAlerts]  = useState([])
-  const [alertIdx,    setAlertIdx]    = useState(0)
-  const [snoozeInput, setSnoozeInput] = useState('')
-  const [showSnooze,  setShowSnooze]  = useState(false)
+  // ── RESTORE SESSION ON MOUNT ─────────────────────────────
+  useEffect(() => {
+    try {
+      const session = localStorage.getItem('ll_v4_session')
+      if (session) {
+        const { driver_name, role: savedRole } = JSON.parse(session)
+        setDriver(driver_name)
+        setRole(savedRole)
+        if (savedRole === 'driver') setTab('ratecon')
+        else setTab('loads')
+        // Restore password from sessionStorage (survives page refresh, not tab close)
+        const pw = sessionStorage.getItem('ll_v4_pw')
+        if (pw) setSessionPassword(pw)
+      }
+    } catch {}
+  }, [])
+
+  // ── ACTIVE DRIVER — what Nicole is viewing ───────────────
+  const activeDriver = role === 'bookkeeper' ? viewDriver : driver
 
   async function fetchLoads() {
     try {
@@ -79,8 +104,43 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (driver) { fetchLoads(); checkCredentials(driver) }
+    if (!driver) return
+    fetchLoads()
+    if (role === 'driver') checkCredentials(driver)
   }, [driver])
+
+  // ── LOGIN ────────────────────────────────────────────────
+  async function handleLogin() {
+    if (!email.trim() || !password.trim()) { setLoginError('Please enter your email and password'); return }
+    setLoginLoading(true)
+    setLoginError('')
+    try {
+      const res = await fetch(API + '/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        localStorage.setItem('ll_v4_session', JSON.stringify({ driver_name: data.driver_name, role: data.role }))
+        sessionStorage.setItem('ll_v4_pw', password)
+        setSessionPassword(password)
+        setDriver(data.driver_name)
+        setRole(data.role)
+        setEmail('')
+        setPassword('')
+        setLoginError('')
+        if (data.role === 'driver') setTab('ratecon')
+        else setTab('loads')
+      } else {
+        setLoginError(data.error || 'Invalid email or password')
+      }
+    } catch {
+      setLoginError('Connection error — try again')
+    } finally {
+      setLoginLoading(false)
+    }
+  }
 
   function newLoad() {
     return {
@@ -95,45 +155,19 @@ export default function App() {
   function resetLoad()    { setLoad(newLoad()); setTab('ratecon') }
 
   function logout() {
+    localStorage.removeItem('ll_v4_session')
+    sessionStorage.removeItem('ll_v4_pw')
     setDriver(null)
-    setPin(null)
-    setPinInput('')
-    setPinDriver(null)
-    setPinError(false)
+    setRole(null)
+    setSessionPassword(null)
+    setEmail('')
+    setPassword('')
+    setLoginError('')
     resetLoad()
     setLoads([])
     setCredAlerts([])
     setMaintenanceEntries([])
-  }
-
-  function selectDriverForPin(d) { setPinDriver(d); setPinInput(''); setPinError(false) }
-
-  async function handlePinKey(key) {
-    if (key === 'DEL') { setPinInput(p => p.slice(0,-1)); setPinError(false); return }
-    const next = pinInput + key
-    setPinInput(next)
-    if (next.length === 4) {
-      try {
-        const res  = await fetch(API + '/api/auth', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ driver: pinDriver, pin: next }),
-        })
-        const data = await res.json()
-        if (data.ok) {
-          setDriver(pinDriver)
-          setPin(next)
-          setPinInput('')
-          setPinDriver(null)
-          setPinError(false)
-        } else {
-          setPinError(true)
-          setTimeout(() => { setPinInput(''); setPinError(false) }, 800)
-        }
-      } catch {
-        setPinError(true)
-        setTimeout(() => { setPinInput(''); setPinError(false) }, 800)
-      }
-    }
+    setTab('loads')
   }
 
   const currentAlert = credAlerts[alertIdx] || null
@@ -158,14 +192,13 @@ export default function App() {
   }
 
   function renderCredAlert() {
-    if (!currentAlert || !driver) return null
+    if (!currentAlert || !driver || role !== 'driver') return null
     const { label, days, expDate } = currentAlert
     const isExpired = days !== null && days < 0
     const isUnset   = days === null
     const isSoon    = days !== null && days >= 0 && days <= 30
     const borderColor = isExpired ? '#e53935' : '#ffb300'
     const titleColor  = isExpired ? '#e53935' : '#ffb300'
-
     return (
       <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.85)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
         <div style={{ background: isExpired ? '#2a0a0a' : '#1a1200', border:'2px solid '+borderColor, borderRadius:14, padding:24, width:'100%', maxWidth:360 }}>
@@ -200,73 +233,121 @@ export default function App() {
     )
   }
 
-  // ── PIN SCREEN ───────────────────────────────────────────
+  // ── LOGIN SCREEN ─────────────────────────────────────────
   if (!driver) {
     return (
-      <div style={{ display:'flex', flexDirection:'column', height:'100dvh', background:'var(--navy)' }}>
-        <div className="app-header">
-          <div className="app-logo">LOAD<span>LEDGER</span></div>
-          <div className="badge">V4</div>
-        </div>
-        <div className="tab-content" style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
-          {!pinDriver ? (
-            <>
-              <div className="empty-state" style={{ paddingTop:0 }}>
-                <div className="icon">🚛</div><h3>SELECT YOUR NAME</h3><p>Tap your name to enter your PIN</p>
-              </div>
-              <div style={{ display:'flex', gap:16, marginTop:8 }}>
-                {['BRUCE','TIM'].map(d => (
-                  <button key={d} className="driver-btn" style={{ fontSize:20, padding:'18px 36px' }} onClick={() => selectDriverForPin(d)}>{d}</button>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div style={{ width:'100%', maxWidth:320, padding:'0 24px' }}>
-              <div style={{ textAlign:'center', marginBottom:24 }}>
-                <div style={{ fontSize:13, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.1em', marginBottom:6 }}>ENTER PIN FOR</div>
-                <div style={{ fontSize:28, fontFamily:'var(--font-head)', fontWeight:900, color:'var(--amber)' }}>{pinDriver}</div>
-              </div>
-              <div style={{ display:'flex', justifyContent:'center', gap:16, marginBottom:32 }}>
-                {[0,1,2,3].map(i => (
-                  <div key={i} style={{
-                    width:18, height:18, borderRadius:'50%',
-                    background: pinError ? '#e53935' : pinInput.length > i ? 'var(--amber)' : 'var(--navy3)',
-                    border:'2px solid ' + (pinError ? '#e53935' : 'var(--border)'),
-                    transition:'background 0.15s',
-                  }} />
-                ))}
-              </div>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12 }}>
-                {['1','2','3','4','5','6','7','8','9','','0','DEL'].map((k,i) => (
-                  k === '' ? <div key={i} /> :
-                  <button key={k} onClick={() => handlePinKey(k)} style={{
-                    padding:'18px 0', borderRadius:12, border:'1px solid var(--border)',
-                    background: k === 'DEL' ? 'var(--navy3)' : 'var(--navy2)',
-                    color: k === 'DEL' ? 'var(--grey)' : 'var(--white)',
-                    fontSize: k === 'DEL' ? 13 : 22,
-                    fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                    WebkitTapHighlightColor:'transparent',
-                  }}>{k}</button>
-                ))}
-              </div>
-              <button onClick={() => { setPinDriver(null); setPinInput(''); setPinError(false) }}
-                style={{ width:'100%', marginTop:20, padding:'12px 0', background:'transparent', border:'none', color:'var(--grey)', fontSize:13, fontFamily:'var(--font-head)', cursor:'pointer' }}>
-                ← BACK
-              </button>
+      <div style={{ display:'flex', flexDirection:'column', height:'100dvh', background:'var(--navy)', alignItems:'center', justifyContent:'center', padding:24 }}>
+        <div style={{ width:'100%', maxWidth:360 }}>
+
+          {/* LOGO */}
+          <div style={{ textAlign:'center', marginBottom:32 }}>
+            <div className="app-logo" style={{ fontSize:32, justifyContent:'center', display:'flex' }}>
+              LOAD<span>LEDGER</span>
             </div>
-          )}
+            <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.1em', marginTop:6 }}>
+              EDGERTON TRUCK & TRAILER
+            </div>
+          </div>
+
+          {/* LOGIN CARD */}
+          <div style={{ background:'var(--navy2)', borderRadius:14, padding:24, border:'1px solid var(--border)' }}>
+            <div style={{ fontSize:13, color:'var(--grey)', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.1em', marginBottom:20, textAlign:'center' }}>
+              SIGN IN
+            </div>
+
+            {/* EMAIL */}
+            <div style={{ marginBottom:14 }}>
+              <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>EMAIL</div>
+              <input
+                type="email"
+                inputMode="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                placeholder="your@email.com"
+                value={email}
+                onChange={e => { setEmail(e.target.value); setLoginError('') }}
+                onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                style={{
+                  width:'100%', padding:'14px 16px', borderRadius:10,
+                  background:'var(--navy3)', border:'1px solid var(--border)',
+                  color:'var(--white)', fontSize:16, fontFamily:'var(--font-body)',
+                  boxSizing:'border-box', outline:'none',
+                }}
+              />
+            </div>
+
+            {/* PASSWORD */}
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>PASSWORD</div>
+              <div style={{ position:'relative' }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={e => { setPassword(e.target.value); setLoginError('') }}
+                  onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                  style={{
+                    width:'100%', padding:'14px 48px 14px 16px', borderRadius:10,
+                    background:'var(--navy3)', border:'1px solid var(--border)',
+                    color:'var(--white)', fontSize:16, fontFamily:'var(--font-body)',
+                    boxSizing:'border-box', outline:'none',
+                  }}
+                />
+                <button
+                  onClick={() => setShowPassword(p => !p)}
+                  style={{
+                    position:'absolute', right:12, top:'50%', transform:'translateY(-50%)',
+                    background:'transparent', border:'none', color:'var(--grey)',
+                    fontSize:14, cursor:'pointer', padding:'4px 8px',
+                  }}
+                >
+                  {showPassword ? '🙈' : '👁'}
+                </button>
+              </div>
+            </div>
+
+            {/* ERROR */}
+            {loginError && (
+              <div style={{ fontSize:13, color:'#e53935', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:14, textAlign:'center' }}>
+                {loginError}
+              </div>
+            )}
+
+            {/* LOGIN BUTTON */}
+            <button
+              onClick={handleLogin}
+              disabled={loginLoading}
+              style={{
+                width:'100%', padding:'16px 0', borderRadius:10, border:'none',
+                background: loginLoading ? '#555' : 'var(--amber)',
+                color: loginLoading ? 'var(--grey)' : 'var(--navy)',
+                fontSize:16, fontFamily:'var(--font-head)', fontWeight:900,
+                cursor: loginLoading ? 'default' : 'pointer', letterSpacing:'0.05em',
+              }}
+            >
+              {loginLoading ? 'SIGNING IN...' : 'SIGN IN'}
+            </button>
+          </div>
+
+          <div style={{ textAlign:'center', fontSize:10, color:'var(--grey)', marginTop:20 }}>
+            dbappsystems.com | daddyboyapps.com
+          </div>
         </div>
+
         {toast && <div className="toast">{toast}</div>}
       </div>
     )
   }
 
   // ── MAIN APP ─────────────────────────────────────────────
+  const isBookkeeper = role === 'bookkeeper'
+
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100dvh' }}>
 
       {renderCredAlert()}
 
+      {/* HEADER */}
       <div className="app-header">
         <div className="app-logo">LOAD<span>LEDGER</span></div>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
@@ -276,51 +357,93 @@ export default function App() {
         </div>
       </div>
 
+      {/* DRIVER BAR */}
       <div className="driver-bar" style={{ justifyContent:'space-between', alignItems:'center' }}>
-        <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>LOGGED IN AS {driver}</div>
-        <button className="driver-btn active" style={{ flex:'0 0 auto', padding:'10px 20px' }} onClick={resetLoad}>+ NEW</button>
+        {isBookkeeper ? (
+          // Nicole sees a driver switcher for context-specific tabs
+          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em' }}>VIEWING:</div>
+            {['BRUCE','TIM'].map(d => (
+              <button key={d} onClick={() => setViewDriver(d)} style={{
+                padding:'7px 16px', borderRadius:8, border:'none',
+                background: viewDriver === d ? 'var(--amber)' : 'var(--navy3)',
+                color:       viewDriver === d ? 'var(--navy)'  : 'var(--grey)',
+                fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+              }}>{d}</button>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>
+            LOGGED IN AS {driver}
+          </div>
+        )}
+        {!isBookkeeper && (
+          <button className="driver-btn active" style={{ flex:'0 0 auto', padding:'10px 20px' }} onClick={resetLoad}>+ NEW</button>
+        )}
       </div>
 
+      {/* MAIN CONTENT */}
       <div className="tab-content">
-        {tab === 'ratecon'     && <RateCon load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} onNext={() => setTab('invoice')} />}
-        {tab === 'invoice'     && <Invoice load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} resetLoad={resetLoad} />}
+        {tab === 'ratecon'     && !isBookkeeper && <RateCon load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} onNext={() => setTab('invoice')} />}
+        {tab === 'invoice'     && !isBookkeeper && <Invoice load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} resetLoad={resetLoad} />}
         {tab === 'loads'       && <Loads loads={loads} setLoads={setLoads} api={API} showToast={showToast} fetchLoads={fetchLoads} />}
-        {tab === 'profile'     && <DriverProfile driver={driver} api={API} showToast={showToast} pin={pin} />}
-        {tab === 'maintenance' && <Maintenance driver={driver} api={API} showToast={showToast} onEntriesChange={setMaintenanceEntries} />}
-        {tab === 'assets'      && <Assets driver={driver} api={API} showToast={showToast} maintenanceEntries={maintenanceEntries} />}
-        {tab === 'tax'         && <Tax loads={loads} driver={driver} />}
+        {tab === 'profile'     && !isBookkeeper && <DriverProfile driver={driver} api={API} showToast={showToast} pin={sessionPassword} />}
+        {tab === 'maintenance' && <Maintenance driver={activeDriver} api={API} showToast={showToast} onEntriesChange={setMaintenanceEntries} role={role} />}
+        {tab === 'assets'      && <Assets driver={activeDriver} api={API} showToast={showToast} maintenanceEntries={maintenanceEntries} role={role} />}
+        {tab === 'tax'         && <Tax loads={loads} driver={activeDriver} />}
       </div>
 
       {/* TAB BAR */}
       <div className="tab-bar">
-        <button className={`tab-item ${tab==='ratecon'?'active':''}`} onClick={() => setTab('ratecon')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
-          Rate Con
-        </button>
-        <button className={`tab-item ${tab==='invoice'?'active':''}`} onClick={() => setTab('invoice')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          Invoice
-        </button>
+
+        {/* Rate Con — drivers only */}
+        {!isBookkeeper && (
+          <button className={`tab-item ${tab==='ratecon'?'active':''}`} onClick={() => setTab('ratecon')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+            Rate Con
+          </button>
+        )}
+
+        {/* Invoice — drivers only */}
+        {!isBookkeeper && (
+          <button className={`tab-item ${tab==='invoice'?'active':''}`} onClick={() => setTab('invoice')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            Invoice
+          </button>
+        )}
+
+        {/* Loads — everyone */}
         <button className={`tab-item ${tab==='loads'?'active':''}`} onClick={() => setTab('loads')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
           Loads
         </button>
-        <button className={`tab-item ${tab==='profile'?'active':''}`} onClick={() => setTab('profile')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          Profile
-        </button>
+
+        {/* Profile — drivers only */}
+        {!isBookkeeper && (
+          <button className={`tab-item ${tab==='profile'?'active':''}`} onClick={() => setTab('profile')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            Profile
+          </button>
+        )}
+
+        {/* Repairs — everyone */}
         <button className={`tab-item ${tab==='maintenance'?'active':''}`} onClick={() => setTab('maintenance')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
           Repairs
         </button>
+
+        {/* Assets — everyone */}
         <button className={`tab-item ${tab==='assets'?'active':''}`} onClick={() => setTab('assets')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
           Assets
         </button>
+
+        {/* Tax — everyone */}
         <button className={`tab-item ${tab==='tax'?'active':''}`} onClick={() => setTab('tax')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/></svg>
           Tax
         </button>
+
       </div>
 
       {toast && <div className="toast">{toast}</div>}
