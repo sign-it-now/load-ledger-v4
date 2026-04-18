@@ -7,10 +7,10 @@ import { useState, useEffect } from 'react'
 const YEAR = 2026
 
 const QUARTERS = [
-  { label:'Q1', title:'January \u2013 March',    months:[0,1,2],    due:'2026-04-15', dueLabel:'April 15, 2026',     color:'#1e88e5' },
-  { label:'Q2', title:'April \u2013 May',         months:[3,4],      due:'2026-06-15', dueLabel:'June 15, 2026',      color:'#8e24aa' },
-  { label:'Q3', title:'June \u2013 August',       months:[5,6,7],    due:'2026-09-15', dueLabel:'September 15, 2026', color:'#e65100' },
-  { label:'Q4', title:'September \u2013 December',months:[8,9,10,11],due:'2027-01-15', dueLabel:'January 15, 2027',   color:'#2e7d32' },
+  { label:'Q1', title:'January \u2013 March',     months:[0,1,2],    due:'2026-04-15', dueLabel:'April 15, 2026',     color:'#1e88e5' },
+  { label:'Q2', title:'April \u2013 May',          months:[3,4],      due:'2026-06-15', dueLabel:'June 15, 2026',      color:'#8e24aa' },
+  { label:'Q3', title:'June \u2013 August',        months:[5,6,7],    due:'2026-09-15', dueLabel:'September 15, 2026', color:'#e65100' },
+  { label:'Q4', title:'September \u2013 December', months:[8,9,10,11],due:'2027-01-15', dueLabel:'January 15, 2027',   color:'#2e7d32' },
 ]
 
 const FED_DEFAULT = 12
@@ -20,7 +20,6 @@ const STATE_RATES = {
   BRUCE: { rate:0.0530, label:'Wisconsin', default:5.30 },
 }
 
-// ── TWO-LEVEL EXPENSE CATEGORY MENU ─────────────────────────
 const EXPENSE_CATEGORIES = [
   {
     label: '🔧 Truck & Equipment',
@@ -114,7 +113,6 @@ const EXPENSE_CATEGORIES = [
       'SEP-IRA / Solo 401(k) Contributions','State & Local Taxes (SALT)',
       'Property Taxes on Business Property','Excise Taxes',
       'Fuel Taxes Paid via IFTA','Pre-Trip Inspection Costs',
-      'Occupational Accident Insurance (if not listed above)',
     ],
   },
 ]
@@ -134,6 +132,55 @@ function daysUntil(dateStr) {
 function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
 function uid()  { return Math.random().toString(36).slice(2,9) }
 
+// ── PINNED SECTION — defined OUTSIDE Tax so React never remounts it ──
+function PinnedSection({ entries, label, onAdd, onUpdate, onRemove }) {
+  const total = entries.reduce((s,e) => s + (parseFloat(e.amount)||0), 0)
+  return (
+    <div style={{ marginBottom:14 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+        <div style={{ fontSize:12, color:'var(--white)', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.04em' }}>
+          {label}
+        </div>
+        <button onClick={onAdd} style={{
+          padding:'4px 12px', borderRadius:6, border:'1px solid var(--amber)',
+          background:'transparent', color:'var(--amber)',
+          fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+        }}>+ ADD</button>
+      </div>
+      {entries.length === 0 && (
+        <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4 }}>
+          Tap + ADD to enter a {label.toLowerCase()} expense
+        </div>
+      )}
+      {entries.map(e => (
+        <div key={e.id} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+          <span style={{ fontSize:12, color:'var(--grey)', minWidth:16 }}>$</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            placeholder="0.00"
+            value={e.amount}
+            onChange={ev => onUpdate(e.id, ev.target.value)}
+            style={{
+              flex:1, background:'var(--navy3)', border:'1px solid var(--border)',
+              color:'var(--white)', borderRadius:8, padding:'8px 10px',
+              fontSize:14, fontFamily:'var(--font-body)',
+            }}
+          />
+          <button onClick={() => onRemove(e.id)} style={{
+            padding:'6px 10px', borderRadius:6, border:'none',
+            background:'#3a1010', color:'#e53935',
+            fontSize:13, fontWeight:900, cursor:'pointer',
+          }}>×</button>
+        </div>
+      ))}
+      <div style={{ fontSize:11, color:'var(--amber)', textAlign:'right', marginTop:2 }}>
+        Total: {fmt(total)}
+      </div>
+    </div>
+  )
+}
+
 export default function Tax({ loads, driver }) {
 
   const stateInfo   = STATE_RATES[driver] || STATE_RATES.TIM
@@ -143,11 +190,9 @@ export default function Tax({ loads, driver }) {
   const [fedRate, setFedRate] = useState(FED_DEFAULT)
   const [openQ,   setOpenQ]   = useState(null)
 
-  // ── DROPDOWN STATE ───────────────────────────────────────
-  const [menuOpen,     setMenuOpen]     = useState(false)
-  const [openCatIdx,   setOpenCatIdx]   = useState(null)
-  // activeQIdx tracks which quarter the menu is attached to
-  const [menuQIdx,     setMenuQIdx]     = useState(null)
+  const [menuOpen,   setMenuOpen]   = useState(false)
+  const [openCatIdx, setOpenCatIdx] = useState(null)
+  const [menuQIdx,   setMenuQIdx]   = useState(null)
 
   useEffect(() => {
     setTaxData(loadStorage(driver))
@@ -155,6 +200,7 @@ export default function Tax({ loads, driver }) {
     setOpenQ(null)
     setMenuOpen(false)
     setOpenCatIdx(null)
+    setMenuQIdx(null)
   }, [driver])
 
   useEffect(() => { saveStorage(driver, taxData) }, [taxData, driver])
@@ -171,33 +217,39 @@ export default function Tax({ loads, driver }) {
     updateQData(qIdx, 'paid', !(getQData(qIdx).paid || false))
   }
 
-  // ── PINNED EXPENSE HELPERS ───────────────────────────────
+  // ── PINNED HELPERS ───────────────────────────────────────
   function getPinnedEntries(qIdx, type) {
-    const qd = getQData(qIdx)
-    return qd['pinned_' + type] || []
+    return (getQData(qIdx))['pinned_' + type] || []
   }
 
   function addPinnedEntry(qIdx, type) {
     const key = getQKey(qIdx)
     const cur = getPinnedEntries(qIdx, type)
-    const newEntries = [...cur, { id: uid(), amount: '' }]
-    setTaxData(prev => ({ ...prev, [key]: { ...(prev[key]||{}), ['pinned_' + type]: newEntries } }))
+    setTaxData(prev => ({
+      ...prev,
+      [key]: { ...(prev[key]||{}), ['pinned_' + type]: [...cur, { id:uid(), amount:'' }] }
+    }))
   }
 
   function updatePinnedEntry(qIdx, type, id, amount) {
     const key = getQKey(qIdx)
     const cur = getPinnedEntries(qIdx, type)
-    const updated = cur.map(e => e.id === id ? { ...e, amount } : e)
-    setTaxData(prev => ({ ...prev, [key]: { ...(prev[key]||{}), ['pinned_' + type]: updated } }))
+    setTaxData(prev => ({
+      ...prev,
+      [key]: { ...(prev[key]||{}), ['pinned_' + type]: cur.map(e => e.id===id ? {...e, amount} : e) }
+    }))
   }
 
   function removePinnedEntry(qIdx, type, id) {
     const key = getQKey(qIdx)
     const cur = getPinnedEntries(qIdx, type)
-    setTaxData(prev => ({ ...prev, [key]: { ...(prev[key]||{}), ['pinned_' + type]: cur.filter(e => e.id !== id) } }))
+    setTaxData(prev => ({
+      ...prev,
+      [key]: { ...(prev[key]||{}), ['pinned_' + type]: cur.filter(e => e.id!==id) }
+    }))
   }
 
-  // ── DROPDOWN EXPENSE HELPERS ─────────────────────────────
+  // ── DROPDOWN HELPERS ─────────────────────────────────────
   function getDropEntries(qIdx) {
     return (getQData(qIdx)).drop_expenses || []
   }
@@ -205,8 +257,10 @@ export default function Tax({ loads, driver }) {
   function addDropEntry(qIdx, label) {
     const key = getQKey(qIdx)
     const cur = getDropEntries(qIdx)
-    const newEntries = [...cur, { id: uid(), label, amount: '' }]
-    setTaxData(prev => ({ ...prev, [key]: { ...(prev[key]||{}), drop_expenses: newEntries } }))
+    setTaxData(prev => ({
+      ...prev,
+      [key]: { ...(prev[key]||{}), drop_expenses: [...cur, { id:uid(), label, amount:'' }] }
+    }))
     setMenuOpen(false)
     setOpenCatIdx(null)
     setMenuQIdx(null)
@@ -215,13 +269,19 @@ export default function Tax({ loads, driver }) {
   function updateDropEntry(qIdx, id, amount) {
     const key = getQKey(qIdx)
     const cur = getDropEntries(qIdx)
-    setTaxData(prev => ({ ...prev, [key]: { ...(prev[key]||{}), drop_expenses: cur.map(e => e.id === id ? { ...e, amount } : e) } }))
+    setTaxData(prev => ({
+      ...prev,
+      [key]: { ...(prev[key]||{}), drop_expenses: cur.map(e => e.id===id ? {...e, amount} : e) }
+    }))
   }
 
   function removeDropEntry(qIdx, id) {
     const key = getQKey(qIdx)
     const cur = getDropEntries(qIdx)
-    setTaxData(prev => ({ ...prev, [key]: { ...(prev[key]||{}), drop_expenses: cur.filter(e => e.id !== id) } }))
+    setTaxData(prev => ({
+      ...prev,
+      [key]: { ...(prev[key]||{}), drop_expenses: cur.filter(e => e.id!==id) }
+    }))
   }
 
   // ── REVENUE ──────────────────────────────────────────────
@@ -236,15 +296,13 @@ export default function Tax({ loads, driver }) {
       .reduce((sum, l) => sum + (parseFloat(l.net_pay || l.netPay) || 0), 0)
   }
 
-  // ── EXPENSE TOTAL ────────────────────────────────────────
   function getExpenseTotal(qIdx) {
-    const fuelTotal    = getPinnedEntries(qIdx,'fuel').reduce((s,e) => s + (parseFloat(e.amount)||0), 0)
-    const repairTotal  = getPinnedEntries(qIdx,'repair').reduce((s,e) => s + (parseFloat(e.amount)||0), 0)
-    const dropTotal    = getDropEntries(qIdx).reduce((s,e) => s + (parseFloat(e.amount)||0), 0)
-    return fuelTotal + repairTotal + dropTotal
+    const fuel   = getPinnedEntries(qIdx,'fuel').reduce((s,e)   => s + (parseFloat(e.amount)||0), 0)
+    const repair = getPinnedEntries(qIdx,'repair').reduce((s,e) => s + (parseFloat(e.amount)||0), 0)
+    const drop   = getDropEntries(qIdx).reduce((s,e)            => s + (parseFloat(e.amount)||0), 0)
+    return fuel + repair + drop
   }
 
-  // ── TAX MATH ─────────────────────────────────────────────
   function calcTax(revenue, expenses) {
     const netIncome = Math.max(0, revenue - expenses)
     const fedTax    = netIncome * (fedRate / 100)
@@ -253,59 +311,16 @@ export default function Tax({ loads, driver }) {
     return { netIncome, fedTax, stateTax, totalTax }
   }
 
-  // ── GRAND TOTALS ─────────────────────────────────────────
   const grandTotals = QUARTERS.reduce((acc, q, i) => {
     const revenue  = getQuarterRevenue(q.months)
     const expenses = getExpenseTotal(i)
     const { totalTax } = calcTax(revenue, expenses)
-    const isPaid = (getQData(i)).paid || false
     acc.revenue  += revenue
     acc.expenses += expenses
     acc.tax      += totalTax
-    acc.paid     += isPaid ? totalTax : 0
+    acc.paid     += (getQData(i)).paid ? totalTax : 0
     return acc
   }, { revenue:0, expenses:0, tax:0, paid:0 })
-
-  // ── PINNED FIELD COMPONENT ───────────────────────────────
-  function PinnedSection({ qIdx, type, label }) {
-    const entries = getPinnedEntries(qIdx, type)
-    return (
-      <div style={{ marginBottom:14 }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
-          <div style={{ fontSize:12, color:'var(--white)', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.04em' }}>
-            {label}
-          </div>
-          <button onClick={() => addPinnedEntry(qIdx, type)} style={{
-            padding:'4px 12px', borderRadius:6, border:'1px solid var(--amber)',
-            background:'transparent', color:'var(--amber)',
-            fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-          }}>+ ADD</button>
-        </div>
-        {entries.length === 0 && (
-          <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4 }}>Tap + ADD to enter a {label.toLowerCase()} expense</div>
-        )}
-        {entries.map(e => (
-          <div key={e.id} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-            <span style={{ fontSize:12, color:'var(--grey)', minWidth:16 }}>$</span>
-            <input
-              type="number" inputMode="decimal" placeholder="0.00"
-              value={e.amount}
-              onChange={ev => updatePinnedEntry(qIdx, type, e.id, ev.target.value)}
-              style={{ flex:1, background:'var(--navy3)', border:'1px solid var(--border)', color:'var(--white)', borderRadius:8, padding:'8px 10px', fontSize:14, fontFamily:'var(--font-body)' }}
-            />
-            <button onClick={() => removePinnedEntry(qIdx, type, e.id)} style={{
-              padding:'6px 10px', borderRadius:6, border:'none',
-              background:'#3a1010', color:'#e53935',
-              fontSize:13, fontWeight:900, cursor:'pointer',
-            }}>×</button>
-          </div>
-        ))}
-        <div style={{ fontSize:11, color:'var(--amber)', textAlign:'right', marginTop:2 }}>
-          Total: {fmt(entries.reduce((s,e) => s + (parseFloat(e.amount)||0), 0))}
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div style={{ paddingBottom:16 }}>
@@ -346,20 +361,20 @@ export default function Tax({ loads, driver }) {
 
       {/* ── QUARTER CARDS ────────────────────────────────── */}
       {QUARTERS.map((q, qIdx) => {
-        const revenue  = getQuarterRevenue(q.months)
-        const expenses = getExpenseTotal(qIdx)
+        const revenue    = getQuarterRevenue(q.months)
+        const expenses   = getExpenseTotal(qIdx)
         const { netIncome, fedTax, stateTax, totalTax } = calcTax(revenue, expenses)
-        const days   = daysUntil(q.due)
-        const isPaid = (getQData(qIdx)).paid || false
-        const isOpen = openQ === qIdx
+        const days       = daysUntil(q.due)
+        const isPaid     = (getQData(qIdx)).paid || false
+        const isOpen     = openQ === qIdx
         const dropEntries = getDropEntries(qIdx)
         const isMenuOpen = menuOpen && menuQIdx === qIdx
 
         let countdownColor = 'var(--green)'
         let countdownText  = days + ' days away'
-        if (days < 0)               { countdownColor='var(--grey)';   countdownText='Past due' }
-        if (days >= 0 && days <= 14){ countdownColor='#e53935';       countdownText=days+' days \u2014 ACT NOW' }
-        if (days > 14 && days <= 30){ countdownColor='var(--amber)';  countdownText=days+' days away' }
+        if (days < 0)                { countdownColor='var(--grey)';  countdownText='Past due' }
+        if (days >= 0 && days <= 14) { countdownColor='#e53935';      countdownText=days+' days \u2014 ACT NOW' }
+        if (days > 14 && days <= 30) { countdownColor='var(--amber)'; countdownText=days+' days away' }
 
         return (
           <div key={qIdx} className="card" style={{borderLeft:'3px solid '+q.color, marginBottom:12}}>
@@ -399,16 +414,27 @@ export default function Tax({ loads, driver }) {
                   {revenue === 0 && <div style={{fontSize:11, color:'var(--grey)', marginTop:6}}>No invoiced {driver} loads found for this quarter</div>}
                 </div>
 
-                {/* ── PINNED: FUEL ── */}
-                <PinnedSection qIdx={qIdx} type="fuel"   label="Fuel" />
+                {/* ── PINNED FUEL ── */}
+                <PinnedSection
+                  entries={getPinnedEntries(qIdx, 'fuel')}
+                  label="Fuel"
+                  onAdd={()           => addPinnedEntry(qIdx, 'fuel')}
+                  onUpdate={(id, val) => updatePinnedEntry(qIdx, 'fuel', id, val)}
+                  onRemove={(id)      => removePinnedEntry(qIdx, 'fuel', id)}
+                />
 
-                {/* ── PINNED: REPAIRS ── */}
-                <PinnedSection qIdx={qIdx} type="repair" label="Repairs & Maintenance" />
+                {/* ── PINNED REPAIRS ── */}
+                <PinnedSection
+                  entries={getPinnedEntries(qIdx, 'repair')}
+                  label="Repairs & Maintenance"
+                  onAdd={()           => addPinnedEntry(qIdx, 'repair')}
+                  onUpdate={(id, val) => updatePinnedEntry(qIdx, 'repair', id, val)}
+                  onRemove={(id)      => removePinnedEntry(qIdx, 'repair', id)}
+                />
 
-                {/* ── DIVIDER ── */}
                 <div style={{borderTop:'1px solid var(--border)', margin:'14px 0'}} />
 
-                {/* ── ADDITIONAL EXPENSE ENTRIES FROM DROPDOWN ── */}
+                {/* ── ADDITIONAL DROP ENTRIES ── */}
                 {dropEntries.length > 0 && (
                   <div style={{marginBottom:12}}>
                     <div style={{fontSize:12, color:'var(--white)', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.04em', marginBottom:8}}>
@@ -436,7 +462,7 @@ export default function Tax({ loads, driver }) {
                   </div>
                 )}
 
-                {/* ── ADD EXPENSE DROPDOWN BUTTON ── */}
+                {/* ── ADD EXPENSE DROPDOWN ── */}
                 <div style={{position:'relative', marginBottom:16}}>
                   <button
                     onClick={() => {
@@ -453,18 +479,16 @@ export default function Tax({ loads, driver }) {
                     + ADD EXPENSE FROM LIST {isMenuOpen ? '\u25b2' : '\u25bc'}
                   </button>
 
-                  {/* DROPDOWN MENU */}
                   {isMenuOpen && (
                     <div style={{
                       position:'absolute', top:'calc(100% + 6px)', left:0, right:0,
                       background:'var(--navy2)', border:'1px solid var(--border)',
-                      borderRadius:10, zIndex:100, overflow:'hidden',
+                      borderRadius:10, zIndex:100,
                       boxShadow:'0 8px 24px rgba(0,0,0,0.5)',
                       maxHeight:360, overflowY:'auto',
                     }}>
                       {EXPENSE_CATEGORIES.map((cat, catIdx) => (
                         <div key={catIdx}>
-                          {/* CATEGORY ROW */}
                           <div
                             onClick={() => setOpenCatIdx(openCatIdx === catIdx ? null : catIdx)}
                             style={{
@@ -481,8 +505,6 @@ export default function Tax({ loads, driver }) {
                               {openCatIdx === catIdx ? '\u25b2' : '\u25bc'}
                             </span>
                           </div>
-
-                          {/* ITEMS UNDER THIS CATEGORY */}
                           {openCatIdx === catIdx && (
                             <div style={{background:'var(--navy3)'}}>
                               {cat.items.map((item, itemIdx) => (
@@ -490,14 +512,11 @@ export default function Tax({ loads, driver }) {
                                   key={itemIdx}
                                   onClick={() => addDropEntry(qIdx, item)}
                                   style={{
-                                    padding:'11px 24px',
-                                    fontSize:13, color:'var(--grey)',
-                                    fontFamily:'var(--font-body)',
+                                    padding:'11px 24px', fontSize:13,
+                                    color:'var(--grey)', fontFamily:'var(--font-body)',
                                     borderBottom:'1px solid rgba(255,255,255,0.05)',
                                     cursor:'pointer',
                                   }}
-                                  onTouchStart={e => e.currentTarget.style.background='rgba(255,179,0,0.08)'}
-                                  onTouchEnd={e => e.currentTarget.style.background='transparent'}
                                 >
                                   {item}
                                 </div>
