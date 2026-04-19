@@ -15,11 +15,7 @@
   --font-body: 'Barlow', sans-serif;
 }
 
-/* ── LIGHT MODE ─────────────────────────────────────────────
-   Backgrounds go white/light grey.
-   Text goes pure black for maximum readability.
-   Amber, green, red accents stay identical — great contrast on white.
-───────────────────────────────────────────────────────────── */
+/* ── LIGHT MODE — backgrounds flip, all number values go black ── */
 body.light {
   --navy:   #F0F4F8;
   --navy2:  #FFFFFF;
@@ -28,6 +24,24 @@ body.light {
   --grey:   #444444;
   --border: #C8D8E8;
 }
+
+/* All value numbers — pure black in light mode */
+body.light .amount-row .value,
+body.light .amount-row .value.red,
+body.light .amount-row .value.green,
+body.light .amount-row .value.amber {
+  color: #000000 !important;
+}
+
+/* Net total value — black in light mode */
+body.light .net-total .value {
+  color: #000000 !important;
+}
+
+/* Status chips in light mode — keep readable but tone down */
+body.light .status-chip.invoiced { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
+body.light .status-chip.billed   { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+body.light .status-chip.paid     { background: #fef9c3; color: #92400e; border: 1px solid var(--amber); }
 
 html, body, #root {
   height: 100%;
@@ -65,13 +79,8 @@ input, textarea, select {
   outline: none;
 }
 
-input::placeholder, textarea::placeholder {
-  color: var(--grey);
-}
-
-input:focus, textarea:focus {
-  border-color: var(--amber);
-}
+input::placeholder, textarea::placeholder { color: var(--grey); }
+input:focus, textarea:focus { border-color: var(--amber); }
 
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: var(--navy); }
@@ -110,9 +119,7 @@ input:focus, textarea:focus {
   margin-bottom: 6px;
 }
 
-.field-row {
-  margin-bottom: 14px;
-}
+.field-row { margin-bottom: 14px; }
 
 .scan-btn {
   width: 100%;
@@ -165,10 +172,9 @@ input:focus, textarea:focus {
 }
 
 .amount-row:last-child { border-bottom: none; }
-
 .amount-row .label { color: var(--grey); }
 .amount-row .value { font-weight: 600; color: var(--white); }
-.amount-row .value.red { color: var(--red); }
+.amount-row .value.red   { color: var(--red); }
 .amount-row .value.green { color: var(--green); }
 .amount-row .value.amber { color: var(--amber); font-size: 20px; font-family: var(--font-head); font-weight: 800; }
 
@@ -320,9 +326,9 @@ input:focus, textarea:focus {
 }
 
 .status-chip.draft    { background: var(--navy3); color: var(--grey); border: 1px solid var(--border); }
-.status-chip.invoiced { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
-.status-chip.billed   { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
-.status-chip.paid     { background: #fef9c3; color: #92400e; border: 1px solid var(--amber); }
+.status-chip.invoiced { background: #1a3a5c; color: #60a5fa; border: 1px solid #2563eb; }
+.status-chip.billed   { background: #1a2e1a; color: var(--green); border: 1px solid var(--green); }
+.status-chip.paid     { background: #2d1a00; color: var(--amber); border: 1px solid var(--amber); }
 
 .empty-state {
   text-align: center;
