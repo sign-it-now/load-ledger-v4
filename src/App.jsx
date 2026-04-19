@@ -31,13 +31,28 @@ function daysUntil(dateStr) {
 
 export default function App() {
   const [tab,             setTab]             = useState('loads')
-  const [driver,          setDriver]          = useState(null)    // logged-in user: BRUCE, TIM, NICOLE
-  const [role,            setRole]            = useState(null)    // 'driver' or 'bookkeeper'
-  const [sessionPassword, setSessionPassword] = useState(null)   // in-memory for credential file access
-  const [viewDriver,      setViewDriver]      = useState('BRUCE') // Nicole's selected driver context
+  const [driver,          setDriver]          = useState(null)
+  const [role,            setRole]            = useState(null)
+  const [sessionPassword, setSessionPassword] = useState(null)
+  const [viewDriver,      setViewDriver]      = useState('BRUCE')
   const [load,            setLoad]            = useState(newLoad())
   const [loads,           setLoads]           = useState([])
   const [toast,           setToast]           = useState(null)
+
+  // ── THEME ────────────────────────────────────────────────
+  const [lightMode, setLightMode] = useState(() => {
+    return localStorage.getItem('ll_v4_theme') === 'light'
+  })
+
+  useEffect(() => {
+    if (lightMode) {
+      document.body.classList.add('light')
+      localStorage.setItem('ll_v4_theme', 'light')
+    } else {
+      document.body.classList.remove('light')
+      localStorage.setItem('ll_v4_theme', 'dark')
+    }
+  }, [lightMode])
 
   // ── LOGIN STATE ──────────────────────────────────────────
   const [email,        setEmail]        = useState('')
@@ -62,14 +77,12 @@ export default function App() {
         setRole(savedRole)
         if (savedRole === 'driver') setTab('ratecon')
         else setTab('loads')
-        // Restore password from sessionStorage (survives page refresh, not tab close)
         const pw = sessionStorage.getItem('ll_v4_pw')
         if (pw) setSessionPassword(pw)
       }
     } catch {}
   }, [])
 
-  // ── ACTIVE DRIVER — what Nicole is viewing ───────────────
   const activeDriver = role === 'bookkeeper' ? viewDriver : driver
 
   async function fetchLoads() {
@@ -109,7 +122,6 @@ export default function App() {
     if (role === 'driver') checkCredentials(driver)
   }, [driver])
 
-  // ── LOGIN ────────────────────────────────────────────────
   async function handleLogin() {
     if (!email.trim() || !password.trim()) { setLoginError('Please enter your email and password'); return }
     setLoginLoading(true)
@@ -194,42 +206,62 @@ export default function App() {
   function renderCredAlert() {
     if (!currentAlert || !driver || role !== 'driver') return null
     const { label, days, expDate } = currentAlert
-    const isExpired = days !== null && days < 0
-    const isUnset   = days === null
-    const isSoon    = days !== null && days >= 0 && days <= 30
+    const isExpired   = days !== null && days < 0
+    const isUnset     = days === null
+    const isSoon      = days !== null && days >= 0 && days <= 30
     const borderColor = isExpired ? '#e53935' : '#ffb300'
     const titleColor  = isExpired ? '#e53935' : '#ffb300'
     return (
       <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.85)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
         <div style={{ background: isExpired ? '#2a0a0a' : '#1a1200', border:'2px solid '+borderColor, borderRadius:14, padding:24, width:'100%', maxWidth:360 }}>
           <div style={{ fontSize:13, color:titleColor, fontFamily:'var(--font-head)', fontWeight:900, letterSpacing:'0.1em', marginBottom:8 }}>⚠️ CREDENTIAL ALERT</div>
-          <div style={{ fontSize:20, fontFamily:'var(--font-head)', fontWeight:900, color:'var(--white)', marginBottom:8 }}>{label}</div>
+          <div style={{ fontSize:20, fontFamily:'var(--font-head)', fontWeight:900, color:'#fff', marginBottom:8 }}>{label}</div>
           <div style={{ fontSize:14, color:titleColor, fontFamily:'var(--font-head)', fontWeight:700, marginBottom:16 }}>
             {isUnset   && 'No expiration date on file. Please update.'}
             {isExpired && 'EXPIRED ' + Math.abs(days) + ' days ago!'}
             {isSoon    && (days === 0 ? 'EXPIRES TODAY!' : 'Expires in ' + days + ' day' + (days !== 1 ? 's' : '') + '!')}
           </div>
-          {expDate && <div style={{ fontSize:11, color:'var(--grey)', marginBottom:16 }}>Current expiration: {new Date(expDate+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>}
-          {credAlerts.length > 1 && <div style={{ fontSize:11, color:'var(--grey)', marginBottom:16 }}>Alert {alertIdx+1} of {credAlerts.length}</div>}
+          {expDate && <div style={{ fontSize:11, color:'#aaa', marginBottom:16 }}>Current expiration: {new Date(expDate+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>}
+          {credAlerts.length > 1 && <div style={{ fontSize:11, color:'#aaa', marginBottom:16 }}>Alert {alertIdx+1} of {credAlerts.length}</div>}
           {!showSnooze ? (
             <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-              <button onClick={() => { dismissAlert(); setTab('profile') }} style={{ padding:'14px 0', borderRadius:8, border:'none', background:'var(--amber)', color:'var(--navy)', fontSize:14, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer' }}>UPDATE NOW</button>
-              <button onClick={() => setShowSnooze(true)} style={{ padding:'12px 0', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--grey)', fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>REMIND ME ON A SPECIFIC DATE</button>
+              <button onClick={() => { dismissAlert(); setTab('profile') }} style={{ padding:'14px 0', borderRadius:8, border:'none', background:'var(--amber)', color:'#0A1628', fontSize:14, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer' }}>UPDATE NOW</button>
+              <button onClick={() => setShowSnooze(true)} style={{ padding:'12px 0', borderRadius:8, border:'1px solid #555', background:'transparent', color:'#aaa', fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>REMIND ME ON A SPECIFIC DATE</button>
               <button onClick={dismissAlert} style={{ padding:'12px 0', borderRadius:8, border:'1px solid #333', background:'transparent', color:'#666', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>OK — DISMISS FOR NOW</button>
             </div>
           ) : (
             <div>
-              <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:8 }}>REMIND ME ON THIS DATE</div>
+              <div style={{ fontSize:11, color:'#aaa', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:8 }}>REMIND ME ON THIS DATE</div>
               <input type="date" value={snoozeInput} onChange={e => setSnoozeInput(e.target.value)}
-                style={{ width:'100%', background:'var(--navy3)', border:'1px solid var(--amber)', color:'var(--white)', borderRadius:8, padding:'12px 14px', fontSize:16, fontFamily:'var(--font-body)', marginBottom:10, boxSizing:'border-box' }} />
+                style={{ width:'100%', background:'#1A3A5C', border:'1px solid var(--amber)', color:'#fff', borderRadius:8, padding:'12px 14px', fontSize:16, fontFamily:'var(--font-body)', marginBottom:10, boxSizing:'border-box' }} />
               <div style={{ display:'flex', gap:8 }}>
-                <button disabled={!snoozeInput} onClick={snoozeAlert} style={{ flex:1, padding:'12px 0', borderRadius:8, border:'none', background: snoozeInput ? 'var(--amber)' : '#555', color:'var(--navy)', fontSize:13, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer' }}>SET REMINDER</button>
-                <button onClick={() => { setShowSnooze(false); setSnoozeInput('') }} style={{ flex:1, padding:'12px 0', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--grey)', fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>BACK</button>
+                <button disabled={!snoozeInput} onClick={snoozeAlert} style={{ flex:1, padding:'12px 0', borderRadius:8, border:'none', background: snoozeInput ? 'var(--amber)' : '#555', color:'#0A1628', fontSize:13, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer' }}>SET REMINDER</button>
+                <button onClick={() => { setShowSnooze(false); setSnoozeInput('') }} style={{ flex:1, padding:'12px 0', borderRadius:8, border:'1px solid #555', background:'transparent', color:'#aaa', fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>BACK</button>
               </div>
             </div>
           )}
         </div>
       </div>
+    )
+  }
+
+  // ── THEME TOGGLE BUTTON ──────────────────────────────────
+  function ThemeToggle() {
+    return (
+      <button
+        onClick={() => setLightMode(m => !m)}
+        title={lightMode ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+        style={{
+          padding:'6px 10px', borderRadius:8,
+          border:'1px solid var(--border)',
+          background:'var(--navy3)',
+          color:'var(--white)',
+          fontSize:16, cursor:'pointer',
+          lineHeight:1, flexShrink:0,
+        }}
+      >
+        {lightMode ? '🌙' : '☀️'}
+      </button>
     )
   }
 
@@ -239,7 +271,11 @@ export default function App() {
       <div style={{ display:'flex', flexDirection:'column', height:'100dvh', background:'var(--navy)', alignItems:'center', justifyContent:'center', padding:24 }}>
         <div style={{ width:'100%', maxWidth:360 }}>
 
-          {/* LOGO */}
+          {/* THEME TOGGLE on login screen */}
+          <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:16 }}>
+            <ThemeToggle />
+          </div>
+
           <div style={{ textAlign:'center', marginBottom:32 }}>
             <div className="app-logo" style={{ fontSize:32, justifyContent:'center', display:'flex' }}>
               LOAD<span>LEDGER</span>
@@ -249,34 +285,22 @@ export default function App() {
             </div>
           </div>
 
-          {/* LOGIN CARD */}
           <div style={{ background:'var(--navy2)', borderRadius:14, padding:24, border:'1px solid var(--border)' }}>
             <div style={{ fontSize:13, color:'var(--grey)', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.1em', marginBottom:20, textAlign:'center' }}>
               SIGN IN
             </div>
 
-            {/* EMAIL */}
             <div style={{ marginBottom:14 }}>
               <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>EMAIL</div>
               <input
-                type="email"
-                inputMode="email"
-                autoCapitalize="none"
-                autoCorrect="off"
+                type="email" inputMode="email" autoCapitalize="none" autoCorrect="off"
                 placeholder="your@email.com"
                 value={email}
                 onChange={e => { setEmail(e.target.value); setLoginError('') }}
                 onKeyDown={e => e.key === 'Enter' && handleLogin()}
-                style={{
-                  width:'100%', padding:'14px 16px', borderRadius:10,
-                  background:'var(--navy3)', border:'1px solid var(--border)',
-                  color:'var(--white)', fontSize:16, fontFamily:'var(--font-body)',
-                  boxSizing:'border-box', outline:'none',
-                }}
               />
             </div>
 
-            {/* PASSWORD */}
             <div style={{ marginBottom:20 }}>
               <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>PASSWORD</div>
               <div style={{ position:'relative' }}>
@@ -286,41 +310,30 @@ export default function App() {
                   value={password}
                   onChange={e => { setPassword(e.target.value); setLoginError('') }}
                   onKeyDown={e => e.key === 'Enter' && handleLogin()}
-                  style={{
-                    width:'100%', padding:'14px 48px 14px 16px', borderRadius:10,
-                    background:'var(--navy3)', border:'1px solid var(--border)',
-                    color:'var(--white)', fontSize:16, fontFamily:'var(--font-body)',
-                    boxSizing:'border-box', outline:'none',
-                  }}
+                  style={{ paddingRight:48 }}
                 />
                 <button
                   onClick={() => setShowPassword(p => !p)}
-                  style={{
-                    position:'absolute', right:12, top:'50%', transform:'translateY(-50%)',
-                    background:'transparent', border:'none', color:'var(--grey)',
-                    fontSize:14, cursor:'pointer', padding:'4px 8px',
-                  }}
+                  style={{ position:'absolute', right:12, top:'50%', transform:'translateY(-50%)', background:'transparent', border:'none', color:'var(--grey)', fontSize:14, cursor:'pointer', padding:'4px 8px' }}
                 >
                   {showPassword ? '🙈' : '👁'}
                 </button>
               </div>
             </div>
 
-            {/* ERROR */}
             {loginError && (
               <div style={{ fontSize:13, color:'#e53935', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:14, textAlign:'center' }}>
                 {loginError}
               </div>
             )}
 
-            {/* LOGIN BUTTON */}
             <button
               onClick={handleLogin}
               disabled={loginLoading}
               style={{
                 width:'100%', padding:'16px 0', borderRadius:10, border:'none',
                 background: loginLoading ? '#555' : 'var(--amber)',
-                color: loginLoading ? 'var(--grey)' : 'var(--navy)',
+                color: loginLoading ? '#aaa' : '#0A1628',
                 fontSize:16, fontFamily:'var(--font-head)', fontWeight:900,
                 cursor: loginLoading ? 'default' : 'pointer', letterSpacing:'0.05em',
               }}
@@ -333,7 +346,6 @@ export default function App() {
             dbappsystems.com | daddyboyapps.com
           </div>
         </div>
-
         {toast && <div className="toast">{toast}</div>}
       </div>
     )
@@ -350,7 +362,8 @@ export default function App() {
       {/* HEADER */}
       <div className="app-header">
         <div className="app-logo">LOAD<span>LEDGER</span></div>
-        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <ThemeToggle />
           <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)' }}>{driver}</div>
           <div className="badge">V4</div>
           <button onClick={logout} style={{ padding:'6px 12px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--grey)', fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>LOGOUT</button>
@@ -360,14 +373,13 @@ export default function App() {
       {/* DRIVER BAR */}
       <div className="driver-bar" style={{ justifyContent:'space-between', alignItems:'center' }}>
         {isBookkeeper ? (
-          // Nicole sees a driver switcher for context-specific tabs
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em' }}>VIEWING:</div>
             {['BRUCE','TIM'].map(d => (
               <button key={d} onClick={() => setViewDriver(d)} style={{
                 padding:'7px 16px', borderRadius:8, border:'none',
                 background: viewDriver === d ? 'var(--amber)' : 'var(--navy3)',
-                color:       viewDriver === d ? 'var(--navy)'  : 'var(--grey)',
+                color:       viewDriver === d ? '#0A1628'     : 'var(--grey)',
                 fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
               }}>{d}</button>
             ))}
@@ -395,55 +407,40 @@ export default function App() {
 
       {/* TAB BAR */}
       <div className="tab-bar">
-
-        {/* Rate Con — drivers only */}
         {!isBookkeeper && (
           <button className={`tab-item ${tab==='ratecon'?'active':''}`} onClick={() => setTab('ratecon')}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
             Rate Con
           </button>
         )}
-
-        {/* Invoice — drivers only */}
         {!isBookkeeper && (
           <button className={`tab-item ${tab==='invoice'?'active':''}`} onClick={() => setTab('invoice')}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
             Invoice
           </button>
         )}
-
-        {/* Loads — everyone */}
         <button className={`tab-item ${tab==='loads'?'active':''}`} onClick={() => setTab('loads')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
           Loads
         </button>
-
-        {/* Profile — drivers only */}
         {!isBookkeeper && (
           <button className={`tab-item ${tab==='profile'?'active':''}`} onClick={() => setTab('profile')}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             Profile
           </button>
         )}
-
-        {/* Repairs — everyone */}
         <button className={`tab-item ${tab==='maintenance'?'active':''}`} onClick={() => setTab('maintenance')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
           Repairs
         </button>
-
-        {/* Assets — everyone */}
         <button className={`tab-item ${tab==='assets'?'active':''}`} onClick={() => setTab('assets')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
           Assets
         </button>
-
-        {/* Tax — everyone */}
         <button className={`tab-item ${tab==='tax'?'active':''}`} onClick={() => setTab('tax')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/></svg>
           Tax
         </button>
-
       </div>
 
       {toast && <div className="toast">{toast}</div>}
