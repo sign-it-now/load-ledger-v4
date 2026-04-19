@@ -15,6 +15,16 @@
   --font-body: 'Barlow', sans-serif;
 }
 
+/* ── LIGHT MODE — swaps only color variables ── */
+body.light {
+  --navy:   #F0F4F8;
+  --navy2:  #FFFFFF;
+  --navy3:  #E8EEF5;
+  --white:  #0A1628;
+  --grey:   #5A7A99;
+  --border: #C8D8E8;
+}
+
 html, body, #root {
   height: 100%;
   width: 100%;
@@ -138,7 +148,7 @@ input:focus, textarea:focus {
 
 .scan-btn.success {
   background: var(--green);
-  color: var(--white);
+  color: #ffffff;
 }
 
 .amount-row {
@@ -231,7 +241,7 @@ input:focus, textarea:focus {
 
 .driver-btn.active {
   background: var(--amber);
-  color: var(--navy);
+  color: #0A1628;
   border-color: var(--amber);
 }
 
@@ -286,7 +296,7 @@ input:focus, textarea:focus {
 
 .badge {
   background: var(--amber);
-  color: var(--navy);
+  color: #0A1628;
   font-family: var(--font-head);
   font-size: 11px;
   font-weight: 800;
@@ -369,4 +379,9 @@ input:focus, textarea:focus {
   z-index: 999;
   white-space: nowrap;
   letter-spacing: 0.05em;
+}
+
+/* ── THEME TRANSITION — smooth flip ── */
+body {
+  transition: background 0.2s ease, color 0.2s ease;
 }
