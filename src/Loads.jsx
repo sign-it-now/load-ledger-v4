@@ -151,6 +151,14 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   // ── HELPERS ──────────────────────────────────────────────
   function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
 
+  function loadDate(load) { return load.created_at || load.date || null }
+
+  function invoiceHref(load) {
+    if (!load.invoice_url) return null
+    if (load.invoice_url.startsWith('http')) return load.invoice_url
+    return api + load.invoice_url
+  }
+
   function calcPay(load) {
     const base = parseFloat(load.base_pay) || 0
     if (load.driver === 'BRUCE') {
@@ -166,7 +174,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     return Math.max(0, comdataTotal - lumperTotal - incTotal)
   }
 
-  function inPeriod(dateStr, p) {
+  function inPeriod(load, p) {
+    const dateStr = loadDate(load)
     if (!dateStr) return false
     const d   = new Date(dateStr)
     const now = new Date()
@@ -182,7 +191,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const timLoads   = loads.filter(l => l.driver === 'TIM')
 
   function driverStats(dLoads, p) {
-    const inRange = dLoads.filter(l => inPeriod(l.date, p))
+    const inRange = dLoads.filter(l => inPeriod(l, p))
     const billed  = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
     const paid    = inRange.filter(l => l.status === 'paid')
     return {
@@ -224,7 +233,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     fontSize:14, fontFamily:'var(--font-body)', boxSizing:'border-box',
   }
 
-  // ── EMPTY STATE ──────────────────────────────────────────
   if (loads.length === 0) {
     return (
       <div className="empty-state">
@@ -238,7 +246,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   return (
     <div>
 
-      {/* VIEW TABS */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
         {['all','BRUCE','TIM','reports'].map(v => (
           <button key={v} onClick={() => setView(v)} style={{
@@ -253,7 +260,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
         ))}
       </div>
 
-      {/* LEADERBOARD */}
       <div className="card" style={{ marginBottom:14 }}>
         <div className="section-title" style={{ marginBottom:10 }}>
           LEADERBOARD - ALL TIME
@@ -269,31 +275,18 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
         </div>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
           <div style={{ background:'var(--navy3)', borderRadius:8, padding:'10px 12px', borderLeft:'3px solid #1e88e5' }}>
-            <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:4 }}>
-              BRUCE {leader==='BRUCE'?'👑':''}
-            </div>
-            <div style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color:'#1e88e5' }}>
-              {fmt(bruceTotalAllTime)}
-            </div>
-            <div style={{ fontSize:11, color:'var(--grey)', marginTop:2 }}>
-              {bruceLoads.length} load{bruceLoads.length!==1?'s':''}
-            </div>
+            <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:4 }}>BRUCE {leader==='BRUCE'?'👑':''}</div>
+            <div style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color:'#1e88e5' }}>{fmt(bruceTotalAllTime)}</div>
+            <div style={{ fontSize:11, color:'var(--grey)', marginTop:2 }}>{bruceLoads.length} load{bruceLoads.length!==1?'s':''}</div>
           </div>
           <div style={{ background:'var(--navy3)', borderRadius:8, padding:'10px 12px', borderLeft:'3px solid #e53935' }}>
-            <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:4 }}>
-              TIM {leader==='TIM'?'👑':''}
-            </div>
-            <div style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color:'#e53935' }}>
-              {fmt(timTotalAllTime)}
-            </div>
-            <div style={{ fontSize:11, color:'var(--grey)', marginTop:2 }}>
-              {timLoads.length} load{timLoads.length!==1?'s':''}
-            </div>
+            <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:4 }}>TIM {leader==='TIM'?'👑':''}</div>
+            <div style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color:'#e53935' }}>{fmt(timTotalAllTime)}</div>
+            <div style={{ fontSize:11, color:'var(--grey)', marginTop:2 }}>{timLoads.length} load{timLoads.length!==1?'s':''}</div>
           </div>
         </div>
       </div>
 
-      {/* REPORTS VIEW */}
       {view === 'reports' && (
         <div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
@@ -310,16 +303,12 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             ))}
           </div>
 
-          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:13,
-                        color:'var(--amber)', letterSpacing:'0.1em', marginBottom:12 }}>
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:13, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:12 }}>
             {periodLabel[period]} - PER DRIVER REPORT
           </div>
 
-          {/* BRUCE REPORT */}
           <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
-            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>
-              BRUCE {leader==='BRUCE'?'👑':''}
-            </div>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>BRUCE {leader==='BRUCE'?'👑':''}</div>
             <div className="amount-row"><span className="label">Loads</span><span className="value">{bruceStats.count}</span></div>
             <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed)}</span></div>
             <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid)}</span></div>
@@ -329,11 +318,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             </div>
           </div>
 
-          {/* TIM REPORT */}
           <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
-            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>
-              TIM {leader==='TIM'?'👑':''}
-            </div>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>TIM {leader==='TIM'?'👑':''}</div>
             <div className="amount-row"><span className="label">Loads</span><span className="value">{timStats.count}</span></div>
             <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.billed)}</span></div>
             <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.paid)}</span></div>
@@ -345,11 +331,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             </div>
           </div>
 
-          {/* COMBINED REPORT */}
           <div className="card" style={{ borderLeft:'3px solid var(--amber)' }}>
-            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>
-              COMBINED {periodLabel[period]}
-            </div>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>COMBINED {periodLabel[period]}</div>
             <div className="amount-row"><span className="label">Total Loads</span><span className="value">{bruceStats.count + timStats.count}</span></div>
             <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed + timStats.billed)}</span></div>
             <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid + timStats.paid)}</span></div>
@@ -358,11 +341,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
         </div>
       )}
 
-      {/* LOADS LIST VIEW */}
       {view !== 'reports' && (
         <div>
-
-          {/* TOTALS BAR */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
             <div className="card" style={{ padding:12, textAlign:'center', marginBottom:0 }}>
               <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:4 }}>TOTAL</div>
@@ -392,11 +372,12 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             const loadId    = load.id || localIdx
             const netPay    = parseFloat(load.netPay || load.net_pay) || 0
             const bolCount  = load.bol_count || (load.bols && load.bols.length) || 0
+            const dateStr   = loadDate(load)
+            const invHref   = invoiceHref(load)
 
             return (
               <div className="load-card" key={idx} style={{ flexDirection:'column', alignItems:'stretch' }}>
 
-                {/* TOP ROW */}
                 <div style={{ display:'flex', alignItems:'flex-start' }}>
                   <div className="load-card-info" style={{ flex:1 }}>
 
@@ -412,7 +393,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     <p>Load # {load.load_number || '-'}</p>
                     <p>{load.origin || '-'} to {load.destination || '-'}</p>
                     <p style={{ color:'var(--grey)', fontSize:11 }}>
-                      {load.date ? new Date(load.date).toLocaleDateString() : '-'}
+                      {dateStr ? new Date(dateStr).toLocaleDateString() : '-'}
                       {(load.edited || load.edited_date) && (
                         <span style={{ marginLeft:6, color:'var(--amber)', fontSize:10 }}>
                           EDITED {load.edited_date ? new Date(load.edited_date).toLocaleDateString() : ''}
@@ -427,9 +408,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                   </div>
 
                   <div style={{ marginLeft:12, display:'flex', flexDirection:'column', alignItems:'flex-end' }}>
-                    <span className={'status-chip ' + load.status}>
-                      {load.status}
-                    </span>
+                    <span className={'status-chip ' + load.status}>{load.status}</span>
                     {bolCount > 0 && (
                       <div style={{ fontSize:10, color:'var(--grey)', marginTop:6 }}>
                         {bolCount} BOL{bolCount !== 1 ? 's' : ''}
@@ -438,42 +417,29 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                   </div>
                 </div>
 
-                {/* VIEW INVOICE BUTTON */}
-                {load.invoice_url && (
-                  <a
-                    href={load.invoice_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      display:'block', marginTop:10, padding:'9px 0', borderRadius:8,
-                      background:'var(--navy3)', border:'1px solid var(--border)',
-                      color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700,
-                      fontSize:13, textAlign:'center', textDecoration:'none', letterSpacing:'0.05em',
-                    }}
-                  >
+                {invHref && (
+                  <a href={invHref} target="_blank" rel="noopener noreferrer" style={{
+                    display:'block', marginTop:10, padding:'9px 0', borderRadius:8,
+                    background:'var(--navy3)', border:'1px solid var(--border)',
+                    color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700,
+                    fontSize:13, textAlign:'center', textDecoration:'none', letterSpacing:'0.05em',
+                  }}>
                     VIEW INVOICE PDF
                   </a>
                 )}
 
-                {/* ACTION BUTTONS */}
                 <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
                   {load.status !== 'billed' && load.status !== 'paid' && (
-                    <button
-                      className="scan-btn secondary"
-                      style={{ flex:1, padding:'8px 12px', fontSize:13 }}
+                    <button className="scan-btn secondary" style={{ flex:1, padding:'8px 12px', fontSize:13 }}
                       disabled={updating === loadId}
-                      onClick={() => patchLoad(load, localIdx, { status:'billed' })}
-                    >
+                      onClick={() => patchLoad(load, localIdx, { status:'billed' })}>
                       {updating === loadId ? '...' : 'MARK BILLED'}
                     </button>
                   )}
                   {load.status !== 'paid' && (
-                    <button
-                      className="scan-btn success"
-                      style={{ flex:1, padding:'8px 12px', fontSize:13 }}
+                    <button className="scan-btn success" style={{ flex:1, padding:'8px 12px', fontSize:13 }}
                       disabled={updating === loadId}
-                      onClick={() => patchLoad(load, localIdx, { status:'paid' })}
-                    >
+                      onClick={() => patchLoad(load, localIdx, { status:'paid' })}>
                       {updating === loadId ? '...' : 'MARK PAID'}
                     </button>
                   )}
@@ -482,63 +448,47 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                       PAYMENT RECEIVED
                     </div>
                   )}
-                  <button
-                    style={{
-                      padding:'8px 12px', borderRadius:8, border:'1px solid var(--amber)',
-                      background: isEditing ? 'var(--amber)' : 'transparent',
-                      color: isEditing ? 'var(--navy)' : 'var(--amber)',
-                      fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                    }}
-                    onClick={() => openEdit(load, localIdx)}
-                  >
+                  <button style={{
+                    padding:'8px 12px', borderRadius:8, border:'1px solid var(--amber)',
+                    background: isEditing ? 'var(--amber)' : 'transparent',
+                    color: isEditing ? 'var(--navy)' : 'var(--amber)',
+                    fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                  }} onClick={() => openEdit(load, localIdx)}>
                     {isEditing ? 'CLOSE' : 'EDIT'}
                   </button>
-                  <button
-                    style={{
-                      padding:'8px 12px', borderRadius:8, border:'1px solid #555',
-                      background:'transparent', color:'#888', fontSize:13,
-                      fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                    }}
-                    onClick={() => setConfirmDelete(localIdx)}
-                  >
+                  <button style={{
+                    padding:'8px 12px', borderRadius:8, border:'1px solid #555',
+                    background:'transparent', color:'#888', fontSize:13,
+                    fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                  }} onClick={() => setConfirmDelete(localIdx)}>
                     DELETE
                   </button>
                 </div>
 
-                {/* CONFIRM DELETE */}
                 {confirmDelete === localIdx && (
                   <div style={{ marginTop:12, padding:12, background:'var(--navy3)', borderRadius:8, border:'1px solid #e53935' }}>
                     <div style={{ fontSize:13, color:'var(--white)', marginBottom:10, fontFamily:'var(--font-head)' }}>
                       DELETE THIS LOAD? This cannot be undone.
                     </div>
                     <div style={{ display:'flex', gap:8 }}>
-                      <button
-                        disabled={deleting}
-                        onClick={() => deleteLoad(load, localIdx)}
-                        style={{
-                          flex:1, padding:'10px 0', borderRadius:8, border:'none',
-                          background: deleting ? '#555' : '#e53935', color:'#fff',
-                          fontSize:13, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
-                        }}
-                      >
+                      <button disabled={deleting} onClick={() => deleteLoad(load, localIdx)} style={{
+                        flex:1, padding:'10px 0', borderRadius:8, border:'none',
+                        background: deleting ? '#555' : '#e53935', color:'#fff',
+                        fontSize:13, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
+                      }}>
                         {deleting ? 'DELETING...' : 'CONFIRM DELETE'}
                       </button>
-                      <button
-                        disabled={deleting}
-                        onClick={() => setConfirmDelete(null)}
-                        style={{
-                          flex:1, padding:'10px 0', borderRadius:8, border:'1px solid #555',
-                          background:'transparent', color:'#aaa', fontSize:13,
-                          fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                        }}
-                      >
+                      <button disabled={deleting} onClick={() => setConfirmDelete(null)} style={{
+                        flex:1, padding:'10px 0', borderRadius:8, border:'1px solid #555',
+                        background:'transparent', color:'#aaa', fontSize:13,
+                        fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                      }}>
                         CANCEL
                       </button>
                     </div>
                   </div>
                 )}
 
-                {/* EDIT DRAWER */}
                 {isEditing && editData && (
                   <div style={{ marginTop:16, paddingTop:16, borderTop:'1px solid var(--border)' }}>
 
@@ -548,26 +498,20 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
                     <div style={{ marginBottom:12 }}>
                       <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4, fontFamily:'var(--font-head)' }}>BASE PAY ($)</div>
-                      <input style={inputStyle} type="number" inputMode="decimal"
-                        value={editData.base_pay}
-                        onChange={e => setEditData(p => ({ ...p, base_pay: e.target.value }))}
-                        placeholder="0.00" />
+                      <input style={inputStyle} type="number" inputMode="decimal" value={editData.base_pay}
+                        onChange={e => setEditData(p => ({ ...p, base_pay: e.target.value }))} placeholder="0.00" />
                     </div>
 
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
                       <div>
                         <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4, fontFamily:'var(--font-head)' }}>DETENTION ($)</div>
-                        <input style={inputStyle} type="number" inputMode="decimal"
-                          value={editData.detention}
-                          onChange={e => setEditData(p => ({ ...p, detention: e.target.value }))}
-                          placeholder="0.00" />
+                        <input style={inputStyle} type="number" inputMode="decimal" value={editData.detention}
+                          onChange={e => setEditData(p => ({ ...p, detention: e.target.value }))} placeholder="0.00" />
                       </div>
                       <div>
                         <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4, fontFamily:'var(--font-head)' }}>PALLETS ($)</div>
-                        <input style={inputStyle} type="number" inputMode="decimal"
-                          value={editData.pallets}
-                          onChange={e => setEditData(p => ({ ...p, pallets: e.target.value }))}
-                          placeholder="0.00" />
+                        <input style={inputStyle} type="number" inputMode="decimal" value={editData.pallets}
+                          onChange={e => setEditData(p => ({ ...p, pallets: e.target.value }))} placeholder="0.00" />
                       </div>
                     </div>
 
@@ -578,8 +522,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                           <div style={{ fontSize:12, color:'var(--grey)', minWidth:70 }}>Lumper {i+1}</div>
                           <input style={{ ...inputStyle, flex:1 }} type="number" inputMode="decimal"
                             value={item.amount} onChange={e => updateItemAmount('lumpers', i, e.target.value)} placeholder="0.00" />
-                          <button onClick={() => removeEditItem('lumpers', i)}
-                            style={{ background:'transparent', border:'1px solid #555', color:'#888', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
+                          <button onClick={() => removeEditItem('lumpers', i)} style={{ background:'transparent', border:'1px solid #555', color:'#888', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
                         </div>
                       ))}
                       <button className="scan-btn secondary" style={{ width:'100%', padding:'8px', fontSize:12, marginTop:4 }}
@@ -593,8 +536,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                           <div style={{ fontSize:12, color:'var(--grey)', minWidth:70 }}>Inc. {i+1}</div>
                           <input style={{ ...inputStyle, flex:1 }} type="number" inputMode="decimal"
                             value={item.amount} onChange={e => updateItemAmount('incidentals', i, e.target.value)} placeholder="0.00" />
-                          <button onClick={() => removeEditItem('incidentals', i)}
-                            style={{ background:'transparent', border:'1px solid #555', color:'#888', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
+                          <button onClick={() => removeEditItem('incidentals', i)} style={{ background:'transparent', border:'1px solid #555', color:'#888', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
                         </div>
                       ))}
                       <button className="scan-btn secondary" style={{ width:'100%', padding:'8px', fontSize:12, marginTop:4 }}
@@ -608,8 +550,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                           <div style={{ fontSize:12, color:'#e57373', minWidth:70 }}>Comdata {i+1}</div>
                           <input style={{ ...inputStyle, flex:1, borderColor:'#e57373' }} type="number" inputMode="decimal"
                             value={item.amount} onChange={e => updateItemAmount('comdatas', i, e.target.value)} placeholder="0.00" />
-                          <button onClick={() => removeEditItem('comdatas', i)}
-                            style={{ background:'transparent', border:'1px solid #555', color:'#888', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
+                          <button onClick={() => removeEditItem('comdatas', i)} style={{ background:'transparent', border:'1px solid #555', color:'#888', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
                         </div>
                       ))}
                       <button className="scan-btn danger" style={{ width:'100%', padding:'8px', fontSize:12, marginTop:4 }}
@@ -618,17 +559,12 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
                     <div style={{ marginBottom:16 }}>
                       <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4, fontFamily:'var(--font-head)' }}>NOTES</div>
-                      <textarea value={editData.notes}
-                        onChange={e => setEditData(p => ({ ...p, notes: e.target.value }))}
-                        placeholder="Notes..."
-                        style={{ ...inputStyle, minHeight:60, resize:'vertical' }} />
+                      <textarea value={editData.notes} onChange={e => setEditData(p => ({ ...p, notes: e.target.value }))}
+                        placeholder="Notes..." style={{ ...inputStyle, minHeight:60, resize:'vertical' }} />
                     </div>
 
-                    <div style={{
-                      display:'flex', justifyContent:'space-between', alignItems:'center',
-                      background:'var(--navy3)', borderRadius:8, padding:'10px 14px',
-                      marginBottom:14, border:'1px solid var(--border)',
-                    }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
+                      background:'var(--navy3)', borderRadius:8, padding:'10px 14px', marginBottom:14, border:'1px solid var(--border)' }}>
                       <span style={{ fontFamily:'var(--font-head)', fontSize:12, color:'var(--grey)' }}>UPDATED NET TOTAL</span>
                       <span style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color: editNetPreview() >= 0 ? 'var(--amber)' : 'var(--red)' }}>
                         {fmt(editNetPreview())}
