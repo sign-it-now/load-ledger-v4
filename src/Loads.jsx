@@ -2,9 +2,10 @@
 // (c) dbappsystems.com | daddyboyapps.com
 
 import { useState } from 'react'
+import { jsPDF } from 'jspdf'
 
-const BRUCE_CUT = 0.20  // Bruce receives 20% of every base rate
-const TIM_CUT   = 0.80  // Tim receives 80% of every base rate
+const BRUCE_CUT = 0.20
+const TIM_CUT   = 0.80
 
 export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
@@ -129,6 +130,212 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     return (base_pay + lumperTotal + incTotal + detention + pallets) - comdataTotal
   }
 
+  // ── GENERATE CORRECTED INVOICE PDF ───────────────────────
+  function generateCorrectedPDF(load, data, newNetPay) {
+    const base_pay     = parseFloat(data.base_pay)  || 0
+    const detention    = parseFloat(data.detention)  || 0
+    const pallets      = parseFloat(data.pallets)    || 0
+    const lumperTotal  = data.lumpers.reduce((s,i)     => s + (parseFloat(i.amount)||0), 0)
+    const incTotal     = data.incidentals.reduce((s,i) => s + (parseFloat(i.amount)||0), 0)
+    const comdataTotal = data.comdatas.reduce((s,i)    => s + (parseFloat(i.amount)||0), 0)
+    const subtotal     = base_pay + lumperTotal + incTotal + detention + pallets
+
+    const fmtN = n => '$' + (parseFloat(n)||0).toFixed(2)
+
+    const doc = new jsPDF({ unit: 'pt', format: 'letter' })
+    const W   = 612
+    const M   = 40
+    let   y   = 0
+
+    // ── HEADER ──
+    doc.setFontSize(22)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text('Edgerton Truck & Trailer Repair', W / 2, 50, { align: 'center' })
+    doc.setDrawColor(180, 180, 180)
+    doc.setLineWidth(0.5)
+    doc.line(M, 58, W - M, 58)
+    y = 75
+
+    // ── CORRECTED INVOICE BADGE ──
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(180, 0, 0)
+    doc.text('** CORRECTED INVOICE **', W / 2, y, { align: 'center' })
+    y += 14
+
+    // ── ADDRESS BLOCK ──
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text('Bruce Edgerton', M, y)
+    doc.setFont('helvetica', 'normal')
+    doc.text('N4202 Hill Rd - Bonduel WI 54107', M, y + 12)
+    doc.text('MC#699644', M, y + 24)
+    doc.text('bruce.edgerton@yahoo.com - 715-509-0114', M, y + 36)
+
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(100, 100, 100)
+    doc.text('DATE SENT', W - M, y, { align: 'right' })
+    doc.setDrawColor(180, 180, 180)
+    doc.line(W - 160, y + 3, W - M, y + 3)
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text(new Date().toLocaleDateString('en-US'), W - M, y + 16, { align: 'right' })
+
+    y += 60
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    // ── BILL TO / LOAD # ──
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(100, 100, 100)
+    doc.text('BILL TO', M, y)
+    doc.text('LOAD #', W / 2, y)
+    y += 12
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    const brokerLines = doc.splitTextToSize(load.broker_name || '-', 220)
+    doc.text(brokerLines, M, y)
+    doc.text(load.load_number || '-', W / 2, y)
+    y += brokerLines.length * 14 + 6
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    // ── ORIGIN / DESTINATION ──
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(100, 100, 100)
+    doc.text('PICK UP LOCATION', M, y)
+    doc.text('DELIVERY LOCATION', W / 2, y)
+    y += 12
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    const originLines = doc.splitTextToSize(load.origin      || '-', 220)
+    const destLines   = doc.splitTextToSize(load.destination || '-', 220)
+    doc.text(originLines, M, y)
+    doc.text(destLines,   W / 2, y)
+    y += Math.max(originLines.length, destLines.length) * 14 + 6
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    // ── DELIVERY DATE ──
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(100, 100, 100)
+    doc.text('DELIVERY DATE', M, y)
+    y += 12
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text(load.delivery_date || '-', M, y)
+    y += 20
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 18
+
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'italic')
+    doc.setTextColor(80, 80, 80)
+    doc.text('Please remit payment amount for transport services', M, y)
+    y += 20
+
+    // ── LINE ITEMS ──
+    function lineItem(label, amount, bold, red) {
+      doc.setFontSize(10)
+      doc.setFont('helvetica', bold ? 'bold' : 'normal')
+      doc.setTextColor(red ? 180 : 0, 0, 0)
+      doc.text(label, M, y)
+      doc.text(amount, W - M, y, { align: 'right' })
+      y += 18
+    }
+
+    lineItem('Trucking Rate', fmtN(base_pay), false, false)
+    data.lumpers.forEach((l,i)     => lineItem('Lumper Receipt ' + (i+1), fmtN(parseFloat(l.amount)), false, false))
+    data.incidentals.forEach((l,i) => lineItem('Incidental ' + (i+1),     fmtN(parseFloat(l.amount)), false, false))
+    if (detention > 0) lineItem('Detention', fmtN(detention), false, false)
+    if (pallets   > 0) lineItem('Pallets',   fmtN(pallets),   false, false)
+
+    // ── SUBTOTAL ──
+    y += 4
+    doc.setDrawColor(0, 0, 0)
+    doc.setLineWidth(1)
+    doc.line(M, y, W - M, y)
+    y += 14
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text('SUBTOTAL', M, y)
+    doc.text(fmtN(subtotal), W - M, y, { align: 'right' })
+    y += 20
+    doc.setLineWidth(0.5)
+    doc.setDrawColor(180, 180, 180)
+    doc.line(M, y, W - M, y)
+    y += 14
+
+    // ── COMDATAS ──
+    data.comdatas.forEach((c,i) => {
+      lineItem('Comdata / Express Code ' + (i+1), '-' + fmtN(parseFloat(c.amount)), false, true)
+    })
+
+    // ── NET TOTAL BAR ──
+    y += 8
+    doc.setFillColor(30, 30, 30)
+    doc.rect(M, y, W - M * 2, 28, 'F')
+    doc.setFontSize(13)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(255, 255, 255)
+    doc.text('NET BILLABLE TOTAL', M + 10, y + 19)
+    doc.text(fmtN(newNetPay), W - M - 10, y + 19, { align: 'right' })
+    y += 48
+
+    // ── NOTES ──
+    if (data.notes) {
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'italic')
+      doc.setTextColor(80, 80, 80)
+      const noteLines = doc.splitTextToSize(data.notes, W - M * 2)
+      doc.text(noteLines, M, y)
+      y += noteLines.length * 12 + 10
+    }
+
+    // ── CORRECTED NOTICE ──
+    y += 10
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'italic')
+    doc.setTextColor(150, 0, 0)
+    doc.text('This is a corrected invoice superseding the original. Please discard any previous version.', M, y)
+    y += 20
+
+    // ── SIGNATURE ──
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(80, 80, 80)
+    doc.text('Thank You', W - M, y, { align: 'right' })
+    y += 20
+    doc.setFontSize(14)
+    doc.setFont('helvetica', 'bolditalic')
+    doc.setTextColor(0, 0, 0)
+    doc.text('Bruce Edgerton', W - M, y, { align: 'right' })
+
+    // ── FOOTER ──
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(160, 160, 160)
+    doc.text('dbappsystems.com | daddyboyapps.com', W / 2, 760, { align: 'center' })
+
+    doc.save('Edgerton-CORRECTED-Invoice-' + (load.load_number || 'draft') + '.pdf')
+  }
+
+  // ── SAVE EDIT + GENERATE CORRECTED PDF ──────────────────
   async function saveEdit(load, localIdx) {
     const newNetPay = editNetPreview()
     const fields = {
@@ -144,7 +351,8 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       edited_date: new Date().toISOString(),
     }
     await patchLoad(load, localIdx, fields)
-    showToast('✅ Invoice updated! Net: ' + fmt(newNetPay))
+    generateCorrectedPDF(load, editData, newNetPay)
+    showToast('✅ Corrected invoice downloaded!')
     closeEdit()
   }
 
@@ -571,9 +779,15 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                       </span>
                     </div>
 
+                    <div style={{ fontSize:11, color:'var(--grey)', textAlign:'center', marginBottom:10 }}>
+                      Saving will update the app and download a corrected invoice PDF.
+                    </div>
+
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
                       <button className="scan-btn secondary" style={{ padding:'10px', fontSize:13 }} onClick={closeEdit}>CANCEL</button>
-                      <button className="scan-btn success" style={{ padding:'10px', fontSize:13 }} onClick={() => saveEdit(load, localIdx)}>SAVE CHANGES</button>
+                      <button className="scan-btn success" style={{ padding:'10px', fontSize:13 }} onClick={() => saveEdit(load, localIdx)}>
+                        SAVE + DOWNLOAD
+                      </button>
                     </div>
 
                   </div>
