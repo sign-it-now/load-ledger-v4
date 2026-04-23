@@ -29,12 +29,13 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
           body:    JSON.stringify(fields),
         })
         if (!res.ok) {
-          const data = await res.json().catch(() => ({}))
-          showToast('⚠️ Update failed: ' + (data.error || 'unknown'))
+          let errMsg = 'unknown'
+          try { const d = await res.json(); errMsg = d.error || errMsg } catch {}
+          showToast('⚠️ Update failed: ' + errMsg)
           setUpdating(null)
           return
         }
-        await fetchLoads()
+        try { await fetchLoads() } catch {}
         if (fields.status === 'paid')   showToast('✅ Marked as paid!')
         if (fields.status === 'billed') showToast('✅ Marked as billed!')
         if (fields.fuel !== undefined)  showToast('✅ Fuel saved!')
@@ -58,12 +59,19 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       if (load.id) {
         const res = await fetch(api + '/api/loads/' + load.id, { method: 'DELETE' })
         if (!res.ok) {
-          const data = await res.json().catch(() => ({}))
-          showToast('⚠️ Delete failed: ' + (data.error || 'unknown'))
+          // safely try to parse error message — Worker may return empty body
+          let errMsg = 'Server error ' + res.status
+          try { const d = await res.json(); errMsg = d.error || errMsg } catch {}
+          showToast('⚠️ Delete failed: ' + errMsg)
           setDeleting(false)
           return
         }
-        await fetchLoads()
+        // DELETE succeeded — refresh list
+        // Wrap in try/catch so an empty/malformed Worker response never blocks the UI update
+        try { await fetchLoads() } catch {
+          // fetchLoads failed but delete succeeded — remove from local state as fallback
+          setLoads(prev => prev.filter((_,i) => i !== localIdx))
+        }
       } else {
         setLoads(prev => prev.filter((_,i) => i !== localIdx))
       }
@@ -135,202 +143,106 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     const base_pay     = parseFloat(data.base_pay)  || 0
     const detention    = parseFloat(data.detention)  || 0
     const pallets      = parseFloat(data.pallets)    || 0
-    const lumperTotal  = data.lumpers.reduce((s,i)     => s + (parseFloat(i.amount)||0), 0)
-    const incTotal     = data.incidentals.reduce((s,i) => s + (parseFloat(i.amount)||0), 0)
-    const comdataTotal = data.comdatas.reduce((s,i)    => s + (parseFloat(i.amount)||0), 0)
-    const subtotal     = base_pay + lumperTotal + incTotal + detention + pallets
+    const subtotal     = base_pay
+      + data.lumpers.reduce((s,i)     => s + (parseFloat(i.amount)||0), 0)
+      + data.incidentals.reduce((s,i) => s + (parseFloat(i.amount)||0), 0)
+      + detention + pallets
 
     const fmtN = n => '$' + (parseFloat(n)||0).toFixed(2)
 
     const doc = new jsPDF({ unit: 'pt', format: 'letter' })
-    const W   = 612
-    const M   = 40
-    let   y   = 0
+    const W = 612, M = 40
+    let y = 0
 
-    // ── HEADER ──
-    doc.setFontSize(22)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(0, 0, 0)
-    doc.text('Edgerton Truck & Trailer Repair', W / 2, 50, { align: 'center' })
-    doc.setDrawColor(180, 180, 180)
-    doc.setLineWidth(0.5)
-    doc.line(M, 58, W - M, 58)
+    doc.setFontSize(22); doc.setFont('helvetica','bold'); doc.setTextColor(0,0,0)
+    doc.text('Edgerton Truck & Trailer Repair', W/2, 50, { align:'center' })
+    doc.setDrawColor(180,180,180); doc.setLineWidth(0.5); doc.line(M,58,W-M,58)
     y = 75
 
-    // ── CORRECTED INVOICE BADGE ──
-    doc.setFontSize(9)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(180, 0, 0)
-    doc.text('** CORRECTED INVOICE **', W / 2, y, { align: 'center' })
+    doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(180,0,0)
+    doc.text('** CORRECTED INVOICE **', W/2, y, { align:'center' })
     y += 14
 
-    // ── ADDRESS BLOCK ──
-    doc.setFontSize(9)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(0, 0, 0)
+    doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(0,0,0)
     doc.text('Bruce Edgerton', M, y)
-    doc.setFont('helvetica', 'normal')
-    doc.text('N4202 Hill Rd - Bonduel WI 54107', M, y + 12)
-    doc.text('MC#699644', M, y + 24)
-    doc.text('bruce.edgerton@yahoo.com - 715-509-0114', M, y + 36)
-
-    doc.setFontSize(8)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(100, 100, 100)
-    doc.text('DATE SENT', W - M, y, { align: 'right' })
-    doc.setDrawColor(180, 180, 180)
-    doc.line(W - 160, y + 3, W - M, y + 3)
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(0, 0, 0)
-    doc.text(new Date().toLocaleDateString('en-US'), W - M, y + 16, { align: 'right' })
-
+    doc.setFont('helvetica','normal')
+    doc.text('N4202 Hill Rd - Bonduel WI 54107', M, y+12)
+    doc.text('MC#699644', M, y+24)
+    doc.text('bruce.edgerton@yahoo.com - 715-509-0114', M, y+36)
+    doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100)
+    doc.text('DATE SENT', W-M, y, { align:'right' })
+    doc.line(W-160, y+3, W-M, y+3)
+    doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(0,0,0)
+    doc.text(new Date().toLocaleDateString('en-US'), W-M, y+16, { align:'right' })
     y += 60
-    doc.setDrawColor(180, 180, 180)
-    doc.line(M, y, W - M, y)
-    y += 14
 
-    // ── BILL TO / LOAD # ──
-    doc.setFontSize(8)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(100, 100, 100)
-    doc.text('BILL TO', M, y)
-    doc.text('LOAD #', W / 2, y)
-    y += 12
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(0, 0, 0)
+    doc.setDrawColor(180,180,180); doc.line(M,y,W-M,y); y += 14
+    doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100)
+    doc.text('BILL TO', M, y); doc.text('LOAD #', W/2, y); y += 12
+    doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(0,0,0)
     const brokerLines = doc.splitTextToSize(load.broker_name || '-', 220)
-    doc.text(brokerLines, M, y)
-    doc.text(load.load_number || '-', W / 2, y)
+    doc.text(brokerLines, M, y); doc.text(load.load_number || '-', W/2, y)
     y += brokerLines.length * 14 + 6
-    doc.setDrawColor(180, 180, 180)
-    doc.line(M, y, W - M, y)
-    y += 14
 
-    // ── ORIGIN / DESTINATION ──
-    doc.setFontSize(8)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(100, 100, 100)
-    doc.text('PICK UP LOCATION', M, y)
-    doc.text('DELIVERY LOCATION', W / 2, y)
-    y += 12
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(0, 0, 0)
-    const originLines = doc.splitTextToSize(load.origin      || '-', 220)
-    const destLines   = doc.splitTextToSize(load.destination || '-', 220)
-    doc.text(originLines, M, y)
-    doc.text(destLines,   W / 2, y)
-    y += Math.max(originLines.length, destLines.length) * 14 + 6
-    doc.setDrawColor(180, 180, 180)
-    doc.line(M, y, W - M, y)
-    y += 14
+    doc.setDrawColor(180,180,180); doc.line(M,y,W-M,y); y += 14
+    doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100)
+    doc.text('PICK UP LOCATION', M, y); doc.text('DELIVERY LOCATION', W/2, y); y += 12
+    doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(0,0,0)
+    const oLines = doc.splitTextToSize(load.origin || '-', 220)
+    const dLines = doc.splitTextToSize(load.destination || '-', 220)
+    doc.text(oLines, M, y); doc.text(dLines, W/2, y)
+    y += Math.max(oLines.length, dLines.length) * 14 + 6
 
-    // ── DELIVERY DATE ──
-    doc.setFontSize(8)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(100, 100, 100)
-    doc.text('DELIVERY DATE', M, y)
-    y += 12
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(0, 0, 0)
-    doc.text(load.delivery_date || '-', M, y)
-    y += 20
-    doc.setDrawColor(180, 180, 180)
-    doc.line(M, y, W - M, y)
-    y += 18
+    doc.setDrawColor(180,180,180); doc.line(M,y,W-M,y); y += 14
+    doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100)
+    doc.text('DELIVERY DATE', M, y); y += 12
+    doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(0,0,0)
+    doc.text(load.delivery_date || '-', M, y); y += 20
+    doc.setDrawColor(180,180,180); doc.line(M,y,W-M,y); y += 18
 
-    doc.setFontSize(9)
-    doc.setFont('helvetica', 'italic')
-    doc.setTextColor(80, 80, 80)
-    doc.text('Please remit payment amount for transport services', M, y)
-    y += 20
+    doc.setFontSize(9); doc.setFont('helvetica','italic'); doc.setTextColor(80,80,80)
+    doc.text('Please remit payment amount for transport services', M, y); y += 20
 
-    // ── LINE ITEMS ──
     function lineItem(label, amount, bold, red) {
-      doc.setFontSize(10)
-      doc.setFont('helvetica', bold ? 'bold' : 'normal')
+      doc.setFontSize(10); doc.setFont('helvetica', bold ? 'bold' : 'normal')
       doc.setTextColor(red ? 180 : 0, 0, 0)
-      doc.text(label, M, y)
-      doc.text(amount, W - M, y, { align: 'right' })
-      y += 18
+      doc.text(label, M, y); doc.text(amount, W-M, y, { align:'right' }); y += 18
     }
 
     lineItem('Trucking Rate', fmtN(base_pay), false, false)
-    data.lumpers.forEach((l,i)     => lineItem('Lumper Receipt ' + (i+1), fmtN(parseFloat(l.amount)), false, false))
-    data.incidentals.forEach((l,i) => lineItem('Incidental ' + (i+1),     fmtN(parseFloat(l.amount)), false, false))
+    data.lumpers.forEach((l,i)     => lineItem('Lumper Receipt '+(i+1), fmtN(parseFloat(l.amount)), false, false))
+    data.incidentals.forEach((l,i) => lineItem('Incidental '+(i+1),     fmtN(parseFloat(l.amount)), false, false))
     if (detention > 0) lineItem('Detention', fmtN(detention), false, false)
     if (pallets   > 0) lineItem('Pallets',   fmtN(pallets),   false, false)
 
-    // ── SUBTOTAL ──
-    y += 4
-    doc.setDrawColor(0, 0, 0)
-    doc.setLineWidth(1)
-    doc.line(M, y, W - M, y)
-    y += 14
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(0, 0, 0)
-    doc.text('SUBTOTAL', M, y)
-    doc.text(fmtN(subtotal), W - M, y, { align: 'right' })
-    y += 20
-    doc.setLineWidth(0.5)
-    doc.setDrawColor(180, 180, 180)
-    doc.line(M, y, W - M, y)
-    y += 14
+    y += 4; doc.setDrawColor(0,0,0); doc.setLineWidth(1); doc.line(M,y,W-M,y); y += 14
+    doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(0,0,0)
+    doc.text('SUBTOTAL', M, y); doc.text(fmtN(subtotal), W-M, y, { align:'right' }); y += 20
+    doc.setLineWidth(0.5); doc.setDrawColor(180,180,180); doc.line(M,y,W-M,y); y += 14
 
-    // ── COMDATAS ──
-    data.comdatas.forEach((c,i) => {
-      lineItem('Comdata / Express Code ' + (i+1), '-' + fmtN(parseFloat(c.amount)), false, true)
-    })
+    data.comdatas.forEach((c,i) => lineItem('Comdata / Express Code '+(i+1), '-'+fmtN(parseFloat(c.amount)), false, true))
 
-    // ── NET TOTAL BAR ──
-    y += 8
-    doc.setFillColor(30, 30, 30)
-    doc.rect(M, y, W - M * 2, 28, 'F')
-    doc.setFontSize(13)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(255, 255, 255)
-    doc.text('NET BILLABLE TOTAL', M + 10, y + 19)
-    doc.text(fmtN(newNetPay), W - M - 10, y + 19, { align: 'right' })
-    y += 48
+    y += 8; doc.setFillColor(30,30,30); doc.rect(M,y,W-M*2,28,'F')
+    doc.setFontSize(13); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255)
+    doc.text('NET BILLABLE TOTAL', M+10, y+19)
+    doc.text(fmtN(newNetPay), W-M-10, y+19, { align:'right' }); y += 48
 
-    // ── NOTES ──
     if (data.notes) {
-      doc.setFontSize(9)
-      doc.setFont('helvetica', 'italic')
-      doc.setTextColor(80, 80, 80)
-      const noteLines = doc.splitTextToSize(data.notes, W - M * 2)
-      doc.text(noteLines, M, y)
-      y += noteLines.length * 12 + 10
+      doc.setFontSize(9); doc.setFont('helvetica','italic'); doc.setTextColor(80,80,80)
+      const nl = doc.splitTextToSize(data.notes, W-M*2)
+      doc.text(nl, M, y); y += nl.length * 12 + 10
     }
 
-    // ── CORRECTED NOTICE ──
-    y += 10
-    doc.setFontSize(8)
-    doc.setFont('helvetica', 'italic')
-    doc.setTextColor(150, 0, 0)
-    doc.text('This is a corrected invoice superseding the original. Please discard any previous version.', M, y)
-    y += 20
+    y += 10; doc.setFontSize(8); doc.setFont('helvetica','italic'); doc.setTextColor(150,0,0)
+    doc.text('This is a corrected invoice superseding the original. Please discard any previous version.', M, y); y += 20
 
-    // ── SIGNATURE ──
-    doc.setFontSize(9)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(80, 80, 80)
-    doc.text('Thank You', W - M, y, { align: 'right' })
-    y += 20
-    doc.setFontSize(14)
-    doc.setFont('helvetica', 'bolditalic')
-    doc.setTextColor(0, 0, 0)
-    doc.text('Bruce Edgerton', W - M, y, { align: 'right' })
+    doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(80,80,80)
+    doc.text('Thank You', W-M, y, { align:'right' }); y += 20
+    doc.setFontSize(14); doc.setFont('helvetica','bolditalic'); doc.setTextColor(0,0,0)
+    doc.text('Bruce Edgerton', W-M, y, { align:'right' })
 
-    // ── FOOTER ──
-    doc.setFontSize(7)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(160, 160, 160)
-    doc.text('dbappsystems.com | daddyboyapps.com', W / 2, 760, { align: 'center' })
+    doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(160,160,160)
+    doc.text('dbappsystems.com | daddyboyapps.com', W/2, 760, { align:'center' })
 
     doc.save('Edgerton-CORRECTED-Invoice-' + (load.load_number || 'draft') + '.pdf')
   }
@@ -369,24 +281,21 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
   function calcPay(load) {
     const base = parseFloat(load.base_pay) || 0
-    if (load.driver === 'BRUCE') {
-      return { gross: base, ownerCut: base * BRUCE_CUT, driverNet: base }
-    }
-    return { gross: base, ownerCut: base * BRUCE_CUT, driverNet: base * TIM_CUT }
+    if (load.driver === 'BRUCE') return { gross:base, ownerCut:base*BRUCE_CUT, driverNet:base }
+    return { gross:base, ownerCut:base*BRUCE_CUT, driverNet:base*TIM_CUT }
   }
 
   function advanceKept(load) {
-    const comdataTotal = (load.comdatas    || []).reduce((s,i) => s + (parseFloat(i.amount)||0), 0)
-    const lumperTotal  = (load.lumpers     || []).reduce((s,i) => s + (parseFloat(i.amount)||0), 0)
-    const incTotal     = (load.incidentals || []).reduce((s,i) => s + (parseFloat(i.amount)||0), 0)
-    return Math.max(0, comdataTotal - lumperTotal - incTotal)
+    const c = (load.comdatas    || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
+    const l = (load.lumpers     || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
+    const n = (load.incidentals || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
+    return Math.max(0, c - l - n)
   }
 
   function inPeriod(load, p) {
     const dateStr = loadDate(load)
     if (!dateStr) return false
-    const d   = new Date(dateStr)
-    const now = new Date()
+    const d = new Date(dateStr), now = new Date()
     if (p === 'daily')   return d.toDateString() === now.toDateString()
     if (p === 'weekly')  { const s = new Date(now); s.setDate(now.getDate()-6); s.setHours(0,0,0,0); return d >= s }
     if (p === 'monthly') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
@@ -404,20 +313,20 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
     const paid    = inRange.filter(l => l.status === 'paid')
     return {
       count:       inRange.length,
-      billed:      billed.reduce((s,l)  => s + (parseFloat(l.netPay || l.net_pay)||0), 0),
-      paid:        paid.reduce((s,l)    => s + (parseFloat(l.netPay || l.net_pay)||0), 0),
-      total:       inRange.reduce((s,l) => s + (parseFloat(l.netPay || l.net_pay)||0), 0),
-      grossPay:    inRange.reduce((s,l) => s + calcPay(l).driverNet, 0),
-      ownerCut:    inRange.reduce((s,l) => s + calcPay(l).ownerCut, 0),
-      fuel:        inRange.reduce((s,l) => s + (parseFloat(l.fuel)||0), 0),
-      advanceKept: inRange.reduce((s,l) => s + advanceKept(l), 0),
+      billed:      billed.reduce((s,l)  => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      paid:        paid.reduce((s,l)    => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      total:       inRange.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      grossPay:    inRange.reduce((s,l) => s+calcPay(l).driverNet, 0),
+      ownerCut:    inRange.reduce((s,l) => s+calcPay(l).ownerCut, 0),
+      fuel:        inRange.reduce((s,l) => s+(parseFloat(l.fuel)||0), 0),
+      advanceKept: inRange.reduce((s,l) => s+advanceKept(l), 0),
     }
   }
 
-  const bruceTotalAllTime = bruceLoads.reduce((s,l) => s + (parseFloat(l.netPay || l.net_pay)||0), 0)
-  const timTotalAllTime   = timLoads.reduce((s,l)   => s + (parseFloat(l.netPay || l.net_pay)||0), 0)
+  const bruceTotalAllTime = bruceLoads.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
+  const timTotalAllTime   = timLoads.reduce((s,l)   => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
   const grandTotal        = bruceTotalAllTime + timTotalAllTime
-  const brucePercent      = grandTotal > 0 ? Math.round((bruceTotalAllTime / grandTotal) * 100) : 50
+  const brucePercent      = grandTotal > 0 ? Math.round((bruceTotalAllTime/grandTotal)*100) : 50
   const timPercent        = 100 - brucePercent
   const leader            = bruceTotalAllTime > timTotalAllTime ? 'BRUCE' :
                             timTotalAllTime > bruceTotalAllTime ? 'TIM'   : 'TIE'
@@ -426,13 +335,12 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                         view === 'BRUCE' ? bruceLoads :
                         view === 'TIM'   ? timLoads   : []
 
-  const totalNet    = filteredLoads.reduce((s,l) => s + (parseFloat(l.netPay || l.net_pay)||0), 0)
-  const totalPaid   = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s + (parseFloat(l.netPay || l.net_pay)||0), 0)
+  const totalNet    = filteredLoads.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
+  const totalPaid   = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
   const totalUnpaid = totalNet - totalPaid
 
-  const bruceStats  = driverStats(bruceLoads, period)
-  const timStats    = driverStats(timLoads,   period)
-
+  const bruceStats = driverStats(bruceLoads, period)
+  const timStats   = driverStats(timLoads,   period)
   const periodLabel = { daily:'TODAY', weekly:'THIS WEEK', monthly:'THIS MONTH', yearly:'THIS YEAR' }
 
   const inputStyle = {
@@ -471,11 +379,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       <div className="card" style={{ marginBottom:14 }}>
         <div className="section-title" style={{ marginBottom:10 }}>
           LEADERBOARD - ALL TIME
-          {leader !== 'TIE' && (
-            <span style={{ marginLeft:8, fontSize:12, color:'var(--amber)' }}>
-              {leader} IS WINNING!
-            </span>
-          )}
+          {leader !== 'TIE' && <span style={{ marginLeft:8, fontSize:12, color:'var(--amber)' }}>{leader} IS WINNING!</span>}
         </div>
         <div style={{ display:'flex', height:18, borderRadius:9, overflow:'hidden', marginBottom:10 }}>
           <div style={{ width:brucePercent+'%', background:'#1e88e5', transition:'width 0.4s' }} />
@@ -520,7 +424,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             <div className="amount-row"><span className="label">Loads</span><span className="value">{bruceStats.count}</span></div>
             <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed)}</span></div>
             <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid)}</span></div>
-            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(bruceStats.billed - bruceStats.paid)}</span></div>
+            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(bruceStats.billed-bruceStats.paid)}</span></div>
             <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
               <div className="amount-row"><span className="label">Owner Cut (20%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.ownerCut)}</span></div>
             </div>
@@ -531,7 +435,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             <div className="amount-row"><span className="label">Loads</span><span className="value">{timStats.count}</span></div>
             <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.billed)}</span></div>
             <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.paid)}</span></div>
-            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.billed - timStats.paid)}</span></div>
+            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.billed-timStats.paid)}</span></div>
             <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
               <div className="amount-row"><span className="label">Gross Pay (80%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay)}</span></div>
               <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.advanceKept)}</span></div>
@@ -541,10 +445,10 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
           <div className="card" style={{ borderLeft:'3px solid var(--amber)' }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>COMBINED {periodLabel[period]}</div>
-            <div className="amount-row"><span className="label">Total Loads</span><span className="value">{bruceStats.count + timStats.count}</span></div>
-            <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed + timStats.billed)}</span></div>
-            <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid + timStats.paid)}</span></div>
-            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt((bruceStats.billed + timStats.billed) - (bruceStats.paid + timStats.paid))}</span></div>
+            <div className="amount-row"><span className="label">Total Loads</span><span className="value">{bruceStats.count+timStats.count}</span></div>
+            <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed+timStats.billed)}</span></div>
+            <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid+timStats.paid)}</span></div>
+            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt((bruceStats.billed+timStats.billed)-(bruceStats.paid+timStats.paid))}</span></div>
           </div>
         </div>
       )}
@@ -568,8 +472,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
           {filteredLoads.length === 0 && (
             <div className="empty-state">
-              <div className="icon">📋</div>
-              <h3>NO LOADS</h3>
+              <div className="icon">📋</div><h3>NO LOADS</h3>
               <p>No loads found for this driver yet</p>
             </div>
           )}
@@ -584,11 +487,10 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             const invHref   = invoiceHref(load)
 
             return (
-              <div className="load-card" key={idx} style={{ flexDirection:'column', alignItems:'stretch' }}>
+              <div className="load-card" key={load.id || idx} style={{ flexDirection:'column', alignItems:'stretch' }}>
 
                 <div style={{ display:'flex', alignItems:'flex-start' }}>
                   <div className="load-card-info" style={{ flex:1 }}>
-
                     <div style={{
                       display:'inline-block', padding:'2px 8px', borderRadius:10,
                       fontSize:10, fontFamily:'var(--font-head)', fontWeight:700, marginBottom:6,
@@ -596,7 +498,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     }}>
                       {load.driver || '-'}
                     </div>
-
                     <h4>{load.broker_name || 'Unknown Broker'}</h4>
                     <p>Load # {load.load_number || '-'}</p>
                     <p>{load.origin || '-'} to {load.destination || '-'}</p>
@@ -608,18 +509,16 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                         </span>
                       )}
                     </p>
-
                     <div style={{ marginTop:8, fontFamily:'var(--font-head)', fontSize:22, fontWeight:900, color:'var(--amber)' }}>
                       {fmt(netPay)}
                     </div>
-
                   </div>
 
                   <div style={{ marginLeft:12, display:'flex', flexDirection:'column', alignItems:'flex-end' }}>
                     <span className={'status-chip ' + load.status}>{load.status}</span>
                     {bolCount > 0 && (
                       <div style={{ fontSize:10, color:'var(--grey)', marginTop:6 }}>
-                        {bolCount} BOL{bolCount !== 1 ? 's' : ''}
+                        {bolCount} BOL{bolCount!==1?'s':''}
                       </div>
                     )}
                   </div>
@@ -772,7 +671,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     </div>
 
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
-                      background:'var(--navy3)', borderRadius:8, padding:'10px 14px', marginBottom:14, border:'1px solid var(--border)' }}>
+                      background:'var(--navy3)', borderRadius:8, padding:'10px 14px', marginBottom:10, border:'1px solid var(--border)' }}>
                       <span style={{ fontFamily:'var(--font-head)', fontSize:12, color:'var(--grey)' }}>UPDATED NET TOTAL</span>
                       <span style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color: editNetPreview() >= 0 ? 'var(--amber)' : 'var(--red)' }}>
                         {fmt(editNetPreview())}
