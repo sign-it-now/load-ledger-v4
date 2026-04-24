@@ -7,7 +7,7 @@ import { jsPDF } from 'jspdf'
 const BRUCE_CUT = 0.20
 const TIM_CUT   = 0.80
 
-export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
+export default function Loads({ loads, setLoads, driver, api, showToast, fetchLoads }) {
 
   const [view,          setView]          = useState('all')
   const [period,        setPeriod]        = useState('monthly')
@@ -262,7 +262,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   }
 
   // ── HELPERS ──────────────────────────────────────────────
-  function fmt(n)    { return '$' + (parseFloat(n)||0).toFixed(2) }
+  function fmt(n)         { return '$' + (parseFloat(n)||0).toFixed(2) }
   function loadDate(load) { return load.created_at || load.date || null }
 
   function invoiceHref(load) {
@@ -334,6 +334,23 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const bruceStats  = driverStats(bruceLoads, period)
   const timStats    = driverStats(timLoads,   period)
   const periodLabel = { daily:'TODAY', weekly:'THIS WEEK', monthly:'THIS MONTH', yearly:'THIS YEAR' }
+
+  // ── WHO IS ME vs THEM in reports ─────────────────────────
+  // driver prop tells us who is logged in
+  // TIM sees TIM first, BRUCE sees BRUCE first
+  // bookkeeper (driver=null) sees both full cards
+  const loggedInDriver = driver ? driver.toUpperCase() : null
+  const myIsBruce      = loggedInDriver === 'BRUCE'
+  const myIsTim        = loggedInDriver === 'TIM'
+
+  const myStats      = myIsBruce ? bruceStats    : timStats
+  const theirStats   = myIsBruce ? timStats       : bruceStats
+  const myAllTime    = myIsBruce ? bruceTotalAllTime : timTotalAllTime
+  const theirAllTime = myIsBruce ? timTotalAllTime   : bruceTotalAllTime
+  const myColor      = myIsBruce ? '#1e88e5' : '#e53935'
+  const theirColor   = myIsBruce ? '#e53935' : '#1e88e5'
+  const myName       = myIsBruce ? 'BRUCE' : 'TIM'
+  const theirName    = myIsBruce ? 'TIM'   : 'BRUCE'
 
   const editInputStyle = {
     width:'100%', background:'var(--navy3)', border:'1px solid var(--border)',
@@ -414,30 +431,69 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
             {periodLabel[period]} - PER DRIVER REPORT
           </div>
 
-          <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
-            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>BRUCE {leader==='BRUCE'?'👑':''}</div>
-            <div className="amount-row"><span className="label">Loads</span><span className="value">{bruceStats.count}</span></div>
-            <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed)}</span></div>
-            <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid)}</span></div>
-            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(bruceStats.billed-bruceStats.paid)}</span></div>
-            <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
-              <div className="amount-row"><span className="label">Owner Cut (20%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.ownerCut)}</span></div>
+          {/* MY FULL CARD — logged-in driver first */}
+          {loggedInDriver && (
+            <div className="card" style={{ borderLeft:'3px solid '+myColor, marginBottom:10 }}>
+              <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:myColor, marginBottom:10 }}>
+                {myName} {leader===myName?'👑':''} <span style={{ fontSize:11, fontWeight:400, color:'var(--grey)' }}>— MY REPORT</span>
+              </div>
+              <div className="amount-row"><span className="label">Loads</span><span className="value">{myStats.count}</span></div>
+              <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(myStats.billed)}</span></div>
+              <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(myStats.paid)}</span></div>
+              <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(myStats.billed-myStats.paid)}</span></div>
+              <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
+                {myIsBruce && (
+                  <div className="amount-row"><span className="label">Owner Cut (20%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(myStats.ownerCut)}</span></div>
+                )}
+                {myIsTim && (<>
+                  <div className="amount-row"><span className="label">Gross Pay (80%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(myStats.grossPay)}</span></div>
+                  <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(myStats.advanceKept)}</span></div>
+                  <div className="amount-row"><span className="label">Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(myStats.fuel)}</span></div>
+                </>)}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
-            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>TIM {leader==='TIM'?'👑':''}</div>
-            <div className="amount-row"><span className="label">Loads</span><span className="value">{timStats.count}</span></div>
-            <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.billed)}</span></div>
-            <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.paid)}</span></div>
-            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.billed-timStats.paid)}</span></div>
-            <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
-              <div className="amount-row"><span className="label">Gross Pay (80%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay)}</span></div>
-              <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.advanceKept)}</span></div>
-              <div className="amount-row"><span className="label">Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.fuel)}</span></div>
+          {/* THEIR CONDENSED CARD — competition reference only */}
+          {loggedInDriver && (
+            <div className="card" style={{ borderLeft:'3px solid '+theirColor, marginBottom:10, opacity:0.85 }}>
+              <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:theirColor, marginBottom:10 }}>
+                {theirName} {leader===theirName?'👑':''}
+                <span style={{ fontSize:11, fontWeight:400, color:'var(--grey)', marginLeft:6 }}>— COMPETITION</span>
+              </div>
+              <div className="amount-row"><span className="label">Loads</span><span className="value">{theirStats.count}</span></div>
+              <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(theirStats.billed)}</span></div>
+              <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(theirStats.paid)}</span></div>
             </div>
-          </div>
+          )}
 
+          {/* BOOKKEEPER SEES BOTH FULL CARDS */}
+          {!loggedInDriver && (<>
+            <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
+              <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>BRUCE {leader==='BRUCE'?'👑':''}</div>
+              <div className="amount-row"><span className="label">Loads</span><span className="value">{bruceStats.count}</span></div>
+              <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed)}</span></div>
+              <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid)}</span></div>
+              <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(bruceStats.billed-bruceStats.paid)}</span></div>
+              <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
+                <div className="amount-row"><span className="label">Owner Cut (20%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.ownerCut)}</span></div>
+              </div>
+            </div>
+            <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
+              <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>TIM {leader==='TIM'?'👑':''}</div>
+              <div className="amount-row"><span className="label">Loads</span><span className="value">{timStats.count}</span></div>
+              <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.billed)}</span></div>
+              <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.paid)}</span></div>
+              <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.billed-timStats.paid)}</span></div>
+              <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
+                <div className="amount-row"><span className="label">Gross Pay (80%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay)}</span></div>
+                <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.advanceKept)}</span></div>
+                <div className="amount-row"><span className="label">Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.fuel)}</span></div>
+              </div>
+            </div>
+          </>)}
+
+          {/* COMBINED */}
           <div className="card" style={{ borderLeft:'3px solid var(--amber)' }}>
             <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>COMBINED {periodLabel[period]}</div>
             <div className="amount-row"><span className="label">Total Loads</span><span className="value">{bruceStats.count+timStats.count}</span></div>
@@ -475,23 +531,23 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
           )}
 
           {filteredLoads.map((load, idx) => {
-            const localIdx   = loads.indexOf(load)
-            const isEditing  = editIdx === localIdx
-            const loadId     = load.id || localIdx
-            const netPay     = parseFloat(load.netPay || load.net_pay) || 0
-            const basePay    = parseFloat(load.base_pay)    || 0
-            const detention  = parseFloat(load.detention)   || 0
-            const pallets    = parseFloat(load.pallets)     || 0
-            const lumpers    = load.lumpers     || []
-            const incidentals= load.incidentals || []
-            const comdatas   = load.comdatas    || []
-            const lumperTot  = lumpers.reduce((s,i)      => s+(parseFloat(i.amount)||0), 0)
-            const incTot     = incidentals.reduce((s,i)  => s+(parseFloat(i.amount)||0), 0)
-            const comdataTot = comdatas.reduce((s,i)     => s+(parseFloat(i.amount)||0), 0)
-            const subtotal   = basePay + lumperTot + incTot + detention + pallets
-            const bolCount   = load.bol_count || (load.bols && load.bols.length) || 0
-            const dateStr    = loadDate(load)
-            const invHref    = invoiceHref(load)
+            const localIdx    = loads.indexOf(load)
+            const isEditing   = editIdx === localIdx
+            const loadId      = load.id || localIdx
+            const netPay      = parseFloat(load.netPay || load.net_pay) || 0
+            const basePay     = parseFloat(load.base_pay)   || 0
+            const detention   = parseFloat(load.detention)  || 0
+            const pallets     = parseFloat(load.pallets)    || 0
+            const lumpers     = load.lumpers      || []
+            const incidentals = load.incidentals  || []
+            const comdatas    = load.comdatas     || []
+            const lumperTot   = lumpers.reduce((s,i)     => s+(parseFloat(i.amount)||0), 0)
+            const incTot      = incidentals.reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
+            const comdataTot  = comdatas.reduce((s,i)   => s+(parseFloat(i.amount)||0), 0)
+            const subtotal    = basePay + lumperTot + incTot + detention + pallets
+            const bolCount    = load.bol_count || (load.bols && load.bols.length) || 0
+            const dateStr     = loadDate(load)
+            const invHref     = invoiceHref(load)
 
             return (
               <div key={load.id || idx} style={{
@@ -536,7 +592,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                 {/* WHITE LEDGER BODY */}
                 <div style={{ padding:'12px 14px' }}>
 
-                  {/* BROKER + ROUTE */}
                   <div style={{ marginBottom:10 }}>
                     <div style={{ fontSize:14, fontFamily:'var(--font-head)', fontWeight:900, color:'var(--navy)', marginBottom:2 }}>
                       {load.broker_name || 'Unknown Broker'}
@@ -554,17 +609,13 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     </div>
                   </div>
 
-                  {/* DIVIDER */}
                   <div style={{ borderTop:'1px solid #e0e0e0', marginBottom:8 }} />
 
-                  {/* LINE ITEMS — right-aligned dollar column */}
                   <div style={{ fontSize:13, color:'var(--navy)' }}>
-
-                    {/* helper row */}
                     {[
                       ['Trucking Rate', basePay],
-                      ...lumpers.map((l,i)      => ['Lumper Receipt '+(i+1),    parseFloat(l.amount)||0]),
-                      ...incidentals.map((l,i)  => ['Incidental '+(i+1),        parseFloat(l.amount)||0]),
+                      ...lumpers.map((l,i)     => ['Lumper Receipt '+(i+1),  parseFloat(l.amount)||0]),
+                      ...incidentals.map((l,i) => ['Incidental '+(i+1),      parseFloat(l.amount)||0]),
                       ...(detention > 0 ? [['Detention', detention]] : []),
                       ...(pallets   > 0 ? [['Pallets',   pallets]]   : []),
                     ].map(([label, amount], i) => (
@@ -574,14 +625,12 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                       </div>
                     ))}
 
-                    {/* SUBTOTAL — single line above */}
                     <div style={{ borderTop:'1px solid #bbb', marginTop:4, marginBottom:4 }} />
                     <div style={{ display:'flex', justifyContent:'space-between', paddingBottom:4 }}>
                       <span style={{ fontWeight:700, color:'var(--navy)' }}>Subtotal</span>
                       <span style={{ fontFamily:'var(--font-head)', fontWeight:700, color:'var(--navy)' }}>{fmt(subtotal)}</span>
                     </div>
 
-                    {/* COMDATAS — red */}
                     {comdatas.map((c,i) => (
                       <div key={i} style={{ display:'flex', justifyContent:'space-between', paddingBottom:4 }}>
                         <span style={{ color:'#c62828' }}>Comdata / Express Code {i+1}</span>
@@ -589,7 +638,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                       </div>
                     ))}
 
-                    {/* NET BILLABLE — double line accounting standard */}
                     <div style={{ borderTop:'1px solid #333', marginTop:2 }} />
                     <div style={{ borderTop:'1px solid #333', marginBottom:6 }} />
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
@@ -602,7 +650,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     </div>
                   </div>
 
-                  {/* VIEW INVOICE BUTTON */}
                   {invHref && (
                     <a href={invHref} target="_blank" rel="noopener noreferrer" style={{
                       display:'block', marginTop:10, padding:'8px 0', borderRadius:8,
@@ -614,7 +661,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     </a>
                   )}
 
-                  {/* ACTION BUTTONS */}
                   <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
                     {load.status !== 'billed' && load.status !== 'paid' && (
                       <button className="scan-btn secondary" style={{ flex:1, padding:'8px 12px', fontSize:12 }}
@@ -652,7 +698,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     </button>
                   </div>
 
-                  {/* CONFIRM DELETE */}
                   {confirmDelete === localIdx && (
                     <div style={{ marginTop:12, padding:12, background:'#fff3f3', borderRadius:8, border:'1px solid #e53935' }}>
                       <div style={{ fontSize:13, color:'#c62828', marginBottom:10, fontFamily:'var(--font-head)', fontWeight:700 }}>
@@ -677,7 +722,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
                     </div>
                   )}
 
-                  {/* EDIT DRAWER */}
                   {isEditing && editData && (
                     <div style={{ marginTop:16, paddingTop:16, borderTop:'1px solid #e0e0e0' }}>
 
