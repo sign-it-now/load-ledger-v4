@@ -59,17 +59,13 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       if (load.id) {
         const res = await fetch(api + '/api/loads/' + load.id, { method: 'DELETE' })
         if (!res.ok) {
-          // safely try to parse error message — Worker may return empty body
           let errMsg = 'Server error ' + res.status
           try { const d = await res.json(); errMsg = d.error || errMsg } catch {}
           showToast('⚠️ Delete failed: ' + errMsg)
           setDeleting(false)
           return
         }
-        // DELETE succeeded — refresh list
-        // Wrap in try/catch so an empty/malformed Worker response never blocks the UI update
         try { await fetchLoads() } catch {
-          // fetchLoads failed but delete succeeded — remove from local state as fallback
           setLoads(prev => prev.filter((_,i) => i !== localIdx))
         }
       } else {
@@ -149,7 +145,6 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
       + detention + pallets
 
     const fmtN = n => '$' + (parseFloat(n)||0).toFixed(2)
-
     const doc = new jsPDF({ unit: 'pt', format: 'letter' })
     const W = 612, M = 40
     let y = 0
@@ -235,12 +230,10 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
 
     y += 10; doc.setFontSize(8); doc.setFont('helvetica','italic'); doc.setTextColor(150,0,0)
     doc.text('This is a corrected invoice superseding the original. Please discard any previous version.', M, y); y += 20
-
     doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(80,80,80)
     doc.text('Thank You', W-M, y, { align:'right' }); y += 20
     doc.setFontSize(14); doc.setFont('helvetica','bolditalic'); doc.setTextColor(0,0,0)
     doc.text('Bruce Edgerton', W-M, y, { align:'right' })
-
     doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(160,160,160)
     doc.text('dbappsystems.com | daddyboyapps.com', W/2, 760, { align:'center' })
 
@@ -269,8 +262,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   }
 
   // ── HELPERS ──────────────────────────────────────────────
-  function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
-
+  function fmt(n)    { return '$' + (parseFloat(n)||0).toFixed(2) }
   function loadDate(load) { return load.created_at || load.date || null }
 
   function invoiceHref(load) {
@@ -339,11 +331,11 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   const totalPaid   = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
   const totalUnpaid = totalNet - totalPaid
 
-  const bruceStats = driverStats(bruceLoads, period)
-  const timStats   = driverStats(timLoads,   period)
+  const bruceStats  = driverStats(bruceLoads, period)
+  const timStats    = driverStats(timLoads,   period)
   const periodLabel = { daily:'TODAY', weekly:'THIS WEEK', monthly:'THIS MONTH', yearly:'THIS YEAR' }
 
-  const inputStyle = {
+  const editInputStyle = {
     width:'100%', background:'var(--navy3)', border:'1px solid var(--border)',
     color:'var(--white)', borderRadius:8, padding:'8px 10px',
     fontSize:14, fontFamily:'var(--font-body)', boxSizing:'border-box',
@@ -362,6 +354,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
   return (
     <div>
 
+      {/* VIEW TABS */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
         {['all','BRUCE','TIM','reports'].map(v => (
           <button key={v} onClick={() => setView(v)} style={{
@@ -376,6 +369,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
         ))}
       </div>
 
+      {/* LEADERBOARD */}
       <div className="card" style={{ marginBottom:14 }}>
         <div className="section-title" style={{ marginBottom:10 }}>
           LEADERBOARD - ALL TIME
@@ -399,6 +393,7 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
         </div>
       </div>
 
+      {/* REPORTS VIEW */}
       {view === 'reports' && (
         <div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
@@ -453,8 +448,10 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
         </div>
       )}
 
+      {/* LOADS LIST VIEW */}
       {view !== 'reports' && (
         <div>
+          {/* TOTALS BAR */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
             <div className="card" style={{ padding:12, textAlign:'center', marginBottom:0 }}>
               <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:4 }}>TOTAL</div>
@@ -478,220 +475,306 @@ export default function Loads({ loads, setLoads, api, showToast, fetchLoads }) {
           )}
 
           {filteredLoads.map((load, idx) => {
-            const localIdx  = loads.indexOf(load)
-            const isEditing = editIdx === localIdx
-            const loadId    = load.id || localIdx
-            const netPay    = parseFloat(load.netPay || load.net_pay) || 0
-            const bolCount  = load.bol_count || (load.bols && load.bols.length) || 0
-            const dateStr   = loadDate(load)
-            const invHref   = invoiceHref(load)
+            const localIdx   = loads.indexOf(load)
+            const isEditing  = editIdx === localIdx
+            const loadId     = load.id || localIdx
+            const netPay     = parseFloat(load.netPay || load.net_pay) || 0
+            const basePay    = parseFloat(load.base_pay)    || 0
+            const detention  = parseFloat(load.detention)   || 0
+            const pallets    = parseFloat(load.pallets)     || 0
+            const lumpers    = load.lumpers     || []
+            const incidentals= load.incidentals || []
+            const comdatas   = load.comdatas    || []
+            const lumperTot  = lumpers.reduce((s,i)      => s+(parseFloat(i.amount)||0), 0)
+            const incTot     = incidentals.reduce((s,i)  => s+(parseFloat(i.amount)||0), 0)
+            const comdataTot = comdatas.reduce((s,i)     => s+(parseFloat(i.amount)||0), 0)
+            const subtotal   = basePay + lumperTot + incTot + detention + pallets
+            const bolCount   = load.bol_count || (load.bols && load.bols.length) || 0
+            const dateStr    = loadDate(load)
+            const invHref    = invoiceHref(load)
 
             return (
-              <div className="load-card" key={load.id || idx} style={{ flexDirection:'column', alignItems:'stretch' }}>
+              <div key={load.id || idx} style={{
+                background: 'var(--white)',
+                borderRadius: 10,
+                marginBottom: 14,
+                overflow: 'hidden',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+              }}>
 
-                <div style={{ display:'flex', alignItems:'flex-start' }}>
-                  <div className="load-card-info" style={{ flex:1 }}>
+                {/* DARK HEADER STRIP */}
+                <div style={{
+                  background: load.driver === 'BRUCE' ? '#1A3A5C' : '#2a0a0a',
+                  padding: '10px 14px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                     <div style={{
-                      display:'inline-block', padding:'2px 8px', borderRadius:10,
-                      fontSize:10, fontFamily:'var(--font-head)', fontWeight:700, marginBottom:6,
-                      background: load.driver === 'BRUCE' ? '#1e88e5' : '#e53935', color:'#fff',
+                      padding:'2px 8px', borderRadius:10,
+                      fontSize:10, fontFamily:'var(--font-head)', fontWeight:700,
+                      background: load.driver === 'BRUCE' ? '#1e88e5' : '#e53935',
+                      color:'#fff',
                     }}>
                       {load.driver || '-'}
                     </div>
-                    <h4>{load.broker_name || 'Unknown Broker'}</h4>
-                    <p>Load # {load.load_number || '-'}</p>
-                    <p>{load.origin || '-'} to {load.destination || '-'}</p>
-                    <p style={{ color:'var(--grey)', fontSize:11 }}>
-                      {dateStr ? new Date(dateStr).toLocaleDateString() : '-'}
-                      {(load.edited || load.edited_date) && (
-                        <span style={{ marginLeft:6, color:'var(--amber)', fontSize:10 }}>
-                          EDITED {load.edited_date ? new Date(load.edited_date).toLocaleDateString() : ''}
-                        </span>
-                      )}
-                    </p>
-                    <div style={{ marginTop:8, fontFamily:'var(--font-head)', fontSize:22, fontWeight:900, color:'var(--amber)' }}>
-                      {fmt(netPay)}
+                    <div style={{ fontSize:18, fontFamily:'var(--font-head)', fontWeight:900, color:'#fff', letterSpacing:'0.04em' }}>
+                      #{load.load_number || '-'}
                     </div>
                   </div>
-
-                  <div style={{ marginLeft:12, display:'flex', flexDirection:'column', alignItems:'flex-end' }}>
-                    <span className={'status-chip ' + load.status}>{load.status}</span>
+                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                     {bolCount > 0 && (
-                      <div style={{ fontSize:10, color:'var(--grey)', marginTop:6 }}>
+                      <div style={{ fontSize:10, color:'rgba(255,255,255,0.6)', fontFamily:'var(--font-head)' }}>
                         {bolCount} BOL{bolCount!==1?'s':''}
                       </div>
                     )}
+                    <span className={'status-chip ' + load.status}>{load.status}</span>
                   </div>
                 </div>
 
-                {invHref && (
-                  <a href={invHref} target="_blank" rel="noopener noreferrer" style={{
-                    display:'block', marginTop:10, padding:'9px 0', borderRadius:8,
-                    background:'var(--navy3)', border:'1px solid var(--border)',
-                    color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700,
-                    fontSize:13, textAlign:'center', textDecoration:'none', letterSpacing:'0.05em',
-                  }}>
-                    VIEW INVOICE PDF
-                  </a>
-                )}
+                {/* WHITE LEDGER BODY */}
+                <div style={{ padding:'12px 14px' }}>
 
-                <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
-                  {load.status !== 'billed' && load.status !== 'paid' && (
-                    <button className="scan-btn secondary" style={{ flex:1, padding:'8px 12px', fontSize:13 }}
-                      disabled={updating === loadId}
-                      onClick={() => patchLoad(load, localIdx, { status:'billed' })}>
-                      {updating === loadId ? '...' : 'MARK BILLED'}
-                    </button>
-                  )}
-                  {load.status !== 'paid' && (
-                    <button className="scan-btn success" style={{ flex:1, padding:'8px 12px', fontSize:13 }}
-                      disabled={updating === loadId}
-                      onClick={() => patchLoad(load, localIdx, { status:'paid' })}>
-                      {updating === loadId ? '...' : 'MARK PAID'}
-                    </button>
-                  )}
-                  {load.status === 'paid' && (
-                    <div style={{ fontSize:13, color:'var(--green)', fontFamily:'var(--font-head)', fontWeight:700, paddingTop:4 }}>
-                      PAYMENT RECEIVED
+                  {/* BROKER + ROUTE */}
+                  <div style={{ marginBottom:10 }}>
+                    <div style={{ fontSize:14, fontFamily:'var(--font-head)', fontWeight:900, color:'var(--navy)', marginBottom:2 }}>
+                      {load.broker_name || 'Unknown Broker'}
                     </div>
-                  )}
-                  <button style={{
-                    padding:'8px 12px', borderRadius:8, border:'1px solid var(--amber)',
-                    background: isEditing ? 'var(--amber)' : 'transparent',
-                    color: isEditing ? 'var(--navy)' : 'var(--amber)',
-                    fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                  }} onClick={() => openEdit(load, localIdx)}>
-                    {isEditing ? 'CLOSE' : 'EDIT'}
-                  </button>
-                  <button style={{
-                    padding:'8px 12px', borderRadius:8, border:'1px solid #555',
-                    background:'transparent', color:'#888', fontSize:13,
-                    fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                  }} onClick={() => setConfirmDelete(localIdx)}>
-                    DELETE
-                  </button>
-                </div>
-
-                {confirmDelete === localIdx && (
-                  <div style={{ marginTop:12, padding:12, background:'var(--navy3)', borderRadius:8, border:'1px solid #e53935' }}>
-                    <div style={{ fontSize:13, color:'var(--white)', marginBottom:10, fontFamily:'var(--font-head)' }}>
-                      DELETE THIS LOAD? This cannot be undone.
+                    <div style={{ fontSize:12, color:'#555', marginBottom:1 }}>
+                      {load.origin || '-'} → {load.destination || '-'}
                     </div>
-                    <div style={{ display:'flex', gap:8 }}>
-                      <button disabled={deleting} onClick={() => deleteLoad(load, localIdx)} style={{
-                        flex:1, padding:'10px 0', borderRadius:8, border:'none',
-                        background: deleting ? '#555' : '#e53935', color:'#fff',
-                        fontSize:13, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
-                      }}>
-                        {deleting ? 'DELETING...' : 'CONFIRM DELETE'}
-                      </button>
-                      <button disabled={deleting} onClick={() => setConfirmDelete(null)} style={{
-                        flex:1, padding:'10px 0', borderRadius:8, border:'1px solid #555',
-                        background:'transparent', color:'#aaa', fontSize:13,
-                        fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-                      }}>
-                        CANCEL
-                      </button>
+                    <div style={{ fontSize:11, color:'#888' }}>
+                      {dateStr ? new Date(dateStr).toLocaleDateString() : '-'}
+                      {(load.edited || load.edited_date) && (
+                        <span style={{ marginLeft:6, color:'var(--amber)', fontSize:10, fontWeight:700 }}>
+                          EDITED {load.edited_date ? new Date(load.edited_date).toLocaleDateString() : ''}
+                        </span>
+                      )}
                     </div>
                   </div>
-                )}
 
-                {isEditing && editData && (
-                  <div style={{ marginTop:16, paddingTop:16, borderTop:'1px solid var(--border)' }}>
+                  {/* DIVIDER */}
+                  <div style={{ borderTop:'1px solid #e0e0e0', marginBottom:8 }} />
 
-                    <div style={{ fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:12 }}>
-                      EDIT INVOICE AMOUNTS
-                    </div>
+                  {/* LINE ITEMS — right-aligned dollar column */}
+                  <div style={{ fontSize:13, color:'var(--navy)' }}>
 
-                    <div style={{ marginBottom:12 }}>
-                      <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4, fontFamily:'var(--font-head)' }}>BASE PAY ($)</div>
-                      <input style={inputStyle} type="number" inputMode="decimal" value={editData.base_pay}
-                        onChange={e => setEditData(p => ({ ...p, base_pay: e.target.value }))} placeholder="0.00" />
-                    </div>
-
-                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
-                      <div>
-                        <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4, fontFamily:'var(--font-head)' }}>DETENTION ($)</div>
-                        <input style={inputStyle} type="number" inputMode="decimal" value={editData.detention}
-                          onChange={e => setEditData(p => ({ ...p, detention: e.target.value }))} placeholder="0.00" />
+                    {/* helper row */}
+                    {[
+                      ['Trucking Rate', basePay],
+                      ...lumpers.map((l,i)      => ['Lumper Receipt '+(i+1),    parseFloat(l.amount)||0]),
+                      ...incidentals.map((l,i)  => ['Incidental '+(i+1),        parseFloat(l.amount)||0]),
+                      ...(detention > 0 ? [['Detention', detention]] : []),
+                      ...(pallets   > 0 ? [['Pallets',   pallets]]   : []),
+                    ].map(([label, amount], i) => (
+                      <div key={i} style={{ display:'flex', justifyContent:'space-between', paddingBottom:4 }}>
+                        <span style={{ color:'#444' }}>{label}</span>
+                        <span style={{ fontFamily:'var(--font-head)', fontWeight:600, color:'var(--navy)' }}>{fmt(amount)}</span>
                       </div>
-                      <div>
-                        <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4, fontFamily:'var(--font-head)' }}>PALLETS ($)</div>
-                        <input style={inputStyle} type="number" inputMode="decimal" value={editData.pallets}
-                          onChange={e => setEditData(p => ({ ...p, pallets: e.target.value }))} placeholder="0.00" />
+                    ))}
+
+                    {/* SUBTOTAL — single line above */}
+                    <div style={{ borderTop:'1px solid #bbb', marginTop:4, marginBottom:4 }} />
+                    <div style={{ display:'flex', justifyContent:'space-between', paddingBottom:4 }}>
+                      <span style={{ fontWeight:700, color:'var(--navy)' }}>Subtotal</span>
+                      <span style={{ fontFamily:'var(--font-head)', fontWeight:700, color:'var(--navy)' }}>{fmt(subtotal)}</span>
+                    </div>
+
+                    {/* COMDATAS — red */}
+                    {comdatas.map((c,i) => (
+                      <div key={i} style={{ display:'flex', justifyContent:'space-between', paddingBottom:4 }}>
+                        <span style={{ color:'#c62828' }}>Comdata / Express Code {i+1}</span>
+                        <span style={{ fontFamily:'var(--font-head)', fontWeight:600, color:'#c62828' }}>-{fmt(parseFloat(c.amount)||0)}</span>
                       </div>
-                    </div>
+                    ))}
 
-                    <div style={{ marginBottom:12 }}>
-                      <div style={{ fontSize:11, color:'var(--grey)', marginBottom:6, fontFamily:'var(--font-head)' }}>LUMPER RECEIPTS</div>
-                      {editData.lumpers.map((item, i) => (
-                        <div key={i} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                          <div style={{ fontSize:12, color:'var(--grey)', minWidth:70 }}>Lumper {i+1}</div>
-                          <input style={{ ...inputStyle, flex:1 }} type="number" inputMode="decimal"
-                            value={item.amount} onChange={e => updateItemAmount('lumpers', i, e.target.value)} placeholder="0.00" />
-                          <button onClick={() => removeEditItem('lumpers', i)} style={{ background:'transparent', border:'1px solid #555', color:'#888', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
-                        </div>
-                      ))}
-                      <button className="scan-btn secondary" style={{ width:'100%', padding:'8px', fontSize:12, marginTop:4 }}
-                        onClick={() => addEditItem('lumpers')}>+ ADD LUMPER</button>
-                    </div>
-
-                    <div style={{ marginBottom:12 }}>
-                      <div style={{ fontSize:11, color:'var(--grey)', marginBottom:6, fontFamily:'var(--font-head)' }}>INCIDENTALS</div>
-                      {editData.incidentals.map((item, i) => (
-                        <div key={i} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                          <div style={{ fontSize:12, color:'var(--grey)', minWidth:70 }}>Inc. {i+1}</div>
-                          <input style={{ ...inputStyle, flex:1 }} type="number" inputMode="decimal"
-                            value={item.amount} onChange={e => updateItemAmount('incidentals', i, e.target.value)} placeholder="0.00" />
-                          <button onClick={() => removeEditItem('incidentals', i)} style={{ background:'transparent', border:'1px solid #555', color:'#888', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
-                        </div>
-                      ))}
-                      <button className="scan-btn secondary" style={{ width:'100%', padding:'8px', fontSize:12, marginTop:4 }}
-                        onClick={() => addEditItem('incidentals')}>+ ADD INCIDENTAL</button>
-                    </div>
-
-                    <div style={{ marginBottom:12 }}>
-                      <div style={{ fontSize:11, color:'var(--grey)', marginBottom:6, fontFamily:'var(--font-head)' }}>COMDATA / EXPRESS CODES</div>
-                      {editData.comdatas.map((item, i) => (
-                        <div key={i} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                          <div style={{ fontSize:12, color:'#e57373', minWidth:70 }}>Comdata {i+1}</div>
-                          <input style={{ ...inputStyle, flex:1, borderColor:'#e57373' }} type="number" inputMode="decimal"
-                            value={item.amount} onChange={e => updateItemAmount('comdatas', i, e.target.value)} placeholder="0.00" />
-                          <button onClick={() => removeEditItem('comdatas', i)} style={{ background:'transparent', border:'1px solid #555', color:'#888', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
-                        </div>
-                      ))}
-                      <button className="scan-btn danger" style={{ width:'100%', padding:'8px', fontSize:12, marginTop:4 }}
-                        onClick={() => addEditItem('comdatas')}>+ ADD COMDATA / EXPRESS CODE</button>
-                    </div>
-
-                    <div style={{ marginBottom:16 }}>
-                      <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4, fontFamily:'var(--font-head)' }}>NOTES</div>
-                      <textarea value={editData.notes} onChange={e => setEditData(p => ({ ...p, notes: e.target.value }))}
-                        placeholder="Notes..." style={{ ...inputStyle, minHeight:60, resize:'vertical' }} />
-                    </div>
-
-                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
-                      background:'var(--navy3)', borderRadius:8, padding:'10px 14px', marginBottom:10, border:'1px solid var(--border)' }}>
-                      <span style={{ fontFamily:'var(--font-head)', fontSize:12, color:'var(--grey)' }}>UPDATED NET TOTAL</span>
-                      <span style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color: editNetPreview() >= 0 ? 'var(--amber)' : 'var(--red)' }}>
-                        {fmt(editNetPreview())}
+                    {/* NET BILLABLE — double line accounting standard */}
+                    <div style={{ borderTop:'1px solid #333', marginTop:2 }} />
+                    <div style={{ borderTop:'1px solid #333', marginBottom:6 }} />
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                      <span style={{ fontSize:12, fontFamily:'var(--font-head)', fontWeight:900, color:'var(--navy)', letterSpacing:'0.04em' }}>
+                        NET BILLABLE TOTAL
+                      </span>
+                      <span style={{ fontSize:20, fontFamily:'var(--font-head)', fontWeight:900, color:'var(--navy)' }}>
+                        {fmt(netPay)}
                       </span>
                     </div>
-
-                    <div style={{ fontSize:11, color:'var(--grey)', textAlign:'center', marginBottom:10 }}>
-                      Saving will update the app and download a corrected invoice PDF.
-                    </div>
-
-                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
-                      <button className="scan-btn secondary" style={{ padding:'10px', fontSize:13 }} onClick={closeEdit}>CANCEL</button>
-                      <button className="scan-btn success" style={{ padding:'10px', fontSize:13 }} onClick={() => saveEdit(load, localIdx)}>
-                        SAVE + DOWNLOAD
-                      </button>
-                    </div>
-
                   </div>
-                )}
 
+                  {/* VIEW INVOICE BUTTON */}
+                  {invHref && (
+                    <a href={invHref} target="_blank" rel="noopener noreferrer" style={{
+                      display:'block', marginTop:10, padding:'8px 0', borderRadius:8,
+                      background:'transparent', border:'1px solid var(--amber)',
+                      color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700,
+                      fontSize:12, textAlign:'center', textDecoration:'none', letterSpacing:'0.05em',
+                    }}>
+                      VIEW INVOICE PDF
+                    </a>
+                  )}
+
+                  {/* ACTION BUTTONS */}
+                  <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
+                    {load.status !== 'billed' && load.status !== 'paid' && (
+                      <button className="scan-btn secondary" style={{ flex:1, padding:'8px 12px', fontSize:12 }}
+                        disabled={updating === loadId}
+                        onClick={() => patchLoad(load, localIdx, { status:'billed' })}>
+                        {updating === loadId ? '...' : 'MARK BILLED'}
+                      </button>
+                    )}
+                    {load.status !== 'paid' && (
+                      <button className="scan-btn success" style={{ flex:1, padding:'8px 12px', fontSize:12 }}
+                        disabled={updating === loadId}
+                        onClick={() => patchLoad(load, localIdx, { status:'paid' })}>
+                        {updating === loadId ? '...' : 'MARK PAID'}
+                      </button>
+                    )}
+                    {load.status === 'paid' && (
+                      <div style={{ fontSize:12, color:'var(--green)', fontFamily:'var(--font-head)', fontWeight:700, paddingTop:4 }}>
+                        PAYMENT RECEIVED
+                      </div>
+                    )}
+                    <button style={{
+                      padding:'8px 12px', borderRadius:8, border:'1px solid var(--amber)',
+                      background: isEditing ? 'var(--amber)' : 'transparent',
+                      color: isEditing ? 'var(--navy)' : 'var(--amber)',
+                      fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                    }} onClick={() => openEdit(load, localIdx)}>
+                      {isEditing ? 'CLOSE' : 'EDIT'}
+                    </button>
+                    <button style={{
+                      padding:'8px 12px', borderRadius:8, border:'1px solid #ccc',
+                      background:'transparent', color:'#999', fontSize:12,
+                      fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                    }} onClick={() => setConfirmDelete(localIdx)}>
+                      DELETE
+                    </button>
+                  </div>
+
+                  {/* CONFIRM DELETE */}
+                  {confirmDelete === localIdx && (
+                    <div style={{ marginTop:12, padding:12, background:'#fff3f3', borderRadius:8, border:'1px solid #e53935' }}>
+                      <div style={{ fontSize:13, color:'#c62828', marginBottom:10, fontFamily:'var(--font-head)', fontWeight:700 }}>
+                        DELETE THIS LOAD? This cannot be undone.
+                      </div>
+                      <div style={{ display:'flex', gap:8 }}>
+                        <button disabled={deleting} onClick={() => deleteLoad(load, localIdx)} style={{
+                          flex:1, padding:'10px 0', borderRadius:8, border:'none',
+                          background: deleting ? '#ccc' : '#e53935', color:'#fff',
+                          fontSize:13, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer',
+                        }}>
+                          {deleting ? 'DELETING...' : 'CONFIRM DELETE'}
+                        </button>
+                        <button disabled={deleting} onClick={() => setConfirmDelete(null)} style={{
+                          flex:1, padding:'10px 0', borderRadius:8, border:'1px solid #ccc',
+                          background:'transparent', color:'#888', fontSize:13,
+                          fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
+                        }}>
+                          CANCEL
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* EDIT DRAWER */}
+                  {isEditing && editData && (
+                    <div style={{ marginTop:16, paddingTop:16, borderTop:'1px solid #e0e0e0' }}>
+
+                      <div style={{ fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:12 }}>
+                        EDIT INVOICE AMOUNTS
+                      </div>
+
+                      <div style={{ marginBottom:12 }}>
+                        <div style={{ fontSize:11, color:'#666', marginBottom:4, fontFamily:'var(--font-head)' }}>BASE PAY ($)</div>
+                        <input style={editInputStyle} type="number" inputMode="decimal" value={editData.base_pay}
+                          onChange={e => setEditData(p => ({ ...p, base_pay: e.target.value }))} placeholder="0.00" />
+                      </div>
+
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+                        <div>
+                          <div style={{ fontSize:11, color:'#666', marginBottom:4, fontFamily:'var(--font-head)' }}>DETENTION ($)</div>
+                          <input style={editInputStyle} type="number" inputMode="decimal" value={editData.detention}
+                            onChange={e => setEditData(p => ({ ...p, detention: e.target.value }))} placeholder="0.00" />
+                        </div>
+                        <div>
+                          <div style={{ fontSize:11, color:'#666', marginBottom:4, fontFamily:'var(--font-head)' }}>PALLETS ($)</div>
+                          <input style={editInputStyle} type="number" inputMode="decimal" value={editData.pallets}
+                            onChange={e => setEditData(p => ({ ...p, pallets: e.target.value }))} placeholder="0.00" />
+                        </div>
+                      </div>
+
+                      <div style={{ marginBottom:12 }}>
+                        <div style={{ fontSize:11, color:'#666', marginBottom:6, fontFamily:'var(--font-head)' }}>LUMPER RECEIPTS</div>
+                        {editData.lumpers.map((item, i) => (
+                          <div key={i} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                            <div style={{ fontSize:12, color:'#666', minWidth:70 }}>Lumper {i+1}</div>
+                            <input style={{ ...editInputStyle, flex:1 }} type="number" inputMode="decimal"
+                              value={item.amount} onChange={e => updateItemAmount('lumpers', i, e.target.value)} placeholder="0.00" />
+                            <button onClick={() => removeEditItem('lumpers', i)} style={{ background:'transparent', border:'1px solid #ccc', color:'#999', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
+                          </div>
+                        ))}
+                        <button className="scan-btn secondary" style={{ width:'100%', padding:'8px', fontSize:12, marginTop:4 }}
+                          onClick={() => addEditItem('lumpers')}>+ ADD LUMPER</button>
+                      </div>
+
+                      <div style={{ marginBottom:12 }}>
+                        <div style={{ fontSize:11, color:'#666', marginBottom:6, fontFamily:'var(--font-head)' }}>INCIDENTALS</div>
+                        {editData.incidentals.map((item, i) => (
+                          <div key={i} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                            <div style={{ fontSize:12, color:'#666', minWidth:70 }}>Inc. {i+1}</div>
+                            <input style={{ ...editInputStyle, flex:1 }} type="number" inputMode="decimal"
+                              value={item.amount} onChange={e => updateItemAmount('incidentals', i, e.target.value)} placeholder="0.00" />
+                            <button onClick={() => removeEditItem('incidentals', i)} style={{ background:'transparent', border:'1px solid #ccc', color:'#999', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
+                          </div>
+                        ))}
+                        <button className="scan-btn secondary" style={{ width:'100%', padding:'8px', fontSize:12, marginTop:4 }}
+                          onClick={() => addEditItem('incidentals')}>+ ADD INCIDENTAL</button>
+                      </div>
+
+                      <div style={{ marginBottom:12 }}>
+                        <div style={{ fontSize:11, color:'#666', marginBottom:6, fontFamily:'var(--font-head)' }}>COMDATA / EXPRESS CODES</div>
+                        {editData.comdatas.map((item, i) => (
+                          <div key={i} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                            <div style={{ fontSize:12, color:'#c62828', minWidth:70 }}>Comdata {i+1}</div>
+                            <input style={{ ...editInputStyle, flex:1, borderColor:'#e57373' }} type="number" inputMode="decimal"
+                              value={item.amount} onChange={e => updateItemAmount('comdatas', i, e.target.value)} placeholder="0.00" />
+                            <button onClick={() => removeEditItem('comdatas', i)} style={{ background:'transparent', border:'1px solid #ccc', color:'#999', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
+                          </div>
+                        ))}
+                        <button className="scan-btn danger" style={{ width:'100%', padding:'8px', fontSize:12, marginTop:4 }}
+                          onClick={() => addEditItem('comdatas')}>+ ADD COMDATA / EXPRESS CODE</button>
+                      </div>
+
+                      <div style={{ marginBottom:16 }}>
+                        <div style={{ fontSize:11, color:'#666', marginBottom:4, fontFamily:'var(--font-head)' }}>NOTES</div>
+                        <textarea value={editData.notes} onChange={e => setEditData(p => ({ ...p, notes: e.target.value }))}
+                          placeholder="Notes..." style={{ ...editInputStyle, minHeight:60, resize:'vertical' }} />
+                      </div>
+
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
+                        background:'#f5f5f5', borderRadius:8, padding:'10px 14px', marginBottom:10, border:'1px solid #ddd' }}>
+                        <span style={{ fontFamily:'var(--font-head)', fontSize:12, color:'#666' }}>UPDATED NET TOTAL</span>
+                        <span style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color: editNetPreview() >= 0 ? 'var(--navy)' : '#c62828' }}>
+                          {fmt(editNetPreview())}
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize:11, color:'#888', textAlign:'center', marginBottom:10 }}>
+                        Saving will update the app and download a corrected invoice PDF.
+                      </div>
+
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                        <button className="scan-btn secondary" style={{ padding:'10px', fontSize:13 }} onClick={closeEdit}>CANCEL</button>
+                        <button className="scan-btn success" style={{ padding:'10px', fontSize:13 }} onClick={() => saveEdit(load, localIdx)}>
+                          SAVE + DOWNLOAD
+                        </button>
+                      </div>
+
+                    </div>
+                  )}
+
+                </div>
               </div>
             )
           })}
