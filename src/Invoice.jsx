@@ -32,10 +32,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
 
   function fmt(n) { return '$' + n.toFixed(2) }
   function openScanner(mode) { scanMode.current = mode; fileRef.current.click() }
-
-  function isPDF(file) {
-    return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
-  }
+  function isPDF(file) { return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf') }
 
   // ── MANUAL ADD HANDLERS ──────────────────────────────────
   function addManualLumper() {
@@ -300,9 +297,51 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
   }
 
   // ── GENERATE PDF + SAVE TO D1 + UPLOAD TO R2 ─────────────
+  // PROVEN ORDER: 1) D1 save  2) Build PDF  3) R2 upload  4) doc.save() download
+  // doc.save() must fire LAST — it triggers the phone download
+  // which if fired early causes subsequent fetches to be dropped
   async function generatePDF() {
 
-    // ── STEP 1: BUILD PDF IN MEMORY FIRST ────────────────
+    // ── STEP 1: SAVE TO D1 FIRST ─────────────────────────
+    showToast('💾 Saving load...')
+    let savedLoadId = null
+    try {
+      const res = await fetch(api + '/api/loads', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driver,
+          broker_name:      load.broker_name   || '',
+          broker_email:     load.broker_email  || '',
+          load_number:      load.load_number   || '',
+          origin:           load.origin        || '',
+          destination:      load.destination   || '',
+          pickup_date:      load.pickup_date   || '',
+          delivery_date:    load.delivery_date || '',
+          base_pay:         base_pay,
+          lumper_total:     lumperTotal,
+          incidental_total: incTotal,
+          comdata_total:    comdataTotal,
+          detention:        detention,
+          pallets:          pallets,
+          net_pay:          netPay,
+          notes:            load.notes         || '',
+          bol_count:        load.bols.length,
+          status:           'invoiced',
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        showToast('⚠️ Save failed: ' + (data.error || 'unknown'))
+        return
+      }
+      savedLoadId = data.id
+    } catch (err) {
+      showToast('⚠️ Save failed: ' + err.message)
+      return
+    }
+
+    // ── STEP 2: BUILD PDF IN MEMORY ───────────────────────
     const doc = new jsPDF({ unit: 'pt', format: 'letter' })
     const W = 612, M = 40
     let y = 0
@@ -419,65 +458,27 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     comdataScans.forEach((l,i) =>
       addScanPage(doc, l, 'Comdata / Express Code '+(i+1)+' - $'+parseFloat(l.amount).toFixed(2)+' - '+l.label))
 
-    // ── STEP 2: DOWNLOAD PDF TO PHONE — always happens ───
+    // ── STEP 3: UPLOAD PDF TO R2 BEFORE DOWNLOAD ─────────
+    // R2 upload must complete before doc.save() fires
+    // doc.save() triggers the phone download which drops subsequent fetches
     const filename = 'Edgerton-Invoice-'+(load.load_number||'draft')+'-'+driver+'.pdf'
-    doc.save(filename)
-    showToast('✅ Invoice downloaded!')
-
-    // ── STEP 3: SAVE TO D1 — after download, non-blocking
-    // keepalive:true fixes iOS WebKit cancelling the POST
     try {
-      const res = await fetch(api + '/api/loads', {
-        method:   'POST',
-        headers:  { 'Content-Type': 'application/json' },
-        keepalive: true,
-        body: JSON.stringify({
-          driver,
-          broker_name:      load.broker_name   || '',
-          broker_email:     load.broker_email  || '',
-          load_number:      load.load_number   || '',
-          origin:           load.origin        || '',
-          destination:      load.destination   || '',
-          pickup_date:      load.pickup_date   || '',
-          delivery_date:    load.delivery_date || '',
-          base_pay:         base_pay,
-          lumper_total:     lumperTotal,
-          incidental_total: incTotal,
-          comdata_total:    comdataTotal,
-          detention:        detention,
-          pallets:          pallets,
-          net_pay:          netPay,
-          notes:            load.notes         || '',
-          bol_count:        load.bols.length,
-          status:           'invoiced',
-        }),
+      const pdfBase64 = doc.output('datauristring').split(',')[1]
+      await fetch(api + '/api/upload-pdf', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64: pdfBase64, loadId: savedLoadId, filename }),
       })
-      const data = await res.json()
-      if (!res.ok) {
-        showToast('⚠️ Saved locally only — sync failed')
-        return
-      }
-      const savedLoadId = data.id
-
-      // ── STEP 4: UPLOAD PDF TO R2 ─────────────────────
-      try {
-        const pdfBase64 = doc.output('datauristring').split(',')[1]
-        await fetch(api + '/api/upload-pdf', {
-          method:   'POST',
-          headers:  { 'Content-Type': 'application/json' },
-          keepalive: true,
-          body: JSON.stringify({ base64: pdfBase64, loadId: savedLoadId, filename }),
-        })
-      } catch (err) {
-        console.error('R2 upload failed (non-fatal):', err)
-      }
-
-      await fetchLoads()
-      showToast('✅ Load saved to reports!')
     } catch (err) {
-      console.error('D1 save failed:', err)
-      showToast('⚠️ Invoice downloaded — reports sync failed')
+      console.error('R2 upload failed (non-fatal):', err)
     }
+
+    // ── STEP 4: REFRESH LOADS LIST ────────────────────────
+    try { await fetchLoads() } catch {}
+
+    // ── STEP 5: DOWNLOAD TO PHONE — always last ───────────
+    doc.save(filename)
+    showToast('✅ Invoice saved + downloaded!')
   }
 
   // ── SHARED INLINE INPUT STYLES ───────────────────────────
