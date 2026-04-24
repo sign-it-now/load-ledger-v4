@@ -10,7 +10,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
   const [scanning,   setScanning]   = useState(null)
   const [bolLoading, setBolLoading] = useState(false)
 
-  // ── INLINE MANUAL ENTRY STATE ────────────────────────────
   const [showManualLumper,     setShowManualLumper]     = useState(false)
   const [showManualIncidental, setShowManualIncidental] = useState(false)
   const [showManualComdata,    setShowManualComdata]    = useState(false)
@@ -42,8 +41,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
   function addManualLumper() {
     const val = parseFloat(manualLumper)
     if (!val || val <= 0) { showToast('Enter a valid amount'); return }
-    const item = { amount: val.toFixed(2), label: 'Manual entry', dataUrl: null, base64: null, w: 0, h: 0 }
-    setLoad(p => ({ ...p, lumpers: [...p.lumpers, item] }))
+    setLoad(p => ({ ...p, lumpers: [...p.lumpers, { amount: val.toFixed(2), label: 'Manual entry', dataUrl: null, base64: null, w: 0, h: 0 }] }))
     setManualLumper('')
     showToast('✅ Lumper added: $' + val.toFixed(2))
   }
@@ -51,8 +49,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
   function addManualIncidental() {
     const val = parseFloat(manualIncidental)
     if (!val || val <= 0) { showToast('Enter a valid amount'); return }
-    const item = { amount: val.toFixed(2), label: 'Manual entry', dataUrl: null, base64: null, w: 0, h: 0 }
-    setLoad(p => ({ ...p, incidentals: [...p.incidentals, item] }))
+    setLoad(p => ({ ...p, incidentals: [...p.incidentals, { amount: val.toFixed(2), label: 'Manual entry', dataUrl: null, base64: null, w: 0, h: 0 }] }))
     setManualIncidental('')
     showToast('✅ Incidental added: $' + val.toFixed(2))
   }
@@ -60,8 +57,7 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
   function addManualComdata() {
     const val = parseFloat(manualComdata)
     if (!val || val <= 0) { showToast('Enter a valid amount'); return }
-    const item = { amount: val.toFixed(2), label: 'Manual entry', dataUrl: null, base64: null, w: 0, h: 0 }
-    setLoad(p => ({ ...p, comdatas: [...p.comdatas, item] }))
+    setLoad(p => ({ ...p, comdatas: [...p.comdatas, { amount: val.toFixed(2), label: 'Manual entry', dataUrl: null, base64: null, w: 0, h: 0 }] }))
     setManualComdata('')
     showToast('✅ Comdata added: -$' + val.toFixed(2))
   }
@@ -86,8 +82,6 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
   }
 
   // ── B&W PIPELINE — LOCKED DO NOT MODIFY ──────────────────
-  // 1. Grayscale  2. Auto-levels  3. Gaussian blur
-  // 4. Bradley-Roth adaptive threshold  5. Unsharp mask
   function applyBWPipeline(canvas) {
     const w    = canvas.width
     const h    = canvas.height
@@ -306,52 +300,9 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
   }
 
   // ── GENERATE PDF + SAVE TO D1 + UPLOAD TO R2 ─────────────
-  // ORDER: 1) D1 save  2) R2 upload  3) doc.save() download
-  // iOS WebKit kills the POST if doc.save() (Blob download) fires first
   async function generatePDF() {
 
-    // ── STEP 1: SAVE TO D1 FIRST ─────────────────────────
-    showToast('💾 Saving load...')
-    let savedLoadId = null
-    try {
-      const res = await fetch(api + '/api/loads', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          driver,
-          broker_name:      load.broker_name   || '',
-          broker_email:     load.broker_email  || '',
-          load_number:      load.load_number   || '',
-          origin:           load.origin        || '',
-          destination:      load.destination   || '',
-          pickup_date:      load.pickup_date   || '',
-          delivery_date:    load.delivery_date || '',
-          base_pay:         base_pay,
-          lumper_total:     lumperTotal,
-          incidental_total: incTotal,
-          comdata_total:    comdataTotal,
-          detention:        detention,
-          pallets:          pallets,
-          net_pay:          netPay,
-          notes:            load.notes         || '',
-          bol_count:        load.bols.length,
-          status:           'invoiced',
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        showToast('⚠️ Save failed: ' + (data.error || 'unknown'))
-        return
-      }
-      savedLoadId = data.id
-      await fetchLoads()
-      showToast('✅ Load saved to reports!')
-    } catch (err) {
-      showToast('⚠️ Save failed: ' + err.message)
-      return
-    }
-
-    // ── STEP 2: BUILD PDF ─────────────────────────────────
+    // ── STEP 1: BUILD PDF IN MEMORY FIRST ────────────────
     const doc = new jsPDF({ unit: 'pt', format: 'letter' })
     const W = 612, M = 40
     let y = 0
@@ -468,32 +419,65 @@ export default function Invoice({ load, setLoad, driver, api, showToast, fetchLo
     comdataScans.forEach((l,i) =>
       addScanPage(doc, l, 'Comdata / Express Code '+(i+1)+' - $'+parseFloat(l.amount).toFixed(2)+' - '+l.label))
 
-    // ── STEP 3: UPLOAD PDF TO R2 ─────────────────────────
-    // Get raw base64 from jsPDF without triggering download
-    if (savedLoadId) {
+    // ── STEP 2: DOWNLOAD PDF TO PHONE — always happens ───
+    const filename = 'Edgerton-Invoice-'+(load.load_number||'draft')+'-'+driver+'.pdf'
+    doc.save(filename)
+    showToast('✅ Invoice downloaded!')
+
+    // ── STEP 3: SAVE TO D1 — after download, non-blocking
+    // keepalive:true fixes iOS WebKit cancelling the POST
+    try {
+      const res = await fetch(api + '/api/loads', {
+        method:   'POST',
+        headers:  { 'Content-Type': 'application/json' },
+        keepalive: true,
+        body: JSON.stringify({
+          driver,
+          broker_name:      load.broker_name   || '',
+          broker_email:     load.broker_email  || '',
+          load_number:      load.load_number   || '',
+          origin:           load.origin        || '',
+          destination:      load.destination   || '',
+          pickup_date:      load.pickup_date   || '',
+          delivery_date:    load.delivery_date || '',
+          base_pay:         base_pay,
+          lumper_total:     lumperTotal,
+          incidental_total: incTotal,
+          comdata_total:    comdataTotal,
+          detention:        detention,
+          pallets:          pallets,
+          net_pay:          netPay,
+          notes:            load.notes         || '',
+          bol_count:        load.bols.length,
+          status:           'invoiced',
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        showToast('⚠️ Saved locally only — sync failed')
+        return
+      }
+      const savedLoadId = data.id
+
+      // ── STEP 4: UPLOAD PDF TO R2 ─────────────────────
       try {
-        const pdfBase64  = doc.output('datauristring').split(',')[1]
-        const filename   = 'Edgerton-Invoice-'+(load.load_number||'draft')+'-'+driver+'.pdf'
+        const pdfBase64 = doc.output('datauristring').split(',')[1]
         await fetch(api + '/api/upload-pdf', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            base64:   pdfBase64,
-            loadId:   savedLoadId,
-            filename,
-          }),
+          method:   'POST',
+          headers:  { 'Content-Type': 'application/json' },
+          keepalive: true,
+          body: JSON.stringify({ base64: pdfBase64, loadId: savedLoadId, filename }),
         })
-        // Silent — don't block or alarm user if upload fails
-        // The PDF download still works regardless
       } catch (err) {
         console.error('R2 upload failed (non-fatal):', err)
       }
-    }
 
-    // ── STEP 4: DOWNLOAD TO PHONE ─────────────────────────
-    const filename = 'Edgerton-Invoice-'+(load.load_number||'draft')+'-'+driver+'.pdf'
-    doc.save(filename)
-    showToast('✅ Invoice + all receipts downloaded!')
+      await fetchLoads()
+      showToast('✅ Load saved to reports!')
+    } catch (err) {
+      console.error('D1 save failed:', err)
+      showToast('⚠️ Invoice downloaded — reports sync failed')
+    }
   }
 
   // ── SHARED INLINE INPUT STYLES ───────────────────────────
