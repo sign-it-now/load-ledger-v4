@@ -398,7 +398,7 @@ export default function App() {
       <div className="tab-content">
         {tab === 'ratecon'     && !isBookkeeper && <RateCon load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} onNext={() => setTab('invoice')} />}
         {tab === 'invoice'     && !isBookkeeper && <Invoice load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} resetLoad={resetLoad} />}
-        {tab === 'loads'       && <Loads loads={loads} setLoads={setLoads} api={API} showToast={showToast} fetchLoads={fetchLoads} />}
+        {tab === 'loads' && <Loads loads={loads} setLoads={setLoads} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} />}
         {tab === 'profile'     && !isBookkeeper && <DriverProfile driver={driver} api={API} showToast={showToast} pin={sessionPassword} />}
         {tab === 'maintenance' && <Maintenance driver={activeDriver} api={API} showToast={showToast} onEntriesChange={setMaintenanceEntries} role={role} />}
         {tab === 'assets'      && <Assets driver={activeDriver} api={API} showToast={showToast} maintenanceEntries={maintenanceEntries} role={role} />}
