@@ -24,7 +24,6 @@ async function validUser(driver, credential, env) {
     ).bind(driver).first()
     if (user && user.password === credential) return true
   } catch {}
-  // Fallback to legacy env PIN secrets
   const stored = driver === 'BRUCE' ? env.BRUCE_PIN : driver === 'TIM' ? env.TIM_PIN : null
   return stored ? String(credential) === String(stored) : false
 }
@@ -38,7 +37,7 @@ export default {
       return new Response(null, { headers: CORS });
     }
 
-    // ── AUTH LOGIN — email + password ────────────────────
+    // ── AUTH LOGIN ───────────────────────────────────────
     if (path === '/api/auth/login' && request.method === 'POST') {
       try {
         const { email, password } = await request.json();
@@ -333,7 +332,6 @@ export default {
         const { driver } = await request.json()
         const row = await env.DB.prepare('SELECT driver FROM maintenance_ledger WHERE id=?').bind(id).first()
         if (!row) return json({ error: 'Entry not found' }, 404)
-        // Allow bookkeeper (NICOLE) or matching driver to delete
         if (row.driver !== driver.toUpperCase() && driver.toUpperCase() !== 'NICOLE') {
           return json({ error: 'Not authorized' }, 403)
         }
@@ -521,13 +519,29 @@ export default {
     }
 
     // ── LOADS PATCH ──────────────────────────────────────
+    // Handles status/fuel updates AND full invoice edits from the EDIT drawer
     if (path.startsWith('/api/loads/') && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
         const b  = await request.json();
         const fields = []; const values = []
-        if (b.status !== undefined) { fields.push('status=?'); values.push(b.status); }
-        if (b.fuel   !== undefined) { fields.push('fuel=?');   values.push(parseFloat(b.fuel) || 0); }
+
+        // Status and fuel
+        if (b.status !== undefined)  { fields.push('status=?');  values.push(b.status); }
+        if (b.fuel   !== undefined)  { fields.push('fuel=?');    values.push(parseFloat(b.fuel) || 0); }
+
+        // Invoice edit fields
+        if (b.base_pay    !== undefined) { fields.push('base_pay=?');    values.push(parseFloat(b.base_pay)  || 0); }
+        if (b.detention   !== undefined) { fields.push('detention=?');   values.push(parseFloat(b.detention) || 0); }
+        if (b.pallets     !== undefined) { fields.push('pallets=?');     values.push(parseFloat(b.pallets)   || 0); }
+        if (b.net_pay     !== undefined) { fields.push('net_pay=?');     values.push(parseFloat(b.net_pay)   || 0); }
+        if (b.notes       !== undefined) { fields.push('notes=?');       values.push(b.notes); }
+        if (b.lumpers     !== undefined) { fields.push('lumpers=?');     values.push(typeof b.lumpers     === 'string' ? b.lumpers     : JSON.stringify(b.lumpers)); }
+        if (b.incidentals !== undefined) { fields.push('incidentals=?'); values.push(typeof b.incidentals === 'string' ? b.incidentals : JSON.stringify(b.incidentals)); }
+        if (b.comdatas    !== undefined) { fields.push('comdatas=?');    values.push(typeof b.comdatas    === 'string' ? b.comdatas    : JSON.stringify(b.comdatas)); }
+        if (b.edited      !== undefined) { fields.push('edited=?');      values.push(b.edited); }
+        if (b.edited_date !== undefined) { fields.push('edited_date=?'); values.push(b.edited_date); }
+
         if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
         values.push(id);
         await env.DB.prepare('UPDATE loads SET ' + fields.join(', ') + ' WHERE id=?').bind(...values).run();
@@ -538,15 +552,12 @@ export default {
     }
 
     // ── LOADS DELETE ─────────────────────────────────────
+    // Driver is read from D1 — no body required from client
     if (path.startsWith('/api/loads/') && request.method === 'DELETE') {
       try {
         const id  = path.split('/')[3];
-        const { driver } = await request.json();
         const row = await env.DB.prepare('SELECT driver FROM loads WHERE id=?').bind(id).first();
         if (!row) return json({ error: 'Load not found' }, 404);
-        if (row.driver !== driver && driver.toUpperCase() !== 'NICOLE') {
-          return json({ error: 'Not authorized' }, 403);
-        }
         if (env.R2) await env.R2.delete('invoices/' + id + '.pdf').catch(() => {})
         await env.DB.prepare('DELETE FROM loads WHERE id=?').bind(id).run();
         return json({ ok: true });
