@@ -265,23 +265,43 @@ export default function App() {
     )
   }
 
+  // ── LOGO COMPONENT ───────────────────────────────────────
+  function AppLogo({ large }) {
+    return (
+      <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+        <div className="app-logo" style={ large ? { fontSize:32 } : {} }>
+          EDGERTON
+        </div>
+        <div style={{
+          fontSize: large ? 10 : 8,
+          color:'var(--grey)',
+          fontFamily:'var(--font-head)',
+          letterSpacing:'0.08em',
+          fontWeight:400,
+          whiteSpace:'nowrap',
+        }}>
+          load ledger v4
+        </div>
+      </div>
+    )
+  }
+
   // ── LOGIN SCREEN ─────────────────────────────────────────
   if (!driver) {
     return (
       <div style={{ display:'flex', flexDirection:'column', height:'100dvh', background:'var(--navy)', alignItems:'center', justifyContent:'center', padding:24 }}>
         <div style={{ width:'100%', maxWidth:360 }}>
 
-          {/* THEME TOGGLE on login screen */}
           <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:16 }}>
             <ThemeToggle />
           </div>
 
           <div style={{ textAlign:'center', marginBottom:32 }}>
-            <div className="app-logo" style={{ fontSize:32, justifyContent:'center', display:'flex' }}>
-              LOAD<span>LEDGER</span>
+            <div style={{ justifyContent:'center', display:'flex' }}>
+              <AppLogo large />
             </div>
             <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.1em', marginTop:6 }}>
-              EDGERTON TRUCK & TRAILER
+              TRUCK & TRAILER REPAIR
             </div>
           </div>
 
@@ -361,7 +381,7 @@ export default function App() {
 
       {/* HEADER */}
       <div className="app-header">
-        <div className="app-logo">LOAD<span>LEDGER</span></div>
+        <AppLogo />
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
           <ThemeToggle />
           <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)' }}>{driver}</div>
@@ -398,7 +418,7 @@ export default function App() {
       <div className="tab-content">
         {tab === 'ratecon'     && !isBookkeeper && <RateCon load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} onNext={() => setTab('invoice')} />}
         {tab === 'invoice'     && !isBookkeeper && <Invoice load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} resetLoad={resetLoad} />}
-        {tab === 'loads' && <Loads loads={loads} setLoads={setLoads} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} />}
+        {tab === 'loads'       && <Loads loads={loads} setLoads={setLoads} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} />}
         {tab === 'profile'     && !isBookkeeper && <DriverProfile driver={driver} api={API} showToast={showToast} pin={sessionPassword} />}
         {tab === 'maintenance' && <Maintenance driver={activeDriver} api={API} showToast={showToast} onEntriesChange={setMaintenanceEntries} role={role} />}
         {tab === 'assets'      && <Assets driver={activeDriver} api={API} showToast={showToast} maintenanceEntries={maintenanceEntries} role={role} />}
