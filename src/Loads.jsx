@@ -10,6 +10,7 @@ const TIM_CUT   = 0.80
 export default function Loads({ loads, setLoads, driver, api, showToast, fetchLoads }) {
 
   const [view,          setView]          = useState('all')
+  const [reportTab,     setReportTab]     = useState('carrier')  // 'carrier' | 'settlement'
   const [period,        setPeriod]        = useState('monthly')
   const [periodOffset,  setPeriodOffset]  = useState(0)
   const [confirmDelete, setConfirmDelete] = useState(null)
@@ -272,13 +273,8 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return api + load.invoice_url
   }
 
-  // ── TIM PAY FORMULA ──────────────────────────────────────
-  // Rate Con (base_pay) × 80% = Tim's Gross Pay
-  // Comdata Total − (Lumpers + Incidentals) = Advance Kept (cash Tim already has)
-  // Tim's Gross Pay − Advance Kept = Still Owed to Tim by Edgerton
-  //
-  // Uses D1 stored totals first (comdata_total, lumper_total, incidental_total)
-  // Falls back to item arrays for loads saved before totals were stored
+  // ── PAY FORMULAS ─────────────────────────────────────────
+  // Uses D1 stored totals first, falls back to item arrays
   function getLoadTotals(load) {
     const comdataTotal = parseFloat(load.comdata_total) > 0
       ? parseFloat(load.comdata_total)
@@ -303,31 +299,19 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return Math.max(0, comdataTotal - lumperTotal - incTotal)
   }
 
-  function stillOwed(load) {
-    if (load.driver !== 'TIM') return 0
-    const grossPay = (parseFloat(load.base_pay) || 0) * TIM_CUT
-    return Math.max(0, grossPay - advanceKept(load))
-  }
-
   // ── PERIOD NAVIGATION ────────────────────────────────────
   function inPeriod(load, p, offset) {
     const dateStr = loadDate(load)
     if (!dateStr) return false
     const d   = new Date(dateStr)
     const now = new Date()
-
     if (p === 'daily') {
-      const target = new Date(now)
-      target.setDate(target.getDate() + offset)
+      const target = new Date(now); target.setDate(target.getDate() + offset)
       return d.toDateString() === target.toDateString()
     }
     if (p === 'weekly') {
-      const end = new Date(now)
-      end.setDate(end.getDate() + offset * 7)
-      end.setHours(23,59,59,999)
-      const start = new Date(end)
-      start.setDate(end.getDate() - 6)
-      start.setHours(0,0,0,0)
+      const end = new Date(now); end.setDate(end.getDate() + offset * 7); end.setHours(23,59,59,999)
+      const start = new Date(end); start.setDate(end.getDate() - 6); start.setHours(0,0,0,0)
       return d >= start && d <= end
     }
     if (p === 'monthly') {
@@ -343,17 +327,14 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   function getPeriodLabel(p, offset) {
     const now = new Date()
     if (p === 'daily') {
-      const target = new Date(now)
-      target.setDate(target.getDate() + offset)
+      const target = new Date(now); target.setDate(target.getDate() + offset)
       if (offset === 0)  return 'TODAY'
       if (offset === -1) return 'YESTERDAY'
       return target.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' }).toUpperCase()
     }
     if (p === 'weekly') {
-      const end = new Date(now)
-      end.setDate(end.getDate() + offset * 7)
-      const start = new Date(end)
-      start.setDate(end.getDate() - 6)
+      const end = new Date(now); end.setDate(end.getDate() + offset * 7)
+      const start = new Date(end); start.setDate(end.getDate() - 6)
       return start.toLocaleDateString('en-US', { month:'short', day:'numeric' }).toUpperCase()
            + ' – '
            + end.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }).toUpperCase()
@@ -368,10 +349,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return ''
   }
 
-  function changePeriod(newPeriod) {
-    setPeriod(newPeriod)
-    setPeriodOffset(0)
-  }
+  function changePeriod(newPeriod) { setPeriod(newPeriod); setPeriodOffset(0) }
 
   // ── DRIVER SPLITS ────────────────────────────────────────
   const bruceLoads = loads.filter(l => l.driver === 'BRUCE')
@@ -387,9 +365,8 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       count:          inRange.length,
       billed:         billed.reduce((s,l)  => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
       paid:           paid.reduce((s,l)    => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
-      total:          inRange.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
-      grossPay:       gPay,
       ownerCut:       inRange.reduce((s,l) => s+calcPay(l).ownerCut, 0),
+      grossPay:       gPay,
       fuel:           inRange.reduce((s,l) => s+(parseFloat(l.fuel)||0), 0),
       advanceKept:    advKept,
       stillOwedToTim: Math.max(0, gPay - advKept),
@@ -432,9 +409,40 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   }
 
   const navBtn = {
-    padding:'6px 14px', borderRadius:8, border:'1px solid var(--border)',
-    background:'var(--navy3)', color:'var(--white)', fontSize:18,
+    padding:'6px 16px', borderRadius:8, border:'1px solid var(--border)',
+    background:'var(--navy3)', color:'var(--white)', fontSize:20,
     fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer', lineHeight:1,
+  }
+
+  // ── PERIOD NAVIGATOR UI — shared between both report types ─
+  function PeriodNav() {
+    return (
+      <div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:10 }}>
+          {['daily','weekly','monthly','yearly'].map(p => (
+            <button key={p} onClick={() => changePeriod(p)} style={{
+              padding:'9px 4px', borderRadius:8, border:'none',
+              fontFamily:'var(--font-head)', fontWeight:700, fontSize:11,
+              letterSpacing:'0.05em', cursor:'pointer',
+              background: period === p ? 'var(--white)' : 'var(--navy3)',
+              color:       period === p ? 'var(--navy)'  : 'var(--grey)',
+            }}>
+              {p.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
+          <button style={navBtn} onClick={() => setPeriodOffset(o => o - 1)}>‹</button>
+          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:13, color:'var(--amber)', letterSpacing:'0.08em', flex:1, padding:'0 8px' }}>
+            {getPeriodLabel(period, periodOffset)}
+            {periodOffset === 0 && <span style={{ fontSize:10, color:'var(--grey)', marginLeft:6 }}>CURRENT</span>}
+          </div>
+          <button style={{ ...navBtn, opacity: periodOffset >= 0 ? 0.3 : 1 }}
+            disabled={periodOffset >= 0}
+            onClick={() => setPeriodOffset(o => o + 1)}>›</button>
+        </div>
+      </div>
+    )
   }
 
   if (loads.length === 0) {
@@ -489,125 +497,123 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
         </div>
       </div>
 
-      {/* REPORTS VIEW */}
+      {/* ── REPORTS VIEW ─────────────────────────────────── */}
       {view === 'reports' && (
         <div>
 
-          {/* PERIOD TYPE TABS */}
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:10 }}>
-            {['daily','weekly','monthly','yearly'].map(p => (
-              <button key={p} onClick={() => changePeriod(p)} style={{
-                padding:'9px 4px', borderRadius:8, border:'none',
-                fontFamily:'var(--font-head)', fontWeight:700, fontSize:11,
-                letterSpacing:'0.05em', cursor:'pointer',
-                background: period === p ? 'var(--white)' : 'var(--navy3)',
-                color:       period === p ? 'var(--navy)'  : 'var(--grey)',
-              }}>
-                {p.toUpperCase()}
-              </button>
-            ))}
+          {/* CARRIER / SETTLEMENT TOGGLE */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16 }}>
+            <button onClick={() => setReportTab('carrier')} style={{
+              padding:'12px 0', borderRadius:10, border:'none',
+              fontFamily:'var(--font-head)', fontWeight:900, fontSize:13,
+              letterSpacing:'0.06em', cursor:'pointer',
+              background: reportTab === 'carrier' ? 'var(--amber)' : 'var(--navy3)',
+              color:       reportTab === 'carrier' ? 'var(--navy)'  : 'var(--grey)',
+            }}>
+              🚛 CARRIER
+            </button>
+            <button onClick={() => setReportTab('settlement')} style={{
+              padding:'12px 0', borderRadius:10, border:'none',
+              fontFamily:'var(--font-head)', fontWeight:900, fontSize:13,
+              letterSpacing:'0.06em', cursor:'pointer',
+              background: reportTab === 'settlement' ? 'var(--amber)' : 'var(--navy3)',
+              color:       reportTab === 'settlement' ? 'var(--navy)'  : 'var(--grey)',
+            }}>
+              💵 SETTLEMENT
+            </button>
           </div>
 
-          {/* PERIOD NAVIGATOR — left/right arrows */}
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
-            <button style={navBtn} onClick={() => setPeriodOffset(o => o - 1)}>‹</button>
-            <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:13, color:'var(--amber)', letterSpacing:'0.08em', flex:1, padding:'0 10px' }}>
-              {getPeriodLabel(period, periodOffset)}
-              {periodOffset === 0 && <span style={{ fontSize:10, color:'var(--grey)', marginLeft:6 }}>CURRENT</span>}
-            </div>
-            <button style={{ ...navBtn, opacity: periodOffset >= 0 ? 0.3 : 1 }}
-              disabled={periodOffset >= 0}
-              onClick={() => setPeriodOffset(o => o + 1)}>›</button>
-          </div>
+          <PeriodNav />
 
-          {/* MY FULL CARD */}
-          {loggedInDriver && (
-            <div className="card" style={{ borderLeft:'3px solid '+myColor, marginBottom:10 }}>
-              <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:myColor, marginBottom:10 }}>
-                {myName} {leader===myName?'👑':''} <span style={{ fontSize:11, fontWeight:400, color:'var(--grey)' }}>— MY REPORT</span>
+          {/* ── CARRIER REPORT ─────────────────────────── */}
+          {reportTab === 'carrier' && (
+            <div>
+              <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:10, textAlign:'center' }}>
+                CARRIER BILLING — LOADS INVOICED, PAID &amp; OUTSTANDING
               </div>
-              <div className="amount-row"><span className="label">Loads</span><span className="value">{myStats.count}</span></div>
-              <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(myStats.billed)}</span></div>
-              <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(myStats.paid)}</span></div>
-              <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(myStats.billed-myStats.paid)}</span></div>
-              <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
-                {myIsBruce && (
-                  <div className="amount-row"><span className="label">Owner Cut (20%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(myStats.ownerCut)}</span></div>
-                )}
-                {myIsTim && (<>
-                  <div className="amount-row"><span className="label">Gross Pay (80%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(myStats.grossPay)}</span></div>
-                  <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(myStats.advanceKept)}</span></div>
-                  <div className="amount-row"><span className="label">Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(myStats.fuel)}</span></div>
-                  <div style={{marginTop:6,paddingTop:6,borderTop:'1px solid var(--border)'}}>
+
+              {/* BRUCE CARRIER */}
+              <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
+                <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>
+                  BRUCE {leader==='BRUCE'?'👑':''}
+                </div>
+                <div className="amount-row"><span className="label">Loads Invoiced</span><span className="value">{bruceStats.count}</span></div>
+                <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed)}</span></div>
+                <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid)}</span></div>
+                <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(bruceStats.billed-bruceStats.paid)}</span></div>
+              </div>
+
+              {/* TIM CARRIER */}
+              <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
+                <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>
+                  TIM {leader==='TIM'?'👑':''}
+                </div>
+                <div className="amount-row"><span className="label">Loads Invoiced</span><span className="value">{timStats.count}</span></div>
+                <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.billed)}</span></div>
+                <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.paid)}</span></div>
+                <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.billed-timStats.paid)}</span></div>
+              </div>
+
+              {/* COMBINED CARRIER */}
+              <div className="card" style={{ borderLeft:'3px solid var(--amber)' }}>
+                <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>
+                  COMBINED — {getPeriodLabel(period, periodOffset)}
+                </div>
+                <div className="amount-row"><span className="label">Total Loads</span><span className="value">{bruceStats.count+timStats.count}</span></div>
+                <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed+timStats.billed)}</span></div>
+                <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid+timStats.paid)}</span></div>
+                <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt((bruceStats.billed+timStats.billed)-(bruceStats.paid+timStats.paid))}</span></div>
+              </div>
+            </div>
+          )}
+
+          {/* ── SETTLEMENT REPORT ──────────────────────── */}
+          {reportTab === 'settlement' && (
+            <div>
+              <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:10, textAlign:'center' }}>
+                DRIVER SETTLEMENT — PAY RECONCILIATION
+              </div>
+
+              {/* BRUCE SETTLEMENT */}
+              <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
+                <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>
+                  BRUCE {leader==='BRUCE'?'👑':''}
+                </div>
+                <div className="amount-row"><span className="label">Loads</span><span className="value">{bruceStats.count}</span></div>
+                <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
+                  <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>OWNER SETTLEMENT</div>
+                  <div className="amount-row"><span className="label">Owner Cut (20%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.ownerCut)}</span></div>
+                </div>
+              </div>
+
+              {/* TIM SETTLEMENT */}
+              <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
+                <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>
+                  TIM {leader==='TIM'?'👑':''}
+                </div>
+                <div className="amount-row"><span className="label">Loads</span><span className="value">{timStats.count}</span></div>
+                <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
+                  <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>DRIVER SETTLEMENT</div>
+                  <div className="amount-row"><span className="label">Rate Con Total</span><span className="value">{fmt(timLoads.filter(l=>inPeriod(l,period,periodOffset)).reduce((s,l)=>s+(parseFloat(l.base_pay)||0),0))}</span></div>
+                  <div className="amount-row"><span className="label">Gross Pay (80%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay)}</span></div>
+                  <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.advanceKept)}</span></div>
+                  <div className="amount-row"><span className="label">Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.fuel)}</span></div>
+                  <div style={{marginTop:8,paddingTop:8,borderTop:'2px solid var(--border)'}}>
                     <div className="amount-row">
-                      <span className="label" style={{fontWeight:700,color:'var(--white)'}}>Still Owed to Tim</span>
-                      <span className="value" style={{color:'var(--amber)',fontSize:16,fontWeight:900}}>{fmt(myStats.stillOwedToTim)}</span>
+                      <span className="label" style={{fontWeight:900,color:'var(--white)',fontSize:14}}>Still Owed to Tim</span>
+                      <span className="value" style={{color:'var(--amber)',fontSize:18,fontWeight:900}}>{fmt(timStats.stillOwedToTim)}</span>
                     </div>
-                  </div>
-                </>)}
-              </div>
-            </div>
-          )}
-
-          {/* THEIR CONDENSED CARD */}
-          {loggedInDriver && (
-            <div className="card" style={{ borderLeft:'3px solid '+theirColor, marginBottom:10, opacity:0.85 }}>
-              <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:theirColor, marginBottom:10 }}>
-                {theirName} {leader===theirName?'👑':''}
-                <span style={{ fontSize:11, fontWeight:400, color:'var(--grey)', marginLeft:6 }}>— COMPETITION</span>
-              </div>
-              <div className="amount-row"><span className="label">Loads</span><span className="value">{theirStats.count}</span></div>
-              <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(theirStats.billed)}</span></div>
-              <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(theirStats.paid)}</span></div>
-            </div>
-          )}
-
-          {/* BOOKKEEPER SEES BOTH FULL CARDS */}
-          {!loggedInDriver && (<>
-            <div className="card" style={{ borderLeft:'3px solid #1e88e5', marginBottom:10 }}>
-              <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#1e88e5', marginBottom:10 }}>BRUCE {leader==='BRUCE'?'👑':''}</div>
-              <div className="amount-row"><span className="label">Loads</span><span className="value">{bruceStats.count}</span></div>
-              <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed)}</span></div>
-              <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid)}</span></div>
-              <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(bruceStats.billed-bruceStats.paid)}</span></div>
-              <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
-                <div className="amount-row"><span className="label">Owner Cut (20%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.ownerCut)}</span></div>
-              </div>
-            </div>
-            <div className="card" style={{ borderLeft:'3px solid #e53935', marginBottom:10 }}>
-              <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'#e53935', marginBottom:10 }}>TIM {leader==='TIM'?'👑':''}</div>
-              <div className="amount-row"><span className="label">Loads</span><span className="value">{timStats.count}</span></div>
-              <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.billed)}</span></div>
-              <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.paid)}</span></div>
-              <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.billed-timStats.paid)}</span></div>
-              <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
-                <div className="amount-row"><span className="label">Gross Pay (80%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay)}</span></div>
-                <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.advanceKept)}</span></div>
-                <div className="amount-row"><span className="label">Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.fuel)}</span></div>
-                <div style={{marginTop:6,paddingTop:6,borderTop:'1px solid var(--border)'}}>
-                  <div className="amount-row">
-                    <span className="label" style={{fontWeight:700,color:'var(--white)'}}>Still Owed to Tim</span>
-                    <span className="value" style={{color:'var(--amber)',fontSize:16,fontWeight:900}}>{fmt(timStats.stillOwedToTim)}</span>
                   </div>
                 </div>
               </div>
-            </div>
-          </>)}
 
-          {/* COMBINED */}
-          <div className="card" style={{ borderLeft:'3px solid var(--amber)' }}>
-            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>
-              COMBINED — {getPeriodLabel(period, periodOffset)}
             </div>
-            <div className="amount-row"><span className="label">Total Loads</span><span className="value">{bruceStats.count+timStats.count}</span></div>
-            <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed+timStats.billed)}</span></div>
-            <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid+timStats.paid)}</span></div>
-            <div className="amount-row"><span className="label">Outstanding</span><span className="value" style={{color:'var(--red)'}}>{fmt((bruceStats.billed+timStats.billed)-(bruceStats.paid+timStats.paid))}</span></div>
-          </div>
+          )}
+
         </div>
       )}
 
-      {/* LOADS LIST VIEW */}
+      {/* ── LOADS LIST VIEW ──────────────────────────────── */}
       {view !== 'reports' && (
         <div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
@@ -645,7 +651,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
             const comdatas    = load.comdatas     || []
             const lumperTot   = lumpers.reduce((s,i)     => s+(parseFloat(i.amount)||0), 0)
             const incTot      = incidentals.reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
-            const comdataTot  = comdatas.reduce((s,i)   => s+(parseFloat(i.amount)||0), 0)
             const subtotal    = basePay + lumperTot + incTot + detention + pallets
             const bolCount    = load.bol_count || (load.bols && load.bols.length) || 0
             const dateStr     = loadDate(load)
@@ -653,26 +658,19 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
 
             return (
               <div key={load.id || idx} style={{
-                background: 'var(--white)',
-                borderRadius: 10,
-                marginBottom: 14,
-                overflow: 'hidden',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+                background:'var(--white)', borderRadius:10, marginBottom:14,
+                overflow:'hidden', boxShadow:'0 2px 8px rgba(0,0,0,0.18)',
               }}>
 
                 <div style={{
                   background: load.driver === 'BRUCE' ? '#1A3A5C' : '#2a0a0a',
-                  padding: '10px 14px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
+                  padding:'10px 14px', display:'flex', justifyContent:'space-between', alignItems:'center',
                 }}>
                   <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                     <div style={{
-                      padding:'2px 8px', borderRadius:10,
-                      fontSize:10, fontFamily:'var(--font-head)', fontWeight:700,
-                      background: load.driver === 'BRUCE' ? '#1e88e5' : '#e53935',
-                      color:'#fff',
+                      padding:'2px 8px', borderRadius:10, fontSize:10,
+                      fontFamily:'var(--font-head)', fontWeight:700,
+                      background: load.driver === 'BRUCE' ? '#1e88e5' : '#e53935', color:'#fff',
                     }}>
                       {load.driver || '-'}
                     </div>
