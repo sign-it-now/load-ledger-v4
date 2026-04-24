@@ -11,6 +11,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
 
   const [view,          setView]          = useState('all')
   const [period,        setPeriod]        = useState('monthly')
+  const [periodOffset,  setPeriodOffset]  = useState(0)
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [deleting,      setDeleting]      = useState(false)
   const [updating,      setUpdating]      = useState(null)
@@ -271,6 +272,26 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return api + load.invoice_url
   }
 
+  // ── TIM PAY FORMULA ──────────────────────────────────────
+  // Rate Con (base_pay) × 80% = Tim's Gross Pay
+  // Comdata Total − (Lumpers + Incidentals) = Advance Kept (cash Tim already has)
+  // Tim's Gross Pay − Advance Kept = Still Owed to Tim by Edgerton
+  //
+  // Uses D1 stored totals first (comdata_total, lumper_total, incidental_total)
+  // Falls back to item arrays for loads saved before totals were stored
+  function getLoadTotals(load) {
+    const comdataTotal = parseFloat(load.comdata_total) > 0
+      ? parseFloat(load.comdata_total)
+      : (load.comdatas || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
+    const lumperTotal  = parseFloat(load.lumper_total) > 0
+      ? parseFloat(load.lumper_total)
+      : (load.lumpers || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
+    const incTotal     = parseFloat(load.incidental_total) > 0
+      ? parseFloat(load.incidental_total)
+      : (load.incidentals || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
+    return { comdataTotal, lumperTotal, incTotal }
+  }
+
   function calcPay(load) {
     const base = parseFloat(load.base_pay) || 0
     if (load.driver === 'BRUCE') return { gross:base, ownerCut:base*BRUCE_CUT, driverNet:base }
@@ -278,40 +299,100 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   }
 
   function advanceKept(load) {
-    const c = (load.comdatas    || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
-    const l = (load.lumpers     || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
-    const n = (load.incidentals || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
-    return Math.max(0, c - l - n)
+    const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
+    return Math.max(0, comdataTotal - lumperTotal - incTotal)
   }
 
-  function inPeriod(load, p) {
+  function stillOwed(load) {
+    if (load.driver !== 'TIM') return 0
+    const grossPay = (parseFloat(load.base_pay) || 0) * TIM_CUT
+    return Math.max(0, grossPay - advanceKept(load))
+  }
+
+  // ── PERIOD NAVIGATION ────────────────────────────────────
+  function inPeriod(load, p, offset) {
     const dateStr = loadDate(load)
     if (!dateStr) return false
-    const d = new Date(dateStr), now = new Date()
-    if (p === 'daily')   return d.toDateString() === now.toDateString()
-    if (p === 'weekly')  { const s = new Date(now); s.setDate(now.getDate()-6); s.setHours(0,0,0,0); return d >= s }
-    if (p === 'monthly') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
-    if (p === 'yearly')  return d.getFullYear() === now.getFullYear()
+    const d   = new Date(dateStr)
+    const now = new Date()
+
+    if (p === 'daily') {
+      const target = new Date(now)
+      target.setDate(target.getDate() + offset)
+      return d.toDateString() === target.toDateString()
+    }
+    if (p === 'weekly') {
+      const end = new Date(now)
+      end.setDate(end.getDate() + offset * 7)
+      end.setHours(23,59,59,999)
+      const start = new Date(end)
+      start.setDate(end.getDate() - 6)
+      start.setHours(0,0,0,0)
+      return d >= start && d <= end
+    }
+    if (p === 'monthly') {
+      const target = new Date(now.getFullYear(), now.getMonth() + offset, 1)
+      return d.getMonth() === target.getMonth() && d.getFullYear() === target.getFullYear()
+    }
+    if (p === 'yearly') {
+      return d.getFullYear() === now.getFullYear() + offset
+    }
     return false
+  }
+
+  function getPeriodLabel(p, offset) {
+    const now = new Date()
+    if (p === 'daily') {
+      const target = new Date(now)
+      target.setDate(target.getDate() + offset)
+      if (offset === 0)  return 'TODAY'
+      if (offset === -1) return 'YESTERDAY'
+      return target.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' }).toUpperCase()
+    }
+    if (p === 'weekly') {
+      const end = new Date(now)
+      end.setDate(end.getDate() + offset * 7)
+      const start = new Date(end)
+      start.setDate(end.getDate() - 6)
+      return start.toLocaleDateString('en-US', { month:'short', day:'numeric' }).toUpperCase()
+           + ' – '
+           + end.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }).toUpperCase()
+    }
+    if (p === 'monthly') {
+      const target = new Date(now.getFullYear(), now.getMonth() + offset, 1)
+      return target.toLocaleDateString('en-US', { month:'long', year:'numeric' }).toUpperCase()
+    }
+    if (p === 'yearly') {
+      return String(now.getFullYear() + offset)
+    }
+    return ''
+  }
+
+  function changePeriod(newPeriod) {
+    setPeriod(newPeriod)
+    setPeriodOffset(0)
   }
 
   // ── DRIVER SPLITS ────────────────────────────────────────
   const bruceLoads = loads.filter(l => l.driver === 'BRUCE')
   const timLoads   = loads.filter(l => l.driver === 'TIM')
 
-  function driverStats(dLoads, p) {
-    const inRange = dLoads.filter(l => inPeriod(l, p))
+  function driverStats(dLoads, p, offset) {
+    const inRange = dLoads.filter(l => inPeriod(l, p, offset))
     const billed  = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
     const paid    = inRange.filter(l => l.status === 'paid')
+    const advKept = inRange.reduce((s,l) => s+advanceKept(l), 0)
+    const gPay    = inRange.reduce((s,l) => s+calcPay(l).driverNet, 0)
     return {
-      count:       inRange.length,
-      billed:      billed.reduce((s,l)  => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
-      paid:        paid.reduce((s,l)    => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
-      total:       inRange.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
-      grossPay:    inRange.reduce((s,l) => s+calcPay(l).driverNet, 0),
-      ownerCut:    inRange.reduce((s,l) => s+calcPay(l).ownerCut, 0),
-      fuel:        inRange.reduce((s,l) => s+(parseFloat(l.fuel)||0), 0),
-      advanceKept: inRange.reduce((s,l) => s+advanceKept(l), 0),
+      count:          inRange.length,
+      billed:         billed.reduce((s,l)  => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      paid:           paid.reduce((s,l)    => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      total:          inRange.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      grossPay:       gPay,
+      ownerCut:       inRange.reduce((s,l) => s+calcPay(l).ownerCut, 0),
+      fuel:           inRange.reduce((s,l) => s+(parseFloat(l.fuel)||0), 0),
+      advanceKept:    advKept,
+      stillOwedToTim: Math.max(0, gPay - advKept),
     }
   }
 
@@ -331,31 +412,29 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const totalPaid   = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
   const totalUnpaid = totalNet - totalPaid
 
-  const bruceStats  = driverStats(bruceLoads, period)
-  const timStats    = driverStats(timLoads,   period)
-  const periodLabel = { daily:'TODAY', weekly:'THIS WEEK', monthly:'THIS MONTH', yearly:'THIS YEAR' }
+  const bruceStats  = driverStats(bruceLoads, period, periodOffset)
+  const timStats    = driverStats(timLoads,   period, periodOffset)
 
-  // ── WHO IS ME vs THEM in reports ─────────────────────────
-  // driver prop tells us who is logged in
-  // TIM sees TIM first, BRUCE sees BRUCE first
-  // bookkeeper (driver=null) sees both full cards
   const loggedInDriver = driver ? driver.toUpperCase() : null
   const myIsBruce      = loggedInDriver === 'BRUCE'
   const myIsTim        = loggedInDriver === 'TIM'
-
-  const myStats      = myIsBruce ? bruceStats    : timStats
-  const theirStats   = myIsBruce ? timStats       : bruceStats
-  const myAllTime    = myIsBruce ? bruceTotalAllTime : timTotalAllTime
-  const theirAllTime = myIsBruce ? timTotalAllTime   : bruceTotalAllTime
-  const myColor      = myIsBruce ? '#1e88e5' : '#e53935'
-  const theirColor   = myIsBruce ? '#e53935' : '#1e88e5'
-  const myName       = myIsBruce ? 'BRUCE' : 'TIM'
-  const theirName    = myIsBruce ? 'TIM'   : 'BRUCE'
+  const myStats        = myIsBruce ? bruceStats : timStats
+  const theirStats     = myIsBruce ? timStats   : bruceStats
+  const myColor        = myIsBruce ? '#1e88e5'  : '#e53935'
+  const theirColor     = myIsBruce ? '#e53935'  : '#1e88e5'
+  const myName         = myIsBruce ? 'BRUCE'    : 'TIM'
+  const theirName      = myIsBruce ? 'TIM'      : 'BRUCE'
 
   const editInputStyle = {
     width:'100%', background:'var(--navy3)', border:'1px solid var(--border)',
     color:'var(--white)', borderRadius:8, padding:'8px 10px',
     fontSize:14, fontFamily:'var(--font-body)', boxSizing:'border-box',
+  }
+
+  const navBtn = {
+    padding:'6px 14px', borderRadius:8, border:'1px solid var(--border)',
+    background:'var(--navy3)', color:'var(--white)', fontSize:18,
+    fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer', lineHeight:1,
   }
 
   if (loads.length === 0) {
@@ -413,9 +492,11 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       {/* REPORTS VIEW */}
       {view === 'reports' && (
         <div>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:14 }}>
+
+          {/* PERIOD TYPE TABS */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginBottom:10 }}>
             {['daily','weekly','monthly','yearly'].map(p => (
-              <button key={p} onClick={() => setPeriod(p)} style={{
+              <button key={p} onClick={() => changePeriod(p)} style={{
                 padding:'9px 4px', borderRadius:8, border:'none',
                 fontFamily:'var(--font-head)', fontWeight:700, fontSize:11,
                 letterSpacing:'0.05em', cursor:'pointer',
@@ -427,11 +508,19 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
             ))}
           </div>
 
-          <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:13, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:12 }}>
-            {periodLabel[period]} - PER DRIVER REPORT
+          {/* PERIOD NAVIGATOR — left/right arrows */}
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
+            <button style={navBtn} onClick={() => setPeriodOffset(o => o - 1)}>‹</button>
+            <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:13, color:'var(--amber)', letterSpacing:'0.08em', flex:1, padding:'0 10px' }}>
+              {getPeriodLabel(period, periodOffset)}
+              {periodOffset === 0 && <span style={{ fontSize:10, color:'var(--grey)', marginLeft:6 }}>CURRENT</span>}
+            </div>
+            <button style={{ ...navBtn, opacity: periodOffset >= 0 ? 0.3 : 1 }}
+              disabled={periodOffset >= 0}
+              onClick={() => setPeriodOffset(o => o + 1)}>›</button>
           </div>
 
-          {/* MY FULL CARD — logged-in driver first */}
+          {/* MY FULL CARD */}
           {loggedInDriver && (
             <div className="card" style={{ borderLeft:'3px solid '+myColor, marginBottom:10 }}>
               <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:myColor, marginBottom:10 }}>
@@ -449,12 +538,18 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                   <div className="amount-row"><span className="label">Gross Pay (80%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(myStats.grossPay)}</span></div>
                   <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(myStats.advanceKept)}</span></div>
                   <div className="amount-row"><span className="label">Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(myStats.fuel)}</span></div>
+                  <div style={{marginTop:6,paddingTop:6,borderTop:'1px solid var(--border)'}}>
+                    <div className="amount-row">
+                      <span className="label" style={{fontWeight:700,color:'var(--white)'}}>Still Owed to Tim</span>
+                      <span className="value" style={{color:'var(--amber)',fontSize:16,fontWeight:900}}>{fmt(myStats.stillOwedToTim)}</span>
+                    </div>
+                  </div>
                 </>)}
               </div>
             </div>
           )}
 
-          {/* THEIR CONDENSED CARD — competition reference only */}
+          {/* THEIR CONDENSED CARD */}
           {loggedInDriver && (
             <div className="card" style={{ borderLeft:'3px solid '+theirColor, marginBottom:10, opacity:0.85 }}>
               <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:theirColor, marginBottom:10 }}>
@@ -489,13 +584,21 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                 <div className="amount-row"><span className="label">Gross Pay (80%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay)}</span></div>
                 <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.advanceKept)}</span></div>
                 <div className="amount-row"><span className="label">Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.fuel)}</span></div>
+                <div style={{marginTop:6,paddingTop:6,borderTop:'1px solid var(--border)'}}>
+                  <div className="amount-row">
+                    <span className="label" style={{fontWeight:700,color:'var(--white)'}}>Still Owed to Tim</span>
+                    <span className="value" style={{color:'var(--amber)',fontSize:16,fontWeight:900}}>{fmt(timStats.stillOwedToTim)}</span>
+                  </div>
+                </div>
               </div>
             </div>
           </>)}
 
           {/* COMBINED */}
           <div className="card" style={{ borderLeft:'3px solid var(--amber)' }}>
-            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>COMBINED {periodLabel[period]}</div>
+            <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:'var(--amber)', marginBottom:10 }}>
+              COMBINED — {getPeriodLabel(period, periodOffset)}
+            </div>
             <div className="amount-row"><span className="label">Total Loads</span><span className="value">{bruceStats.count+timStats.count}</span></div>
             <div className="amount-row"><span className="label">Total Billed</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.billed+timStats.billed)}</span></div>
             <div className="amount-row"><span className="label">Total Paid</span><span className="value" style={{color:'var(--green)'}}>{fmt(bruceStats.paid+timStats.paid)}</span></div>
@@ -507,7 +610,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       {/* LOADS LIST VIEW */}
       {view !== 'reports' && (
         <div>
-          {/* TOTALS BAR */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
             <div className="card" style={{ padding:12, textAlign:'center', marginBottom:0 }}>
               <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:4 }}>TOTAL</div>
@@ -558,7 +660,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                 boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
               }}>
 
-                {/* DARK HEADER STRIP */}
                 <div style={{
                   background: load.driver === 'BRUCE' ? '#1A3A5C' : '#2a0a0a',
                   padding: '10px 14px',
@@ -589,7 +690,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                   </div>
                 </div>
 
-                {/* WHITE LEDGER BODY */}
                 <div style={{ padding:'12px 14px' }}>
 
                   <div style={{ marginBottom:10 }}>
