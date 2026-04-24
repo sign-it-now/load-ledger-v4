@@ -15,7 +15,6 @@ function json(data, status = 200) {
   });
 }
 
-// ── USER VALIDATION — checks D1 users table, falls back to env PIN ──
 async function validUser(driver, credential, env) {
   if (!driver || !credential) return false
   try {
@@ -519,18 +518,13 @@ export default {
     }
 
     // ── LOADS PATCH ──────────────────────────────────────
-    // Handles status/fuel updates AND full invoice edits from the EDIT drawer
     if (path.startsWith('/api/loads/') && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
         const b  = await request.json();
         const fields = []; const values = []
-
-        // Status and fuel
-        if (b.status !== undefined)  { fields.push('status=?');  values.push(b.status); }
-        if (b.fuel   !== undefined)  { fields.push('fuel=?');    values.push(parseFloat(b.fuel) || 0); }
-
-        // Invoice edit fields
+        if (b.status      !== undefined) { fields.push('status=?');      values.push(b.status); }
+        if (b.fuel        !== undefined) { fields.push('fuel=?');        values.push(parseFloat(b.fuel) || 0); }
         if (b.base_pay    !== undefined) { fields.push('base_pay=?');    values.push(parseFloat(b.base_pay)  || 0); }
         if (b.detention   !== undefined) { fields.push('detention=?');   values.push(parseFloat(b.detention) || 0); }
         if (b.pallets     !== undefined) { fields.push('pallets=?');     values.push(parseFloat(b.pallets)   || 0); }
@@ -541,7 +535,6 @@ export default {
         if (b.comdatas    !== undefined) { fields.push('comdatas=?');    values.push(typeof b.comdatas    === 'string' ? b.comdatas    : JSON.stringify(b.comdatas)); }
         if (b.edited      !== undefined) { fields.push('edited=?');      values.push(b.edited); }
         if (b.edited_date !== undefined) { fields.push('edited_date=?'); values.push(b.edited_date); }
-
         if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
         values.push(id);
         await env.DB.prepare('UPDATE loads SET ' + fields.join(', ') + ' WHERE id=?').bind(...values).run();
@@ -552,7 +545,6 @@ export default {
     }
 
     // ── LOADS DELETE ─────────────────────────────────────
-    // Driver is read from D1 — no body required from client
     if (path.startsWith('/api/loads/') && request.method === 'DELETE') {
       try {
         const id  = path.split('/')[3];
@@ -563,6 +555,96 @@ export default {
         return json({ ok: true });
       } catch(e) {
         return json({ error: e.message }, 500);
+      }
+    }
+
+    // ── FUEL ENTRIES GET ─────────────────────────────────
+    if (path.startsWith('/api/fuel/') && request.method === 'GET') {
+      try {
+        const driver = path.split('/')[3].toUpperCase()
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM fuel_entries WHERE driver=? ORDER BY entry_date DESC, created_at DESC LIMIT 500'
+        ).bind(driver).all()
+        return json(results)
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── FUEL ENTRIES POST ────────────────────────────────
+    if (path === '/api/fuel' && request.method === 'POST') {
+      try {
+        const b  = await request.json()
+        const id = crypto.randomUUID()
+        if (!b.driver) return json({ error: 'Missing driver' }, 400)
+        await env.DB.prepare(`
+          INSERT INTO fuel_entries
+            (id, driver, entry_date, amount, fuel_type, notes, receipt_url, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        `).bind(
+          id,
+          b.driver.toUpperCase(),
+          b.entry_date  || new Date().toISOString().split('T')[0],
+          parseFloat(b.amount) || 0,
+          b.fuel_type   || 'fleet',
+          b.notes       || '',
+          b.receipt_url || '',
+        ).run()
+        return json({ id })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── FUEL ENTRIES DELETE ──────────────────────────────
+    if (path.startsWith('/api/fuel/') && path.split('/').length === 4 && request.method === 'DELETE') {
+      try {
+        const id  = path.split('/')[3]
+        const row = await env.DB.prepare('SELECT driver FROM fuel_entries WHERE id=?').bind(id).first()
+        if (!row) return json({ error: 'Entry not found' }, 404)
+        if (env.R2) {
+          await env.R2.delete('fuel/' + id + '.jpg').catch(() => {})
+          await env.R2.delete('fuel/' + id + '.pdf').catch(() => {})
+        }
+        await env.DB.prepare('DELETE FROM fuel_entries WHERE id=?').bind(id).run()
+        return json({ ok: true })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── UPLOAD FUEL RECEIPT TO R2 ────────────────────────
+    if (path.startsWith('/api/fuel-receipt/') && request.method === 'POST') {
+      try {
+        const entryId = path.split('/')[3]
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500)
+        const { base64, mediaType } = await request.json()
+        const binary = atob(base64); const bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        const ext = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
+        await env.R2.put('fuel/' + entryId + '.' + ext, bytes, { httpMetadata: { contentType: mediaType } })
+        const receiptUrl = '/api/fuel-receipt/' + entryId
+        await env.DB.prepare('UPDATE fuel_entries SET receipt_url=? WHERE id=?').bind(receiptUrl, entryId).run()
+        return json({ ok: true, url: receiptUrl })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── SERVE FUEL RECEIPT FROM R2 ───────────────────────
+    if (path.startsWith('/api/fuel-receipt/') && request.method === 'GET') {
+      try {
+        const entryId = path.split('/')[3]
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500)
+        let object = await env.R2.get('fuel/' + entryId + '.jpg')
+        let contentType = 'image/jpeg'
+        if (!object) { object = await env.R2.get('fuel/' + entryId + '.pdf'); contentType = 'application/pdf' }
+        if (!object) return new Response('Receipt not found', { status: 404, headers: CORS })
+        return new Response(object.body, {
+          headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
+        })
+      } catch(e) {
+        return json({ error: e.message }, 500)
       }
     }
 
@@ -588,6 +670,10 @@ amount must be digits only like "250.00" with no dollar sign. If truly nothing f
 Look for the total amount charged on this receipt.
 Return ONLY valid JSON, nothing else: {"amount":"0.00"}
 amount must be digits only like "45.00" with no dollar sign. If no amount found return {"amount":"0.00"}`,
+    fuel: `This is a fuel receipt or fleet card statement for a truck driver.
+Look for the total fuel amount charged — it may say Total, Amount, Fuel Total, Transaction Total, or similar.
+Return ONLY valid JSON, nothing else: {"amount":"0.00"}
+amount must be digits only like "245.80" with no dollar sign. If no amount found return {"amount":"0.00"}`,
     text: `Extract all visible text from this document. Return plain text only.`,
   };
   return prompts[mode] || null;
