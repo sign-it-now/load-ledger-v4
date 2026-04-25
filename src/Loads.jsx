@@ -9,15 +9,16 @@ const TIM_CUT   = 0.80
 
 export default function Loads({ loads, setLoads, driver, api, showToast, fetchLoads }) {
 
-  const [view,          setView]          = useState('all')
-  const [reportTab,     setReportTab]     = useState('carrier')
-  const [period,        setPeriod]        = useState('monthly')
-  const [periodOffset,  setPeriodOffset]  = useState(0)
-  const [confirmDelete, setConfirmDelete] = useState(null)
-  const [deleting,      setDeleting]      = useState(false)
-  const [updating,      setUpdating]      = useState(null)
-  const [editIdx,       setEditIdx]       = useState(null)
-  const [editData,      setEditData]      = useState(null)
+  const [view,                 setView]                 = useState('all')
+  const [reportTab,            setReportTab]            = useState('carrier')
+  const [period,               setPeriod]               = useState('monthly')
+  const [periodOffset,         setPeriodOffset]         = useState(0)
+  const [confirmDelete,        setConfirmDelete]        = useState(null)
+  const [deleting,             setDeleting]             = useState(false)
+  const [updating,             setUpdating]             = useState(null)
+  const [editIdx,              setEditIdx]              = useState(null)
+  const [editData,             setEditData]             = useState(null)
+  const [showSettlementReport, setShowSettlementReport] = useState(null) // null | 'TIM' | 'BRUCE'
 
   const [fuelEntries,    setFuelEntries]    = useState([])
   const [showFuelDrawer, setShowFuelDrawer] = useState(false)
@@ -443,8 +444,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return { comdataTotal, lumperTotal, incTotal }
   }
 
-  // Bruce: 20% of base_pay only — detention excluded
-  // Tim:   80% of base_pay + 100% of detention
   function calcPay(load) {
     const base      = parseFloat(load.base_pay) || 0
     const detention = parseFloat(load.detention) || 0
@@ -523,112 +522,271 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return fuelEntries.filter(f => f.driver === driverName.toUpperCase() && inPeriodByDate(f.entry_date, period, periodOffset))
   }
 
-  // ── EXPORT SETTLEMENT TO CSV (opens in Excel) ─────────────
-  // No dependencies needed — CSV opens natively in Excel on any device
-  function exportSettlementCSV(driverName) {
+  // ── BUILD SETTLEMENT DATA — shared by in-app view and CSV export ──
+  function buildSettlementData(driverName) {
     const dLoads      = loads.filter(l => l.driver === driverName)
     const inRange     = dLoads.filter(l => inPeriod(l, period, periodOffset))
-    const periodLabel = getPeriodLabel(period, periodOffset)
-    const generated   = new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })
     const fuelInRange = fuelEntries.filter(f => f.driver === driverName && inPeriodByDate(f.entry_date, period, periodOffset))
     const fleetFuelTotal  = fuelInRange.filter(f => f.fuel_type === 'fleet').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
     const pocketFuelTotal = fuelInRange.filter(f => f.fuel_type === 'pocket').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
-    const n = (v) => (parseFloat(v)||0).toFixed(2)
-    const rows = []
 
-    // HEADER
-    rows.push(['EDGERTON TRUCK & TRAILER REPAIR'])
-    rows.push(['DRIVER SETTLEMENT STATEMENT'])
-    rows.push([])
-    rows.push(['Driver:', driverName])
-    rows.push(['Period:', periodLabel])
-    rows.push(['Generated:', generated])
-    rows.push([])
-
-    // EARNINGS
-    rows.push(['EARNINGS'])
-    rows.push(['Load #', 'Rate Con', '80% Gross Pay', 'Detention (100%)', 'Total Earned'])
     let totalRateCon = 0, totalGross80 = 0, totalDetention = 0, totalEarned = 0
-    inRange.forEach(l => {
-      const base      = parseFloat(l.base_pay) || 0
-      const det       = parseFloat(l.detention) || 0
-      const gross80   = base * TIM_CUT
-      const earned    = gross80 + det
+    let totalAdvKept = 0, totalReimb = 0
+
+    const earningsRows = inRange.map(l => {
+      const base    = parseFloat(l.base_pay) || 0
+      const det     = parseFloat(l.detention) || 0
+      const gross80 = base * TIM_CUT
+      const earned  = gross80 + det
       totalRateCon   += base
       totalGross80   += gross80
       totalDetention += det
       totalEarned    += earned
-      rows.push([l.load_number || '-', n(base), n(gross80), det > 0 ? n(det) : '', n(earned)])
+      return { loadNum: l.load_number || '-', base, gross80, det, earned }
     })
-    rows.push(['TOTAL', n(totalRateCon), n(totalGross80), n(totalDetention), n(totalEarned)])
-    rows.push([])
 
-    // ADVANCES & REIMBURSEMENTS
-    rows.push(['ADVANCES & REIMBURSEMENTS'])
-    rows.push(['Load #', 'Comdata Issued', 'Lumpers + Incidentals', 'Advance Kept', 'Reimbursement Owed'])
-    let totalAdvKept = 0, totalReimb = 0
-    inRange.forEach(l => {
+    const advRows = inRange.filter(l => {
       const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(l)
-      if (comdataTotal === 0 && lumperTotal === 0 && incTotal === 0) return
+      return comdataTotal > 0 || lumperTotal > 0 || incTotal > 0
+    }).map(l => {
+      const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(l)
       const expenses = lumperTotal + incTotal
       const advKept  = Math.max(0, comdataTotal - expenses)
       const reimb    = Math.max(0, expenses - comdataTotal)
       totalAdvKept  += advKept
       totalReimb    += reimb
-      rows.push([l.load_number || '-', n(comdataTotal), n(expenses), advKept > 0 ? n(advKept) : '', reimb > 0 ? n(reimb) : ''])
+      return { loadNum: l.load_number || '-', comdata: comdataTotal, expenses, advKept, reimb }
     })
-    rows.push(['TOTAL', '', '', n(totalAdvKept), n(totalReimb)])
-    rows.push([])
 
-    // FUEL
-    if (fuelInRange.length > 0) {
-      rows.push(['FUEL'])
-      rows.push(['Date', 'Type', 'Notes', 'Amount'])
-      fuelInRange.forEach(f => {
-        rows.push([f.entry_date, f.fuel_type === 'fleet' ? 'Fleet Card (deducted from pay)' : 'Out of Pocket (tax expense)', f.notes || '', n(f.amount)])
-      })
-      rows.push(['Fleet Card Total', '', '', n(fleetFuelTotal)])
-      if (pocketFuelTotal > 0) rows.push(['Out of Pocket Total (tax expense)', '', '', n(pocketFuelTotal)])
-      rows.push([])
-    }
-
-    // SETTLEMENT SUMMARY
     const stillOwed = Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuelTotal)
-    rows.push(['SETTLEMENT SUMMARY'])
-    rows.push(['Item', 'Amount'])
-    rows.push(['Gross Pay (80% of rate con)', n(totalGross80)])
-    if (totalDetention > 0) rows.push(['Detention / Layover (100% to driver)', n(totalDetention)])
-    rows.push(['Less: Advance Kept (Comdata leftover)', '(' + n(totalAdvKept) + ')'])
-    if (totalReimb > 0) rows.push(['Plus: Lumper Reimbursement (no comdata issued)', n(totalReimb)])
-    if (fleetFuelTotal > 0) rows.push(['Less: Fleet Card Fuel', '(' + n(fleetFuelTotal) + ')'])
-    rows.push([])
-    rows.push(['NET AMOUNT OWED TO ' + driverName, n(stillOwed)])
-    if (pocketFuelTotal > 0) {
-      rows.push([])
-      rows.push(['Out of Pocket Fuel (tax deductible - not deducted from pay)', n(pocketFuelTotal)])
+
+    return {
+      driverName, periodLabel: getPeriodLabel(period, periodOffset),
+      generated: new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }),
+      earningsRows, totalRateCon, totalGross80, totalDetention, totalEarned,
+      advRows, totalAdvKept, totalReimb,
+      fuelInRange, fleetFuelTotal, pocketFuelTotal,
+      stillOwed,
     }
-    rows.push([])
-    rows.push(['Generated by Load Ledger V4 - dbappsystems.com | daddyboyapps.com'])
+  }
 
-    // BUILD CSV AND DOWNLOAD
-    const csv = rows.map(row =>
-      row.map(cell => {
-        const s = String(cell === undefined || cell === null ? '' : cell)
-        return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s
-      }).join(',')
-    ).join('\r\n')
+  // ── IN-APP SETTLEMENT REPORT VIEW ────────────────────────
+  // Full-screen white overlay — no downloads, no external apps
+  function SettlementReport({ driverName, onClose }) {
+    const d = buildSettlementData(driverName)
+    const dColor = driverName === 'TIM' ? '#c62828' : '#1565c0'
 
-    const bom  = '\uFEFF'
-    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' })
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
-    a.href     = url
-    a.download = 'Settlement-' + driverName + '-' + periodLabel.replace(/[\s/]/g,'_') + '.csv'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-    showToast('✅ Settlement exported — open in Excel!')
+    const TH = { background:'#1a2a3a', color:'#fff', padding:'8px 10px', fontSize:11, fontWeight:700, textAlign:'left', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }
+    const TD = { padding:'8px 10px', fontSize:12, borderBottom:'1px solid #e8e8e8', color:'#222', verticalAlign:'middle' }
+    const TDr = { ...TD, textAlign:'right', fontFamily:'var(--font-head)', fontWeight:600 }
+    const TF = { ...TD, background:'#f0f0f0', fontWeight:700, color:'#111' }
+    const TFr = { ...TF, textAlign:'right', fontFamily:'var(--font-head)' }
+
+    return (
+      <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'#fff', zIndex:9999, overflowY:'auto', WebkitOverflowScrolling:'touch' }}>
+
+        {/* STICKY CLOSE HEADER */}
+        <div style={{ position:'sticky', top:0, background:'#1a2a3a', padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', zIndex:10 }}>
+          <div>
+            <div style={{ fontSize:11, color:'rgba(255,255,255,0.6)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>SETTLEMENT STATEMENT</div>
+            <div style={{ fontSize:16, color:'#fff', fontFamily:'var(--font-head)', fontWeight:900, color: dColor === '#c62828' ? '#ff6b6b' : '#64b5f6' }}>{driverName}</div>
+          </div>
+          <button onClick={onClose} style={{ background:'rgba(255,255,255,0.15)', border:'none', color:'#fff', borderRadius:8, padding:'8px 16px', fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>
+            ✕ CLOSE
+          </button>
+        </div>
+
+        {/* REPORT BODY */}
+        <div style={{ padding:'16px', maxWidth:600, margin:'0 auto' }}>
+
+          {/* HEADER INFO */}
+          <div style={{ background:'#f8f8f8', borderRadius:8, padding:'12px 14px', marginBottom:16, border:'1px solid #e0e0e0' }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, fontSize:12, color:'#444' }}>
+              <div><span style={{ color:'#888', fontSize:11 }}>COMPANY</span><br /><strong>Edgerton Truck &amp; Trailer Repair</strong></div>
+              <div><span style={{ color:'#888', fontSize:11 }}>DRIVER</span><br /><strong>{driverName}</strong></div>
+              <div><span style={{ color:'#888', fontSize:11 }}>PERIOD</span><br /><strong>{d.periodLabel}</strong></div>
+              <div><span style={{ color:'#888', fontSize:11 }}>GENERATED</span><br /><strong>{d.generated}</strong></div>
+            </div>
+          </div>
+
+          {/* EARNINGS TABLE */}
+          <div style={{ marginBottom:16 }}>
+            <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>EARNINGS</div>
+            <div style={{ overflowX:'auto', borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                <thead>
+                  <tr>
+                    <th style={TH}>Load #</th>
+                    <th style={{...TH, textAlign:'right'}}>Rate Con</th>
+                    <th style={{...TH, textAlign:'right'}}>80% Pay</th>
+                    {d.totalDetention > 0 && <th style={{...TH, textAlign:'right'}}>Detention</th>}
+                    <th style={{...TH, textAlign:'right'}}>Earned</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.earningsRows.map((r, i) => (
+                    <tr key={i} style={{ background: i%2===0 ? '#fff' : '#fafafa' }}>
+                      <td style={TD}><strong>{r.loadNum}</strong></td>
+                      <td style={TDr}>{fmt(r.base)}</td>
+                      <td style={TDr}>{fmt(r.gross80)}</td>
+                      {d.totalDetention > 0 && <td style={{...TDr, color: r.det>0?'#2e7d32':'#aaa'}}>{r.det>0 ? fmt(r.det) : '-'}</td>}
+                      <td style={{...TDr, fontWeight:700}}>{fmt(r.earned)}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={TF}>TOTAL</td>
+                    <td style={TFr}>{fmt(d.totalRateCon)}</td>
+                    <td style={TFr}>{fmt(d.totalGross80)}</td>
+                    {d.totalDetention > 0 && <td style={{...TFr, color:'#2e7d32'}}>{fmt(d.totalDetention)}</td>}
+                    <td style={{...TFr, color:'#1a2a3a'}}>{fmt(d.totalEarned)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* ADVANCES & REIMBURSEMENTS TABLE */}
+          {d.advRows.length > 0 && (
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>ADVANCES &amp; REIMBURSEMENTS</div>
+              <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                  <thead>
+                    <tr>
+                      <th style={TH}>Load #</th>
+                      <th style={{...TH, textAlign:'right'}}>Comdata</th>
+                      <th style={{...TH, textAlign:'right'}}>Lumpers + Inc</th>
+                      <th style={{...TH, textAlign:'right'}}>Advance Kept</th>
+                      <th style={{...TH, textAlign:'right'}}>Reimb Owed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.advRows.map((r, i) => (
+                      <tr key={i} style={{ background: i%2===0 ? '#fff' : '#fafafa' }}>
+                        <td style={TD}><strong>{r.loadNum}</strong></td>
+                        <td style={TDr}>{fmt(r.comdata)}</td>
+                        <td style={TDr}>{fmt(r.expenses)}</td>
+                        <td style={{...TDr, color: r.advKept>0 ? '#388e3c' : '#aaa'}}>{r.advKept>0 ? fmt(r.advKept) : '-'}</td>
+                        <td style={{...TDr, color: r.reimb>0 ? '#f57c00' : '#aaa'}}>{r.reimb>0 ? fmt(r.reimb) : '-'}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td style={TF} colSpan={3}>TOTAL</td>
+                      <td style={{...TFr, color:'#388e3c'}}>{fmt(d.totalAdvKept)}</td>
+                      <td style={{...TFr, color:'#f57c00'}}>{fmt(d.totalReimb)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* FUEL TABLE */}
+          {d.fuelInRange.length > 0 && (
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>FUEL</div>
+              <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                  <thead>
+                    <tr>
+                      <th style={TH}>Date</th>
+                      <th style={TH}>Type</th>
+                      <th style={TH}>Notes</th>
+                      <th style={{...TH, textAlign:'right'}}>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.fuelInRange.map((f, i) => (
+                      <tr key={i} style={{ background: i%2===0 ? '#fff' : '#fafafa' }}>
+                        <td style={TD}>{f.entry_date}</td>
+                        <td style={TD}>
+                          <span style={{ fontSize:10, fontWeight:700, padding:'2px 6px', borderRadius:4, background: f.fuel_type==='fleet' ? '#fff3e0' : '#e3f2fd', color: f.fuel_type==='fleet' ? '#e65100' : '#1565c0' }}>
+                            {f.fuel_type === 'fleet' ? 'FLEET' : 'POCKET'}
+                          </span>
+                        </td>
+                        <td style={{...TD, color:'#666', fontSize:11}}>{f.notes || '-'}</td>
+                        <td style={{...TDr, color: f.fuel_type==='fleet' ? '#c62828' : '#1565c0'}}>{fmt(f.amount)}</td>
+                      </tr>
+                    ))}
+                    {d.fleetFuelTotal > 0 && (
+                      <tr style={{ background:'#fff8f8' }}>
+                        <td style={TF} colSpan={3}>Fleet Card Total (deducted from pay)</td>
+                        <td style={{...TFr, color:'#c62828'}}>{fmt(d.fleetFuelTotal)}</td>
+                      </tr>
+                    )}
+                    {d.pocketFuelTotal > 0 && (
+                      <tr style={{ background:'#f0f4ff' }}>
+                        <td style={{...TF, color:'#1565c0'}} colSpan={3}>Out of Pocket Total (tax expense only)</td>
+                        <td style={{...TFr, color:'#1565c0'}}>{fmt(d.pocketFuelTotal)}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* SETTLEMENT SUMMARY */}
+          <div style={{ marginBottom:24 }}>
+            <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>SETTLEMENT SUMMARY</div>
+            <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+                <tbody>
+                  <tr>
+                    <td style={TD}>Gross Pay (80% of rate con)</td>
+                    <td style={TDr}>{fmt(d.totalGross80)}</td>
+                  </tr>
+                  {d.totalDetention > 0 && (
+                    <tr style={{ background:'#f1f8e9' }}>
+                      <td style={{...TD, color:'#2e7d32'}}>+ Detention / Layover (100% to driver)</td>
+                      <td style={{...TDr, color:'#2e7d32'}}>{fmt(d.totalDetention)}</td>
+                    </tr>
+                  )}
+                  <tr style={{ background:'#fafafa' }}>
+                    <td style={TD}>− Advance Kept (Comdata leftover)</td>
+                    <td style={{...TDr, color:'#c62828'}}>({fmt(d.totalAdvKept)})</td>
+                  </tr>
+                  {d.totalReimb > 0 && (
+                    <tr style={{ background:'#fffde7' }}>
+                      <td style={{...TD, color:'#f57c00'}}>+ Lumper Reimbursement (no comdata issued)</td>
+                      <td style={{...TDr, color:'#f57c00'}}>{fmt(d.totalReimb)}</td>
+                    </tr>
+                  )}
+                  {d.fleetFuelTotal > 0 && (
+                    <tr style={{ background:'#fafafa' }}>
+                      <td style={TD}>− Fleet Card Fuel</td>
+                      <td style={{...TDr, color:'#c62828'}}>({fmt(d.fleetFuelTotal)})</td>
+                    </tr>
+                  )}
+                  <tr style={{ background:'#1a2a3a' }}>
+                    <td style={{ padding:'14px 12px', fontSize:15, fontWeight:900, color:'#fff', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }}>
+                      NET AMOUNT OWED TO {driverName}
+                    </td>
+                    <td style={{ padding:'14px 12px', textAlign:'right', fontSize:20, fontWeight:900, color:'#ffd54f', fontFamily:'var(--font-head)' }}>
+                      {fmt(d.stillOwed)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* TAX NOTE */}
+          {d.pocketFuelTotal > 0 && (
+            <div style={{ background:'#e3f2fd', borderRadius:8, padding:'12px 14px', marginBottom:16, border:'1px solid #bbdefb' }}>
+              <div style={{ fontSize:11, color:'#1565c0', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:4 }}>TAX NOTE</div>
+              <div style={{ fontSize:12, color:'#1a3a6a' }}>
+                Out of Pocket Fuel: <strong>{fmt(d.pocketFuelTotal)}</strong> — This amount was paid by the driver and is not deducted from settlement. It is a deductible business expense for tax purposes.
+              </div>
+            </div>
+          )}
+
+          <div style={{ textAlign:'center', fontSize:10, color:'#aaa', paddingBottom:32 }}>
+            Generated by Load Ledger V4 — dbappsystems.com | daddyboyapps.com
+          </div>
+        </div>
+      </div>
+    )
   }
 
   // ── DRIVER SPLITS ────────────────────────────────────────
@@ -680,10 +838,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const loggedInDriver = driver ? driver.toUpperCase() : null
   const myIsBruce      = loggedInDriver === 'BRUCE'
   const myIsTim        = loggedInDriver === 'TIM'
-  const myColor        = myIsBruce ? '#1e88e5' : '#e53935'
-  const theirColor     = myIsBruce ? '#e53935' : '#1e88e5'
-  const myName         = myIsBruce ? 'BRUCE'   : 'TIM'
-  const theirName      = myIsBruce ? 'TIM'     : 'BRUCE'
 
   const editInputStyle = {
     width:'100%', background:'var(--navy3)', border:'1px solid var(--border)',
@@ -735,6 +889,14 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
 
   return (
     <div>
+      {/* IN-APP SETTLEMENT REPORT OVERLAY */}
+      {showSettlementReport && (
+        <SettlementReport
+          driverName={showSettlementReport}
+          onClose={() => setShowSettlementReport(null)}
+        />
+      )}
+
       <input ref={fuelFileRef} type="file" accept="image/*,application/pdf" style={{display:'none'}} onChange={handleFuelFile} />
 
       {/* VIEW TABS */}
@@ -833,20 +995,20 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                 DRIVER SETTLEMENT — PAY RECONCILIATION
               </div>
 
-              {/* EXPORT TO EXCEL BUTTON */}
+              {/* VIEW REPORT BUTTONS */}
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:12 }}>
-                <button onClick={() => exportSettlementCSV('TIM')} style={{
-                  padding:'10px 0', borderRadius:10, border:'1px solid #2a5a2a',
-                  fontFamily:'var(--font-head)', fontWeight:700, fontSize:12,
+                <button onClick={() => setShowSettlementReport('TIM')} style={{
+                  padding:'12px 0', borderRadius:10, border:'2px solid #e53935',
+                  fontFamily:'var(--font-head)', fontWeight:900, fontSize:13,
                   letterSpacing:'0.05em', cursor:'pointer',
-                  background:'#0a2a0a', color:'#4caf50',
-                }}>📊 TIM — EXPORT EXCEL</button>
-                <button onClick={() => exportSettlementCSV('BRUCE')} style={{
-                  padding:'10px 0', borderRadius:10, border:'1px solid #1a3a5a',
-                  fontFamily:'var(--font-head)', fontWeight:700, fontSize:12,
+                  background:'#2a0a0a', color:'#ff6b6b',
+                }}>📋 TIM SETTLEMENT</button>
+                <button onClick={() => setShowSettlementReport('BRUCE')} style={{
+                  padding:'12px 0', borderRadius:10, border:'2px solid #1e88e5',
+                  fontFamily:'var(--font-head)', fontWeight:900, fontSize:13,
                   letterSpacing:'0.05em', cursor:'pointer',
-                  background:'#0a1a2a', color:'#1e88e5',
-                }}>📊 BRUCE — EXPORT EXCEL</button>
+                  background:'#0a1a2a', color:'#64b5f6',
+                }}>📋 BRUCE SETTLEMENT</button>
               </div>
 
               {/* ADD FUEL BUTTON */}
