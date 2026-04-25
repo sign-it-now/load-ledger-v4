@@ -19,7 +19,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const [editIdx,       setEditIdx]       = useState(null)
   const [editData,      setEditData]      = useState(null)
 
-  // ── FUEL STATE ───────────────────────────────────────────
   const [fuelEntries,    setFuelEntries]    = useState([])
   const [showFuelDrawer, setShowFuelDrawer] = useState(false)
   const [fuelDriver,     setFuelDriver]     = useState('TIM')
@@ -34,7 +33,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const [fuelPreview,    setFuelPreview]    = useState(null)
   const fuelFileRef = useRef()
 
-  // ── FETCH FUEL ENTRIES ───────────────────────────────────
   async function fetchFuelEntries() {
     try {
       const [timRes, bruceRes] = await Promise.all([
@@ -43,26 +41,19 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       ])
       const timData   = await timRes.json()
       const bruceData = await bruceRes.json()
-      const combined  = [
+      setFuelEntries([
         ...(Array.isArray(timData)   ? timData   : []),
         ...(Array.isArray(bruceData) ? bruceData : []),
-      ]
-      setFuelEntries(combined)
-    } catch (err) {
-      console.error('fetchFuelEntries failed:', err)
-    }
+      ])
+    } catch (err) { console.error('fetchFuelEntries failed:', err) }
   }
 
   useEffect(() => {
-    if (view === 'reports' && reportTab === 'settlement') {
-      fetchFuelEntries()
-    }
+    if (view === 'reports' && reportTab === 'settlement') fetchFuelEntries()
   }, [view, reportTab])
 
-  // ── B&W PIPELINE FOR FUEL RECEIPTS — LOCKED DO NOT MODIFY ─
-  function isPDF(file) {
-    return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
-  }
+  // ── B&W PIPELINE — LOCKED DO NOT MODIFY ──────────────────
+  function isPDF(file) { return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf') }
 
   async function renderPdfToCanvas(file) {
     const pdfjsLib = window.pdfjsLib
@@ -176,7 +167,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     })
   }
 
-  // ── SCAN FUEL RECEIPT ────────────────────────────────────
   async function handleFuelFile(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -213,7 +203,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     }
   }
 
-  // ── SAVE FUEL ENTRY ──────────────────────────────────────
   async function saveFuelEntry() {
     const amt = parseFloat(fuelAmount)
     if (!amt || amt <= 0) { showToast('Enter a valid amount'); return }
@@ -222,13 +211,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       const res = await fetch(api + '/api/fuel', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          driver:     fuelDriver,
-          entry_date: fuelDate,
-          amount:     amt,
-          fuel_type:  fuelType,
-          notes:      fuelNotes,
-        }),
+        body: JSON.stringify({ driver: fuelDriver, entry_date: fuelDate, amount: amt, fuel_type: fuelType, notes: fuelNotes }),
       })
       const data = await res.json()
       if (!res.ok) { showToast('⚠️ Save failed: ' + (data.error || 'unknown')); return }
@@ -254,19 +237,15 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     }
   }
 
-  // ── DELETE FUEL ENTRY ────────────────────────────────────
   async function deleteFuelEntry(id) {
     try {
       const res = await fetch(api + '/api/fuel/' + id, { method: 'DELETE' })
       if (!res.ok) { showToast('⚠️ Delete failed'); return }
       showToast('🗑️ Fuel entry deleted')
       await fetchFuelEntries()
-    } catch (err) {
-      showToast('⚠️ Delete failed: ' + err.message)
-    }
+    } catch (err) { showToast('⚠️ Delete failed: ' + err.message) }
   }
 
-  // ── PATCH LOAD IN D1 ─────────────────────────────────────
   async function patchLoad(load, localIdx, fields) {
     setUpdating(load.id || localIdx)
     try {
@@ -290,14 +269,10 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
         if (fields.status === 'paid')   showToast('✅ Marked as paid!')
         if (fields.status === 'billed') showToast('✅ Marked as billed!')
       }
-    } catch (err) {
-      showToast('⚠️ Update failed: ' + err.message)
-    } finally {
-      setUpdating(null)
-    }
+    } catch (err) { showToast('⚠️ Update failed: ' + err.message) }
+    finally { setUpdating(null) }
   }
 
-  // ── DELETE LOAD IN D1 ────────────────────────────────────
   async function deleteLoad(load, localIdx) {
     setDeleting(true)
     try {
@@ -309,23 +284,17 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
           showToast('⚠️ Delete failed: ' + errMsg)
           setDeleting(false); return
         }
-        try { await fetchLoads() } catch {
-          setLoads(prev => prev.filter((_,i) => i !== localIdx))
-        }
+        try { await fetchLoads() } catch { setLoads(prev => prev.filter((_,i) => i !== localIdx)) }
       } else {
         setLoads(prev => prev.filter((_,i) => i !== localIdx))
       }
       showToast('🗑️ Load deleted')
       setConfirmDelete(null)
       if (editIdx === localIdx) { setEditIdx(null); setEditData(null) }
-    } catch (err) {
-      showToast('⚠️ Delete failed: ' + err.message)
-    } finally {
-      setDeleting(false)
-    }
+    } catch (err) { showToast('⚠️ Delete failed: ' + err.message) }
+    finally { setDeleting(false) }
   }
 
-  // ── EDIT DRAWER ──────────────────────────────────────────
   function openEdit(load, localIdx) {
     if (editIdx === localIdx) { setEditIdx(null); setEditData(null); return }
     setEditIdx(localIdx)
@@ -360,19 +329,17 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return (base_pay + lumperTotal + incTotal + detention + pallets) - comdataTotal
   }
 
-  // ── GENERATE CORRECTED INVOICE PDF ───────────────────────
   function generateCorrectedPDF(load, data, newNetPay) {
-    const base_pay     = parseFloat(data.base_pay)  || 0
-    const detention    = parseFloat(data.detention)  || 0
-    const pallets      = parseFloat(data.pallets)    || 0
-    const subtotal     = base_pay
+    const base_pay  = parseFloat(data.base_pay)  || 0
+    const detention = parseFloat(data.detention) || 0
+    const pallets   = parseFloat(data.pallets)   || 0
+    const subtotal  = base_pay
       + data.lumpers.reduce((s,i)     => s + (parseFloat(i.amount)||0), 0)
       + data.incidentals.reduce((s,i) => s + (parseFloat(i.amount)||0), 0)
       + detention + pallets
     const fmtN = n => '$' + (parseFloat(n)||0).toFixed(2)
     const doc = new jsPDF({ unit: 'pt', format: 'letter' })
-    const W = 612, M = 40
-    let y = 0
+    const W = 612, M = 40; let y = 0
     doc.setFontSize(22); doc.setFont('helvetica','bold'); doc.setTextColor(0,0,0)
     doc.text('Edgerton Truck & Trailer Repair', W/2, 50, { align:'center' })
     doc.setDrawColor(180,180,180); doc.setLineWidth(0.5); doc.line(M,58,W-M,58); y = 75
@@ -463,7 +430,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return api + load.invoice_url
   }
 
-  // ── GET LOAD TOTALS — uses D1 stored totals, falls back to arrays ─
   function getLoadTotals(load) {
     const comdataTotal = parseFloat(load.comdata_total) > 0
       ? parseFloat(load.comdata_total)
@@ -477,30 +443,20 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return { comdataTotal, lumperTotal, incTotal }
   }
 
-  // ── CALC PAY ─────────────────────────────────────────────
-  // Bruce: owner cut = base_pay × 20% only (detention excluded)
-  // Tim:   gross pay = (base_pay × 80%) + detention (100% to Tim)
-  // Detention / layover is paid in full to the driver — Bruce takes no cut
+  // Bruce: 20% of base_pay only — detention excluded
+  // Tim:   80% of base_pay + 100% of detention
   function calcPay(load) {
     const base      = parseFloat(load.base_pay) || 0
     const detention = parseFloat(load.detention) || 0
-    if (load.driver === 'BRUCE') {
-      return { gross: base, ownerCut: base * BRUCE_CUT, driverNet: base }
-    }
-    return {
-      gross:      base,
-      ownerCut:   base * BRUCE_CUT,
-      driverNet:  (base * TIM_CUT) + detention,
-    }
+    if (load.driver === 'BRUCE') return { gross: base, ownerCut: base * BRUCE_CUT, driverNet: base }
+    return { gross: base, ownerCut: base * BRUCE_CUT, driverNet: (base * TIM_CUT) + detention }
   }
 
-  // ── ADVANCE KEPT — Comdata exceeded expenses ─────────────
   function advanceKept(load) {
     const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
     return Math.max(0, comdataTotal - lumperTotal - incTotal)
   }
 
-  // ── REIMBURSEMENT OWED — Tim paid lumpers with no Comdata ─
   function reimbursementOwed(load) {
     const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
     return Math.max(0, (lumperTotal + incTotal) - comdataTotal)
@@ -545,7 +501,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       const end = new Date(now); end.setDate(end.getDate() + offset * 7)
       const start = new Date(end); start.setDate(end.getDate() - 6)
       return start.toLocaleDateString('en-US', { month:'short', day:'numeric' }).toUpperCase()
-           + ' – ' + end.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }).toUpperCase()
+           + ' - ' + end.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }).toUpperCase()
     }
     if (p === 'monthly') {
       const target = new Date(now.getFullYear(), now.getMonth() + offset, 1)
@@ -557,20 +513,122 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
 
   function changePeriod(newPeriod) { setPeriod(newPeriod); setPeriodOffset(0) }
 
-  // ── FUEL TOTALS FOR PERIOD ───────────────────────────────
   function fuelForPeriod(driverName, fuelTypeFilter) {
     return fuelEntries
-      .filter(f => f.driver === driverName.toUpperCase()
-                && f.fuel_type === fuelTypeFilter
-                && inPeriodByDate(f.entry_date, period, periodOffset))
+      .filter(f => f.driver === driverName.toUpperCase() && f.fuel_type === fuelTypeFilter && inPeriodByDate(f.entry_date, period, periodOffset))
       .reduce((s,f) => s + (parseFloat(f.amount)||0), 0)
   }
 
   function fuelEntriesForPeriod(driverName) {
-    return fuelEntries.filter(f =>
-      f.driver === driverName.toUpperCase() &&
-      inPeriodByDate(f.entry_date, period, periodOffset)
-    )
+    return fuelEntries.filter(f => f.driver === driverName.toUpperCase() && inPeriodByDate(f.entry_date, period, periodOffset))
+  }
+
+  // ── EXPORT SETTLEMENT TO CSV (opens in Excel) ─────────────
+  // No dependencies needed — CSV opens natively in Excel on any device
+  function exportSettlementCSV(driverName) {
+    const dLoads      = loads.filter(l => l.driver === driverName)
+    const inRange     = dLoads.filter(l => inPeriod(l, period, periodOffset))
+    const periodLabel = getPeriodLabel(period, periodOffset)
+    const generated   = new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })
+    const fuelInRange = fuelEntries.filter(f => f.driver === driverName && inPeriodByDate(f.entry_date, period, periodOffset))
+    const fleetFuelTotal  = fuelInRange.filter(f => f.fuel_type === 'fleet').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
+    const pocketFuelTotal = fuelInRange.filter(f => f.fuel_type === 'pocket').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
+    const n = (v) => (parseFloat(v)||0).toFixed(2)
+    const rows = []
+
+    // HEADER
+    rows.push(['EDGERTON TRUCK & TRAILER REPAIR'])
+    rows.push(['DRIVER SETTLEMENT STATEMENT'])
+    rows.push([])
+    rows.push(['Driver:', driverName])
+    rows.push(['Period:', periodLabel])
+    rows.push(['Generated:', generated])
+    rows.push([])
+
+    // EARNINGS
+    rows.push(['EARNINGS'])
+    rows.push(['Load #', 'Rate Con', '80% Gross Pay', 'Detention (100%)', 'Total Earned'])
+    let totalRateCon = 0, totalGross80 = 0, totalDetention = 0, totalEarned = 0
+    inRange.forEach(l => {
+      const base      = parseFloat(l.base_pay) || 0
+      const det       = parseFloat(l.detention) || 0
+      const gross80   = base * TIM_CUT
+      const earned    = gross80 + det
+      totalRateCon   += base
+      totalGross80   += gross80
+      totalDetention += det
+      totalEarned    += earned
+      rows.push([l.load_number || '-', n(base), n(gross80), det > 0 ? n(det) : '', n(earned)])
+    })
+    rows.push(['TOTAL', n(totalRateCon), n(totalGross80), n(totalDetention), n(totalEarned)])
+    rows.push([])
+
+    // ADVANCES & REIMBURSEMENTS
+    rows.push(['ADVANCES & REIMBURSEMENTS'])
+    rows.push(['Load #', 'Comdata Issued', 'Lumpers + Incidentals', 'Advance Kept', 'Reimbursement Owed'])
+    let totalAdvKept = 0, totalReimb = 0
+    inRange.forEach(l => {
+      const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(l)
+      if (comdataTotal === 0 && lumperTotal === 0 && incTotal === 0) return
+      const expenses = lumperTotal + incTotal
+      const advKept  = Math.max(0, comdataTotal - expenses)
+      const reimb    = Math.max(0, expenses - comdataTotal)
+      totalAdvKept  += advKept
+      totalReimb    += reimb
+      rows.push([l.load_number || '-', n(comdataTotal), n(expenses), advKept > 0 ? n(advKept) : '', reimb > 0 ? n(reimb) : ''])
+    })
+    rows.push(['TOTAL', '', '', n(totalAdvKept), n(totalReimb)])
+    rows.push([])
+
+    // FUEL
+    if (fuelInRange.length > 0) {
+      rows.push(['FUEL'])
+      rows.push(['Date', 'Type', 'Notes', 'Amount'])
+      fuelInRange.forEach(f => {
+        rows.push([f.entry_date, f.fuel_type === 'fleet' ? 'Fleet Card (deducted from pay)' : 'Out of Pocket (tax expense)', f.notes || '', n(f.amount)])
+      })
+      rows.push(['Fleet Card Total', '', '', n(fleetFuelTotal)])
+      if (pocketFuelTotal > 0) rows.push(['Out of Pocket Total (tax expense)', '', '', n(pocketFuelTotal)])
+      rows.push([])
+    }
+
+    // SETTLEMENT SUMMARY
+    const stillOwed = Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuelTotal)
+    rows.push(['SETTLEMENT SUMMARY'])
+    rows.push(['Item', 'Amount'])
+    rows.push(['Gross Pay (80% of rate con)', n(totalGross80)])
+    if (totalDetention > 0) rows.push(['Detention / Layover (100% to driver)', n(totalDetention)])
+    rows.push(['Less: Advance Kept (Comdata leftover)', '(' + n(totalAdvKept) + ')'])
+    if (totalReimb > 0) rows.push(['Plus: Lumper Reimbursement (no comdata issued)', n(totalReimb)])
+    if (fleetFuelTotal > 0) rows.push(['Less: Fleet Card Fuel', '(' + n(fleetFuelTotal) + ')'])
+    rows.push([])
+    rows.push(['NET AMOUNT OWED TO ' + driverName, n(stillOwed)])
+    if (pocketFuelTotal > 0) {
+      rows.push([])
+      rows.push(['Out of Pocket Fuel (tax deductible - not deducted from pay)', n(pocketFuelTotal)])
+    }
+    rows.push([])
+    rows.push(['Generated by Load Ledger V4 - dbappsystems.com | daddyboyapps.com'])
+
+    // BUILD CSV AND DOWNLOAD
+    const csv = rows.map(row =>
+      row.map(cell => {
+        const s = String(cell === undefined || cell === null ? '' : cell)
+        return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s
+      }).join(',')
+    ).join('\r\n')
+
+    const bom  = '\uFEFF'
+    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = 'Settlement-' + driverName + '-' + periodLabel.replace(/[\s/]/g,'_') + '.csv'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    showToast('✅ Settlement exported — open in Excel!')
   }
 
   // ── DRIVER SPLITS ────────────────────────────────────────
@@ -578,21 +636,20 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const timLoads   = loads.filter(l => l.driver === 'TIM')
 
   function driverStats(dLoads, driverName, p, offset) {
-    const inRange    = dLoads.filter(l => inPeriod(l, p, offset))
-    const billed     = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
-    const paid       = inRange.filter(l => l.status === 'paid')
-    const advKept    = inRange.reduce((s,l) => s + advanceKept(l), 0)
-    const reimbOwed  = inRange.reduce((s,l) => s + reimbursementOwed(l), 0)
-    const gPay       = inRange.reduce((s,l) => s + calcPay(l).driverNet, 0)
+    const inRange        = dLoads.filter(l => inPeriod(l, p, offset))
+    const billed         = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
+    const paid           = inRange.filter(l => l.status === 'paid')
+    const advKept        = inRange.reduce((s,l) => s + advanceKept(l), 0)
+    const reimbOwed      = inRange.reduce((s,l) => s + reimbursementOwed(l), 0)
+    const gPay           = inRange.reduce((s,l) => s + calcPay(l).driverNet, 0)
     const detentionTotal = inRange.reduce((s,l) => s + (parseFloat(l.detention)||0), 0)
-    const fleetFuel  = fuelForPeriod(driverName, 'fleet')
-    const pocketFuel = fuelForPeriod(driverName, 'pocket')
-    // stillOwed = Gross Pay (includes detention 100%) − Advance Kept + Reimbursement Owed − Fleet Fuel
-    const stillOwed  = gPay - advKept + reimbOwed - fleetFuel
+    const fleetFuel      = fuelForPeriod(driverName, 'fleet')
+    const pocketFuel     = fuelForPeriod(driverName, 'pocket')
+    const stillOwed      = gPay - advKept + reimbOwed - fleetFuel
     return {
       count:          inRange.length,
-      billed:         billed.reduce((s,l)  => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
-      paid:           paid.reduce((s,l)    => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      billed:         billed.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      paid:           paid.reduce((s,l)   => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
       ownerCut:       inRange.reduce((s,l) => s+calcPay(l).ownerCut, 0),
       grossPay:       gPay,
       detentionTotal,
@@ -610,19 +667,15 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const grandTotal        = bruceTotalAllTime + timTotalAllTime
   const brucePercent      = grandTotal > 0 ? Math.round((bruceTotalAllTime/grandTotal)*100) : 50
   const timPercent        = 100 - brucePercent
-  const leader            = bruceTotalAllTime > timTotalAllTime ? 'BRUCE' :
-                            timTotalAllTime > bruceTotalAllTime ? 'TIM'   : 'TIE'
+  const leader            = bruceTotalAllTime > timTotalAllTime ? 'BRUCE' : timTotalAllTime > bruceTotalAllTime ? 'TIM' : 'TIE'
 
-  const filteredLoads = view === 'all'   ? loads :
-                        view === 'BRUCE' ? bruceLoads :
-                        view === 'TIM'   ? timLoads   : []
+  const filteredLoads = view === 'all' ? loads : view === 'BRUCE' ? bruceLoads : view === 'TIM' ? timLoads : []
+  const totalNet      = filteredLoads.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
+  const totalPaid     = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
+  const totalUnpaid   = totalNet - totalPaid
 
-  const totalNet    = filteredLoads.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
-  const totalPaid   = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
-  const totalUnpaid = totalNet - totalPaid
-
-  const bruceStats = driverStats(bruceLoads, 'BRUCE', period, periodOffset)
-  const timStats   = driverStats(timLoads,   'TIM',   period, periodOffset)
+  const bruceStats    = driverStats(bruceLoads, 'BRUCE', period, periodOffset)
+  const timStats      = driverStats(timLoads,   'TIM',   period, periodOffset)
 
   const loggedInDriver = driver ? driver.toUpperCase() : null
   const myIsBruce      = loggedInDriver === 'BRUCE'
@@ -658,14 +711,14 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
           ))}
         </div>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
-          <button style={navBtn} onClick={() => setPeriodOffset(o => o - 1)}>‹</button>
+          <button style={navBtn} onClick={() => setPeriodOffset(o => o - 1)}>&#8249;</button>
           <div style={{ textAlign:'center', fontFamily:'var(--font-head)', fontSize:13, color:'var(--amber)', letterSpacing:'0.08em', flex:1, padding:'0 8px' }}>
             {getPeriodLabel(period, periodOffset)}
             {periodOffset === 0 && <span style={{ fontSize:10, color:'var(--grey)', marginLeft:6 }}>CURRENT</span>}
           </div>
           <button style={{ ...navBtn, opacity: periodOffset >= 0 ? 0.3 : 1 }}
             disabled={periodOffset >= 0}
-            onClick={() => setPeriodOffset(o => o + 1)}>›</button>
+            onClick={() => setPeriodOffset(o => o + 1)}>&#8250;</button>
         </div>
       </div>
     )
@@ -721,7 +774,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
         </div>
       </div>
 
-      {/* ── REPORTS VIEW ─────────────────────────── */}
+      {/* REPORTS */}
       {view === 'reports' && (
         <div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16 }}>
@@ -743,7 +796,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
 
           <PeriodNav />
 
-          {/* ── CARRIER ─── */}
+          {/* CARRIER */}
           {reportTab === 'carrier' && (
             <div>
               <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:10, textAlign:'center' }}>
@@ -773,11 +826,27 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
             </div>
           )}
 
-          {/* ── SETTLEMENT ─── */}
+          {/* SETTLEMENT */}
           {reportTab === 'settlement' && (
             <div>
               <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:10, textAlign:'center' }}>
                 DRIVER SETTLEMENT — PAY RECONCILIATION
+              </div>
+
+              {/* EXPORT TO EXCEL BUTTON */}
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:12 }}>
+                <button onClick={() => exportSettlementCSV('TIM')} style={{
+                  padding:'10px 0', borderRadius:10, border:'1px solid #2a5a2a',
+                  fontFamily:'var(--font-head)', fontWeight:700, fontSize:12,
+                  letterSpacing:'0.05em', cursor:'pointer',
+                  background:'#0a2a0a', color:'#4caf50',
+                }}>📊 TIM — EXPORT EXCEL</button>
+                <button onClick={() => exportSettlementCSV('BRUCE')} style={{
+                  padding:'10px 0', borderRadius:10, border:'1px solid #1a3a5a',
+                  fontFamily:'var(--font-head)', fontWeight:700, fontSize:12,
+                  letterSpacing:'0.05em', cursor:'pointer',
+                  background:'#0a1a2a', color:'#1e88e5',
+                }}>📊 BRUCE — EXPORT EXCEL</button>
               </div>
 
               {/* ADD FUEL BUTTON */}
@@ -913,31 +982,19 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                   <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>DRIVER SETTLEMENT</div>
                   <div className="amount-row"><span className="label">Rate Con Total</span><span className="value">{fmt(timStats.rateCon)}</span></div>
                   <div className="amount-row"><span className="label">Gross Pay (80% of rate con)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay - timStats.detentionTotal)}</span></div>
-
-                  {/* DETENTION — 100% to Tim, shown separately */}
                   {timStats.detentionTotal > 0 && (
                     <div className="amount-row">
-                      <span className="label" style={{color:'var(--green)'}}>
-                        Detention / Layover
-                        <span style={{fontSize:9, marginLeft:4, color:'var(--grey)'}}>100% to Tim</span>
-                      </span>
+                      <span className="label" style={{color:'var(--green)'}}>Detention / Layover <span style={{fontSize:9}}>100% to Tim</span></span>
                       <span className="value" style={{color:'var(--green)'}}>+{fmt(timStats.detentionTotal)}</span>
                     </div>
                   )}
-
                   <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.advanceKept)}</span></div>
-
-                  {/* REIMBURSEMENT — only shows when Tim paid lumpers with no Comdata */}
                   {timStats.reimbOwed > 0 && (
                     <div className="amount-row">
-                      <span className="label" style={{color:'var(--amber)'}}>
-                        Lumper Reimbursement
-                        <span style={{fontSize:9, marginLeft:4, color:'var(--grey)'}}>no comdata issued</span>
-                      </span>
+                      <span className="label" style={{color:'var(--amber)'}}>Lumper Reimbursement <span style={{fontSize:9, color:'var(--grey)'}}>no comdata issued</span></span>
                       <span className="value" style={{color:'var(--amber)'}}>+{fmt(timStats.reimbOwed)}</span>
                     </div>
                   )}
-
                   <div className="amount-row"><span className="label">Fleet Card Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.fleetFuel)}</span></div>
                   {timStats.pocketFuel > 0 && (
                     <div className="amount-row">
@@ -952,7 +1009,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                     </div>
                   </div>
                 </div>
-
                 {fuelEntriesForPeriod('TIM').length > 0 && (
                   <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
                     <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>⛽ FUEL ENTRIES</div>
@@ -972,13 +1028,12 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                   </div>
                 )}
               </div>
-
             </div>
           )}
         </div>
       )}
 
-      {/* ── LOADS LIST VIEW ─── */}
+      {/* LOADS LIST VIEW */}
       {view !== 'reports' && (
         <div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
@@ -1020,7 +1075,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
 
             return (
               <div key={load.id || idx} style={{ background:'var(--white)', borderRadius:10, marginBottom:14, overflow:'hidden', boxShadow:'0 2px 8px rgba(0,0,0,0.18)' }}>
-
                 <div style={{ background: load.driver === 'BRUCE' ? '#1A3A5C' : '#2a0a0a', padding:'10px 14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                   <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                     <div style={{ padding:'2px 8px', borderRadius:10, fontSize:10, fontFamily:'var(--font-head)', fontWeight:700, background: load.driver === 'BRUCE' ? '#1e88e5' : '#e53935', color:'#fff' }}>
@@ -1045,9 +1099,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                       {(load.edited || load.edited_date) && <span style={{ marginLeft:6, color:'var(--amber)', fontSize:10, fontWeight:700 }}>EDITED {load.edited_date ? new Date(load.edited_date).toLocaleDateString() : ''}</span>}
                     </div>
                   </div>
-
                   <div style={{ borderTop:'1px solid #e0e0e0', marginBottom:8 }} />
-
                   <div style={{ fontSize:13, color:'var(--navy)' }}>
                     {[
                       ['Trucking Rate', basePay],
