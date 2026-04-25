@@ -59,7 +59,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     }
   }, [view, reportTab])
 
-  // ── B&W PIPELINE FOR FUEL RECEIPTS — same locked pipeline ─
+  // ── B&W PIPELINE FOR FUEL RECEIPTS — LOCKED DO NOT MODIFY ─
   function isPDF(file) {
     return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
   }
@@ -463,6 +463,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return api + load.invoice_url
   }
 
+  // ── GET LOAD TOTALS — uses D1 stored totals, falls back to arrays ─
   function getLoadTotals(load) {
     const comdataTotal = parseFloat(load.comdata_total) > 0
       ? parseFloat(load.comdata_total)
@@ -482,9 +483,19 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return { gross:base, ownerCut:base*BRUCE_CUT, driverNet:base*TIM_CUT }
   }
 
+  // ── ADVANCE KEPT — Comdata exceeded expenses, Tim pocketed the difference ─
+  // Only positive when Comdata > (Lumpers + Incidentals)
   function advanceKept(load) {
     const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
     return Math.max(0, comdataTotal - lumperTotal - incTotal)
+  }
+
+  // ── REIMBURSEMENT OWED — Tim paid lumpers/incidentals with no Comdata to cover ─
+  // Only positive when (Lumpers + Incidentals) > Comdata
+  // This is money Edgerton owes Tim back — ADDS to still owed
+  function reimbursementOwed(load) {
+    const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
+    return Math.max(0, (lumperTotal + incTotal) - comdataTotal)
   }
 
   // ── PERIOD NAVIGATION ────────────────────────────────────
@@ -559,24 +570,28 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const timLoads   = loads.filter(l => l.driver === 'TIM')
 
   function driverStats(dLoads, driverName, p, offset) {
-    const inRange = dLoads.filter(l => inPeriod(l, p, offset))
-    const billed  = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
-    const paid    = inRange.filter(l => l.status === 'paid')
-    const advKept = inRange.reduce((s,l) => s+advanceKept(l), 0)
-    const gPay    = inRange.reduce((s,l) => s+calcPay(l).driverNet, 0)
+    const inRange    = dLoads.filter(l => inPeriod(l, p, offset))
+    const billed     = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
+    const paid       = inRange.filter(l => l.status === 'paid')
+    const advKept    = inRange.reduce((s,l) => s + advanceKept(l), 0)
+    const reimbOwed  = inRange.reduce((s,l) => s + reimbursementOwed(l), 0)
+    const gPay       = inRange.reduce((s,l) => s + calcPay(l).driverNet, 0)
     const fleetFuel  = fuelForPeriod(driverName, 'fleet')
     const pocketFuel = fuelForPeriod(driverName, 'pocket')
+    // stillOwed = Gross Pay − Advance Kept + Reimbursement Owed − Fleet Card Fuel
+    const stillOwed  = gPay - advKept + reimbOwed - fleetFuel
     return {
-      count:          inRange.length,
-      billed:         billed.reduce((s,l)  => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
-      paid:           paid.reduce((s,l)    => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
-      ownerCut:       inRange.reduce((s,l) => s+calcPay(l).ownerCut, 0),
-      grossPay:       gPay,
-      advanceKept:    advKept,
+      count:       inRange.length,
+      billed:      billed.reduce((s,l)  => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      paid:        paid.reduce((s,l)    => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      ownerCut:    inRange.reduce((s,l) => s+calcPay(l).ownerCut, 0),
+      grossPay:    gPay,
+      advanceKept: advKept,
+      reimbOwed,
       fleetFuel,
       pocketFuel,
-      stillOwed:      Math.max(0, gPay - advKept - fleetFuel),
-      rateCon:        inRange.reduce((s,l) => s+(parseFloat(l.base_pay)||0), 0),
+      stillOwed:   Math.max(0, stillOwed),
+      rateCon:     inRange.reduce((s,l) => s+(parseFloat(l.base_pay)||0), 0),
     }
   }
 
@@ -776,8 +791,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
               {showFuelDrawer && (
                 <div className="card" style={{ marginBottom:12, border:'1px solid #2a4a2a' }}>
                   <div style={{ fontFamily:'var(--font-head)', fontSize:12, color:'#4caf50', letterSpacing:'0.1em', marginBottom:12 }}>NEW FUEL ENTRY</div>
-
-                  {/* DRIVER TOGGLE */}
                   <div style={{ marginBottom:12 }}>
                     <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>DRIVER</div>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
@@ -791,8 +804,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                       ))}
                     </div>
                   </div>
-
-                  {/* FLEET / POCKET TOGGLE */}
                   <div style={{ marginBottom:12 }}>
                     <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>FUEL TYPE</div>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
@@ -813,22 +824,16 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                       {fuelType === 'fleet' ? 'Fleet card — deducted from what Edgerton owes driver' : 'Driver paid — tracked for tax purposes, not deducted from pay'}
                     </div>
                   </div>
-
-                  {/* DATE */}
                   <div style={{ marginBottom:12 }}>
                     <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>DATE</div>
                     <input type="date" value={fuelDate} onChange={e => setFuelDate(e.target.value)} style={editInputStyle} />
                   </div>
-
-                  {/* AMOUNT */}
                   <div style={{ marginBottom:12 }}>
                     <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>AMOUNT ($)</div>
                     <input type="number" inputMode="decimal" placeholder="0.00"
                       value={fuelAmount} onChange={e => setFuelAmount(e.target.value)}
                       style={{ ...editInputStyle, fontSize:22, fontWeight:700, fontFamily:'var(--font-head)' }} />
                   </div>
-
-                  {/* SCAN RECEIPT */}
                   <div style={{ marginBottom:12 }}>
                     <button onClick={() => fuelFileRef.current.click()} disabled={fuelScanning} style={{
                       width:'100%', padding:'10px 0', borderRadius:8, border:'1px solid var(--border)',
@@ -845,14 +850,11 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                       </div>
                     )}
                   </div>
-
-                  {/* NOTES */}
                   <div style={{ marginBottom:14 }}>
                     <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>NOTES (optional)</div>
                     <input type="text" placeholder="e.g. Fleet card week of Apr 21"
                       value={fuelNotes} onChange={e => setFuelNotes(e.target.value)} style={editInputStyle} />
                   </div>
-
                   <button onClick={saveFuelEntry} disabled={fuelSaving || !fuelAmount} style={{
                     width:'100%', padding:'12px 0', borderRadius:10, border:'none', cursor:'pointer',
                     fontFamily:'var(--font-head)', fontWeight:900, fontSize:14,
@@ -872,16 +874,13 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                   <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>OWNER SETTLEMENT</div>
                   <div className="amount-row"><span className="label">Owner Cut (20%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.ownerCut)}</span></div>
                 </div>
-                {/* Bruce fuel entries for period */}
                 {fuelEntriesForPeriod('BRUCE').length > 0 && (
                   <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
                     <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>⛽ FUEL ENTRIES</div>
                     {fuelEntriesForPeriod('BRUCE').map(f => (
                       <div key={f.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', paddingBottom:6 }}>
                         <div>
-                          <span style={{ fontSize:11, color: f.fuel_type==='fleet' ? 'var(--amber)' : '#1565c0', fontFamily:'var(--font-head)', fontWeight:700 }}>
-                            {f.fuel_type === 'fleet' ? 'FLEET' : 'POCKET'}
-                          </span>
+                          <span style={{ fontSize:11, color: f.fuel_type==='fleet' ? 'var(--amber)' : '#1565c0', fontFamily:'var(--font-head)', fontWeight:700 }}>{f.fuel_type === 'fleet' ? 'FLEET' : 'POCKET'}</span>
                           <span style={{ fontSize:11, color:'var(--grey)', marginLeft:6 }}>{f.entry_date}</span>
                           {f.notes && <span style={{ fontSize:10, color:'var(--grey)', marginLeft:6 }}>{f.notes}</span>}
                         </div>
@@ -904,6 +903,18 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                   <div className="amount-row"><span className="label">Rate Con Total</span><span className="value">{fmt(timStats.rateCon)}</span></div>
                   <div className="amount-row"><span className="label">Gross Pay (80%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay)}</span></div>
                   <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.advanceKept)}</span></div>
+
+                  {/* REIMBURSEMENT OWED — only shows when Tim paid lumpers with no Comdata */}
+                  {timStats.reimbOwed > 0 && (
+                    <div className="amount-row">
+                      <span className="label" style={{color:'var(--amber)'}}>
+                        Lumper Reimbursement
+                        <span style={{fontSize:9, marginLeft:4, color:'var(--grey)'}}>no comdata issued</span>
+                      </span>
+                      <span className="value" style={{color:'var(--amber)'}}>+{fmt(timStats.reimbOwed)}</span>
+                    </div>
+                  )}
+
                   <div className="amount-row"><span className="label">Fleet Card Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(timStats.fleetFuel)}</span></div>
                   {timStats.pocketFuel > 0 && (
                     <div className="amount-row">
@@ -919,16 +930,13 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                   </div>
                 </div>
 
-                {/* TIM FUEL ENTRIES LIST */}
                 {fuelEntriesForPeriod('TIM').length > 0 && (
                   <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
                     <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>⛽ FUEL ENTRIES</div>
                     {fuelEntriesForPeriod('TIM').map(f => (
                       <div key={f.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', paddingBottom:6 }}>
                         <div>
-                          <span style={{ fontSize:11, color: f.fuel_type==='fleet' ? 'var(--amber)' : '#1565c0', fontFamily:'var(--font-head)', fontWeight:700 }}>
-                            {f.fuel_type === 'fleet' ? 'FLEET' : 'POCKET'}
-                          </span>
+                          <span style={{ fontSize:11, color: f.fuel_type==='fleet' ? 'var(--amber)' : '#1565c0', fontFamily:'var(--font-head)', fontWeight:700 }}>{f.fuel_type === 'fleet' ? 'FLEET' : 'POCKET'}</span>
                           <span style={{ fontSize:11, color:'var(--grey)', marginLeft:6 }}>{f.entry_date}</span>
                           {f.notes && <span style={{ fontSize:10, color:'var(--grey)', marginLeft:6 }}>{f.notes}</span>}
                         </div>
