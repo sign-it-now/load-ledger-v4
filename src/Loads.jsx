@@ -477,22 +477,30 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return { comdataTotal, lumperTotal, incTotal }
   }
 
+  // ── CALC PAY ─────────────────────────────────────────────
+  // Bruce: owner cut = base_pay × 20% only (detention excluded)
+  // Tim:   gross pay = (base_pay × 80%) + detention (100% to Tim)
+  // Detention / layover is paid in full to the driver — Bruce takes no cut
   function calcPay(load) {
-    const base = parseFloat(load.base_pay) || 0
-    if (load.driver === 'BRUCE') return { gross:base, ownerCut:base*BRUCE_CUT, driverNet:base }
-    return { gross:base, ownerCut:base*BRUCE_CUT, driverNet:base*TIM_CUT }
+    const base      = parseFloat(load.base_pay) || 0
+    const detention = parseFloat(load.detention) || 0
+    if (load.driver === 'BRUCE') {
+      return { gross: base, ownerCut: base * BRUCE_CUT, driverNet: base }
+    }
+    return {
+      gross:      base,
+      ownerCut:   base * BRUCE_CUT,
+      driverNet:  (base * TIM_CUT) + detention,
+    }
   }
 
-  // ── ADVANCE KEPT — Comdata exceeded expenses, Tim pocketed the difference ─
-  // Only positive when Comdata > (Lumpers + Incidentals)
+  // ── ADVANCE KEPT — Comdata exceeded expenses ─────────────
   function advanceKept(load) {
     const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
     return Math.max(0, comdataTotal - lumperTotal - incTotal)
   }
 
-  // ── REIMBURSEMENT OWED — Tim paid lumpers/incidentals with no Comdata to cover ─
-  // Only positive when (Lumpers + Incidentals) > Comdata
-  // This is money Edgerton owes Tim back — ADDS to still owed
+  // ── REIMBURSEMENT OWED — Tim paid lumpers with no Comdata ─
   function reimbursementOwed(load) {
     const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
     return Math.max(0, (lumperTotal + incTotal) - comdataTotal)
@@ -576,22 +584,24 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     const advKept    = inRange.reduce((s,l) => s + advanceKept(l), 0)
     const reimbOwed  = inRange.reduce((s,l) => s + reimbursementOwed(l), 0)
     const gPay       = inRange.reduce((s,l) => s + calcPay(l).driverNet, 0)
+    const detentionTotal = inRange.reduce((s,l) => s + (parseFloat(l.detention)||0), 0)
     const fleetFuel  = fuelForPeriod(driverName, 'fleet')
     const pocketFuel = fuelForPeriod(driverName, 'pocket')
-    // stillOwed = Gross Pay − Advance Kept + Reimbursement Owed − Fleet Card Fuel
+    // stillOwed = Gross Pay (includes detention 100%) − Advance Kept + Reimbursement Owed − Fleet Fuel
     const stillOwed  = gPay - advKept + reimbOwed - fleetFuel
     return {
-      count:       inRange.length,
-      billed:      billed.reduce((s,l)  => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
-      paid:        paid.reduce((s,l)    => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
-      ownerCut:    inRange.reduce((s,l) => s+calcPay(l).ownerCut, 0),
-      grossPay:    gPay,
-      advanceKept: advKept,
+      count:          inRange.length,
+      billed:         billed.reduce((s,l)  => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      paid:           paid.reduce((s,l)    => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
+      ownerCut:       inRange.reduce((s,l) => s+calcPay(l).ownerCut, 0),
+      grossPay:       gPay,
+      detentionTotal,
+      advanceKept:    advKept,
       reimbOwed,
       fleetFuel,
       pocketFuel,
-      stillOwed:   Math.max(0, stillOwed),
-      rateCon:     inRange.reduce((s,l) => s+(parseFloat(l.base_pay)||0), 0),
+      stillOwed:      Math.max(0, stillOwed),
+      rateCon:        inRange.reduce((s,l) => s+(parseFloat(l.base_pay)||0), 0),
     }
   }
 
@@ -872,7 +882,8 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                 <div className="amount-row"><span className="label">Loads</span><span className="value">{bruceStats.count}</span></div>
                 <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
                   <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>OWNER SETTLEMENT</div>
-                  <div className="amount-row"><span className="label">Owner Cut (20%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.ownerCut)}</span></div>
+                  <div className="amount-row"><span className="label">Rate Con Total</span><span className="value">{fmt(bruceStats.rateCon)}</span></div>
+                  <div className="amount-row"><span className="label">Owner Cut (20% of rate con)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.ownerCut)}</span></div>
                 </div>
                 {fuelEntriesForPeriod('BRUCE').length > 0 && (
                   <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
@@ -901,10 +912,22 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                 <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
                   <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>DRIVER SETTLEMENT</div>
                   <div className="amount-row"><span className="label">Rate Con Total</span><span className="value">{fmt(timStats.rateCon)}</span></div>
-                  <div className="amount-row"><span className="label">Gross Pay (80%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay)}</span></div>
+                  <div className="amount-row"><span className="label">Gross Pay (80% of rate con)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay - timStats.detentionTotal)}</span></div>
+
+                  {/* DETENTION — 100% to Tim, shown separately */}
+                  {timStats.detentionTotal > 0 && (
+                    <div className="amount-row">
+                      <span className="label" style={{color:'var(--green)'}}>
+                        Detention / Layover
+                        <span style={{fontSize:9, marginLeft:4, color:'var(--grey)'}}>100% to Tim</span>
+                      </span>
+                      <span className="value" style={{color:'var(--green)'}}>+{fmt(timStats.detentionTotal)}</span>
+                    </div>
+                  )}
+
                   <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(timStats.advanceKept)}</span></div>
 
-                  {/* REIMBURSEMENT OWED — only shows when Tim paid lumpers with no Comdata */}
+                  {/* REIMBURSEMENT — only shows when Tim paid lumpers with no Comdata */}
                   {timStats.reimbOwed > 0 && (
                     <div className="amount-row">
                       <span className="label" style={{color:'var(--amber)'}}>
