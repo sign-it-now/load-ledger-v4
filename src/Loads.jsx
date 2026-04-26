@@ -1,6 +1,6 @@
 // src/Loads.jsx
 // (c) dbappsystems.com | daddyboyapps.com
-// UPDATED: Leaderboard now uses Rate Con Total (base_pay) for friendly competition
+// RESTORED FROM BACKUP: Apr 26 2026
 
 import { useState, useEffect, useRef } from 'react'
 import { jsPDF } from 'jspdf'
@@ -19,7 +19,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const [updating,             setUpdating]             = useState(null)
   const [editIdx,              setEditIdx]              = useState(null)
   const [editData,             setEditData]             = useState(null)
-  const [showSettlementReport, setShowSettlementReport] = useState(null)
+  const [showSettlementReport, setShowSettlementReport] = useState(null) // null | 'TIM' | 'BRUCE'
 
   const [fuelEntries,    setFuelEntries]    = useState([])
   const [showFuelDrawer, setShowFuelDrawer] = useState(false)
@@ -726,10 +726,8 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     }
   }
 
-  // ── LEADERBOARD — uses Rate Con Total (base_pay) for friendly competition ──
-  const bruceTotalAllTime = bruceLoads.reduce((s,l) => s+(parseFloat(l.base_pay)||0), 0)
-  const timTotalAllTime   = timLoads.reduce((s,l)   => s+(parseFloat(l.base_pay)||0), 0)
-
+  const bruceTotalAllTime = bruceLoads.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
+  const timTotalAllTime   = timLoads.reduce((s,l)   => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
   const grandTotal        = bruceTotalAllTime + timTotalAllTime
   const brucePercent      = grandTotal > 0 ? Math.round((bruceTotalAllTime/grandTotal)*100) : 50
   const timPercent        = 100 - brucePercent
