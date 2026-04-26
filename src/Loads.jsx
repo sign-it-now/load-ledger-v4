@@ -1,6 +1,5 @@
 // src/Loads.jsx
 // (c) dbappsystems.com | daddyboyapps.com
-// RESTORED FROM BACKUP: Apr 26 2026
 
 import { useState, useEffect, useRef } from 'react'
 import { jsPDF } from 'jspdf'
@@ -19,7 +18,10 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const [updating,             setUpdating]             = useState(null)
   const [editIdx,              setEditIdx]              = useState(null)
   const [editData,             setEditData]             = useState(null)
-  const [showSettlementReport, setShowSettlementReport] = useState(null) // null | 'TIM' | 'BRUCE'
+  const [showSettlementReport, setShowSettlementReport] = useState(null)
+  // ── ACH PANEL STATE ───────────────────────────────────────
+  const [showAchPanel,         setShowAchPanel]         = useState(null)
+  const [achReceivedAmt,       setAchReceivedAmt]       = useState('')
 
   const [fuelEntries,    setFuelEntries]    = useState([])
   const [showFuelDrawer, setShowFuelDrawer] = useState(false)
@@ -273,6 +275,23 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       }
     } catch (err) { showToast('⚠️ Update failed: ' + err.message) }
     finally { setUpdating(null) }
+  }
+
+  // ── MARK PAID VIA ACH ─────────────────────────────────────
+  async function markPaidACH(load, localIdx, received) {
+    const netPay = parseFloat(load.netPay || load.net_pay) || 0
+    const rcvd   = parseFloat(received) || 0
+    if (rcvd <= 0) { showToast('Enter the amount you received'); return }
+    await patchLoad(load, localIdx, {
+      status:       'paid',
+      ach_payment:  1,
+      ach_received: rcvd,
+    })
+    setShowAchPanel(null)
+    setAchReceivedAmt('')
+    const fee = Math.max(0, netPay - rcvd)
+    if (fee > 0) showToast('✅ ACH Paid! Broker fee: $' + fee.toFixed(2))
+    else showToast('✅ ACH Paid!')
   }
 
   async function deleteLoad(load, localIdx) {
@@ -529,12 +548,12 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     const pocketFuelTotal = fuelInRange.filter(f => f.fuel_type === 'pocket').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
     let totalRateCon = 0, totalGross80 = 0, totalDetention = 0, totalEarned = 0, totalAdvKept = 0, totalReimb = 0
     const earningsRows = inRange.map(l => {
-      const base = parseFloat(l.base_pay) || 0
-      const det  = parseFloat(l.detention) || 0
+      const base    = parseFloat(l.base_pay) || 0
+      const det     = parseFloat(l.detention) || 0
       const gross80 = base * TIM_CUT
       const earned  = gross80 + det
       totalRateCon += base; totalGross80 += gross80; totalDetention += det; totalEarned += earned
-      return { loadNum: l.load_number || '-', base, gross80, det, earned }
+      return { loadNum: l.load_number || '-', base, gross80, det, earned, isAch: !!l.ach_payment, achReceived: parseFloat(l.ach_received)||0 }
     })
     const advRows = inRange.filter(l => {
       const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(l)
@@ -547,13 +566,18 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       totalAdvKept += advKept; totalReimb += reimb
       return { loadNum: l.load_number || '-', comdata: comdataTotal, expenses, advKept, reimb }
     })
-    const stillOwed = Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuelTotal)
+    const achLoads          = inRange.filter(l => l.ach_payment)
+    const totalAchDisbursed = achLoads.reduce((s,l) => s + (parseFloat(l.ach_received)||0), 0)
+    const totalAchFees      = achLoads.reduce((s,l) => s + Math.max(0, (parseFloat(l.netPay||l.net_pay)||0) - (parseFloat(l.ach_received)||0)), 0)
+    const stillOwed = Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuelTotal - totalAchDisbursed)
     return {
       driverName, periodLabel: getPeriodLabel(period, periodOffset),
       generated: new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }),
       earningsRows, totalRateCon, totalGross80, totalDetention, totalEarned,
       advRows, totalAdvKept, totalReimb,
-      fuelInRange, fleetFuelTotal, pocketFuelTotal, stillOwed,
+      fuelInRange, fleetFuelTotal, pocketFuelTotal,
+      achLoads, totalAchDisbursed, totalAchFees,
+      stillOwed,
     }
   }
 
@@ -596,7 +620,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                 <tbody>
                   {d.earningsRows.map((r,i) => (
                     <tr key={i} style={{ background:i%2===0?'#fff':'#fafafa' }}>
-                      <td style={TD}><strong>{r.loadNum}</strong></td>
+                      <td style={TD}><strong>{r.loadNum}</strong>{r.isAch && <span style={{ marginLeft:6, fontSize:9, background:'#e8f5e9', color:'#2e7d32', padding:'1px 5px', borderRadius:3, fontWeight:700 }}>ACH</span>}</td>
                       <td style={TDr}>{fmt(r.base)}</td>
                       <td style={TDr}>{fmt(r.gross80)}</td>
                       {d.totalDetention > 0 && <td style={{...TDr,color:r.det>0?'#2e7d32':'#aaa'}}>{r.det>0?fmt(r.det):'-'}</td>}
@@ -646,6 +670,41 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
               </div>
             </div>
           )}
+          {d.achLoads.length > 0 && (
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>ACH PAYMENTS</div>
+              <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                  <thead><tr>
+                    <th style={TH}>Load #</th>
+                    <th style={{...TH,textAlign:'right'}}>Invoice Amt</th>
+                    <th style={{...TH,textAlign:'right'}}>Received</th>
+                    <th style={{...TH,textAlign:'right'}}>Broker Fee</th>
+                  </tr></thead>
+                  <tbody>
+                    {d.achLoads.map((l,i) => {
+                      const netPay   = parseFloat(l.netPay||l.net_pay)||0
+                      const received = parseFloat(l.ach_received)||0
+                      const fee      = Math.max(0, netPay - received)
+                      return (
+                        <tr key={i} style={{ background:i%2===0?'#fff':'#fafafa' }}>
+                          <td style={TD}><strong>{l.load_number||'-'}</strong></td>
+                          <td style={TDr}>{fmt(netPay)}</td>
+                          <td style={{...TDr,color:'#2e7d32'}}>{fmt(received)}</td>
+                          <td style={{...TDr,color:'#e65100'}}>{fee>0?fmt(fee):'-'}</td>
+                        </tr>
+                      )
+                    })}
+                    <tr>
+                      <td style={TF} colSpan={2}>TOTAL</td>
+                      <td style={{...TFr,color:'#2e7d32'}}>{fmt(d.totalAchDisbursed)}</td>
+                      <td style={{...TFr,color:'#e65100'}}>{fmt(d.totalAchFees)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           {d.fuelInRange.length > 0 && (
             <div style={{ marginBottom:16 }}>
               <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>FUEL</div>
@@ -681,10 +740,22 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                   <tr style={{background:'#fafafa'}}><td style={TD}>− Advance Kept (Comdata leftover)</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.totalAdvKept)})</td></tr>
                   {d.totalReimb > 0 && <tr style={{background:'#fffde7'}}><td style={{...TD,color:'#f57c00'}}>+ Lumper Reimbursement (no comdata issued)</td><td style={{...TDr,color:'#f57c00'}}>{fmt(d.totalReimb)}</td></tr>}
                   {d.fleetFuelTotal > 0 && <tr style={{background:'#fafafa'}}><td style={TD}>− Fleet Card Fuel</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.fleetFuelTotal)})</td></tr>}
+                  {d.totalAchDisbursed > 0 && (
+                    <tr style={{background:'#e8f5e9'}}>
+                      <td style={{...TD,color:'#2e7d32'}}>− ACH Disbursements Already Received</td>
+                      <td style={{...TDr,color:'#2e7d32'}}>({fmt(d.totalAchDisbursed)})</td>
+                    </tr>
+                  )}
                   <tr style={{background:'#1a2a3a'}}>
                     <td style={{ padding:'14px 12px', fontSize:15, fontWeight:900, color:'#fff', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }}>NET AMOUNT OWED TO {driverName}</td>
                     <td style={{ padding:'14px 12px', textAlign:'right', fontSize:20, fontWeight:900, color:'#ffd54f', fontFamily:'var(--font-head)' }}>{fmt(d.stillOwed)}</td>
                   </tr>
+                  {d.totalAchFees > 0 && (
+                    <tr style={{background:'#fff3e0'}}>
+                      <td style={{...TD,color:'#e65100',fontSize:11}}>ACH Convenience Fees (broker kept — operating expense)</td>
+                      <td style={{...TDr,color:'#e65100',fontSize:11}}>{fmt(d.totalAchFees)}</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -714,14 +785,17 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     const detentionTotal = inRange.reduce((s,l) => s + (parseFloat(l.detention)||0), 0)
     const fleetFuel      = fuelForPeriod(driverName, 'fleet')
     const pocketFuel     = fuelForPeriod(driverName, 'pocket')
-    const stillOwed      = gPay - advKept + reimbOwed - fleetFuel
+    const achDisbursed   = inRange.filter(l => l.ach_payment).reduce((s,l) => s + (parseFloat(l.ach_received)||0), 0)
+    const achFees        = inRange.filter(l => l.ach_payment).reduce((s,l) => s + Math.max(0, (parseFloat(l.netPay||l.net_pay)||0) - (parseFloat(l.ach_received)||0)), 0)
+    const stillOwed      = gPay - advKept + reimbOwed - fleetFuel - achDisbursed
     return {
       count: inRange.length,
       billed: billed.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
       paid:   paid.reduce((s,l)   => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
       ownerCut: inRange.reduce((s,l) => s+calcPay(l).ownerCut, 0),
       grossPay: gPay, detentionTotal, advanceKept: advKept, reimbOwed,
-      fleetFuel, pocketFuel, stillOwed: Math.max(0, stillOwed),
+      fleetFuel, pocketFuel, achDisbursed, achFees,
+      stillOwed: Math.max(0, stillOwed),
       rateCon: inRange.reduce((s,l) => s+(parseFloat(l.base_pay)||0), 0),
     }
   }
@@ -828,20 +902,8 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       {view === 'reports' && (
         <div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16 }}>
-            <button onClick={() => setReportTab('carrier')} style={{
-              padding:'12px 0', borderRadius:10, border:'none',
-              fontFamily:'var(--font-head)', fontWeight:900, fontSize:13,
-              letterSpacing:'0.06em', cursor:'pointer',
-              background: reportTab === 'carrier' ? 'var(--amber)' : 'var(--navy3)',
-              color:       reportTab === 'carrier' ? 'var(--navy)'  : 'var(--grey)',
-            }}>🚛 CARRIER</button>
-            <button onClick={() => { setReportTab('settlement'); fetchFuelEntries() }} style={{
-              padding:'12px 0', borderRadius:10, border:'none',
-              fontFamily:'var(--font-head)', fontWeight:900, fontSize:13,
-              letterSpacing:'0.06em', cursor:'pointer',
-              background: reportTab === 'settlement' ? 'var(--amber)' : 'var(--navy3)',
-              color:       reportTab === 'settlement' ? 'var(--navy)'  : 'var(--grey)',
-            }}>💵 SETTLEMENT</button>
+            <button onClick={() => setReportTab('carrier')} style={{ padding:'12px 0', borderRadius:10, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, letterSpacing:'0.06em', cursor:'pointer', background: reportTab === 'carrier' ? 'var(--amber)' : 'var(--navy3)', color: reportTab === 'carrier' ? 'var(--navy)' : 'var(--grey)' }}>🚛 CARRIER</button>
+            <button onClick={() => { setReportTab('settlement'); fetchFuelEntries() }} style={{ padding:'12px 0', borderRadius:10, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, letterSpacing:'0.06em', cursor:'pointer', background: reportTab === 'settlement' ? 'var(--amber)' : 'var(--navy3)', color: reportTab === 'settlement' ? 'var(--navy)' : 'var(--grey)' }}>💵 SETTLEMENT</button>
           </div>
           <PeriodNav />
           {reportTab === 'carrier' && (
@@ -889,6 +951,15 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
               {showFuelDrawer && (
                 <div className="card" style={{ marginBottom:12, border:'1px solid #2a4a2a' }}>
                   <div style={{ fontFamily:'var(--font-head)', fontSize:12, color:'#4caf50', letterSpacing:'0.1em', marginBottom:12 }}>NEW FUEL ENTRY</div>
+                  {loggedInDriver && fuelDriver !== loggedInDriver && (
+                    <div style={{ background:'#fff8e1', border:'1px solid #f9a825', borderRadius:8, padding:'10px 12px', marginBottom:12, display:'flex', alignItems:'center', gap:8 }}>
+                      <span style={{ fontSize:16 }}>⚠️</span>
+                      <div>
+                        <div style={{ fontSize:11, fontWeight:700, color:'#e65100', fontFamily:'var(--font-head)' }}>DRIVER MISMATCH</div>
+                        <div style={{ fontSize:11, color:'#5d4037' }}>You are logged in as <strong>{loggedInDriver}</strong> but entering fuel for <strong>{fuelDriver}</strong>. Double-check this is correct.</div>
+                      </div>
+                    </div>
+                  )}
                   <div style={{ marginBottom:12 }}>
                     <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>DRIVER</div>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
@@ -983,12 +1054,26 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                       <span className="value" style={{color:'#1565c0'}}>{fmt(timStats.pocketFuel)}</span>
                     </div>
                   )}
+                  {timStats.achDisbursed > 0 && (
+                    <div className="amount-row">
+                      <span className="label" style={{color:'#2e7d32'}}>ACH Disbursements Received <span style={{fontSize:9}}>already paid out</span></span>
+                      <span className="value" style={{color:'#2e7d32'}}>-{fmt(timStats.achDisbursed)}</span>
+                    </div>
+                  )}
                   <div style={{marginTop:8,paddingTop:8,borderTop:'2px solid var(--border)'}}>
                     <div className="amount-row">
                       <span className="label" style={{fontWeight:900,color:'var(--white)',fontSize:14}}>Still Owed to Tim</span>
                       <span className="value" style={{color:'var(--amber)',fontSize:18,fontWeight:900}}>{fmt(timStats.stillOwed)}</span>
                     </div>
                   </div>
+                  {timStats.achFees > 0 && (
+                    <div style={{marginTop:6,paddingTop:6,borderTop:'1px solid var(--border)'}}>
+                      <div className="amount-row">
+                        <span className="label" style={{color:'#e65100',fontSize:11}}>ACH Broker Fees (expense)</span>
+                        <span className="value" style={{color:'#e65100',fontSize:11}}>{fmt(timStats.achFees)}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {fuelEntriesForPeriod('TIM').length > 0 && (
                   <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
@@ -1035,6 +1120,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
           {filteredLoads.map((load, idx) => {
             const localIdx    = loads.indexOf(load)
             const isEditing   = editIdx === localIdx
+            const isAchPanel  = showAchPanel === localIdx
             const loadId      = load.id || localIdx
             const netPay      = parseFloat(load.netPay || load.net_pay) || 0
             const basePay     = parseFloat(load.base_pay)   || 0
@@ -1049,6 +1135,8 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
             const bolCount    = load.bol_count || (load.bols && load.bols.length) || 0
             const dateStr     = loadDate(load)
             const invHref     = invoiceHref(load)
+            const achFee      = load.ach_payment ? Math.max(0, netPay - (parseFloat(load.ach_received)||0)) : 0
+            const achPreviewFee = achReceivedAmt ? Math.max(0, netPay - (parseFloat(achReceivedAmt)||0)) : 0
             return (
               <div key={load.id || idx} style={{ background:'var(--white)', borderRadius:10, marginBottom:14, overflow:'hidden', boxShadow:'0 2px 8px rgba(0,0,0,0.18)' }}>
                 <div style={{ background:load.driver==='BRUCE'?'#1A3A5C':'#2a0a0a', padding:'10px 14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
@@ -1057,6 +1145,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                     <div style={{ fontSize:18, fontFamily:'var(--font-head)', fontWeight:900, color:'#fff', letterSpacing:'0.04em' }}>#{load.load_number||'-'}</div>
                   </div>
                   <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    {load.ach_payment && <span style={{ fontSize:9, fontWeight:700, padding:'2px 6px', borderRadius:4, background:'#e8f5e9', color:'#2e7d32' }}>⚡ ACH</span>}
                     {bolCount > 0 && <div style={{ fontSize:10, color:'rgba(255,255,255,0.6)', fontFamily:'var(--font-head)' }}>{bolCount} BOL{bolCount!==1?'s':''}</div>}
                     <span className={'status-chip ' + load.status}>{load.status}</span>
                   </div>
@@ -1110,14 +1199,52 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                       <button className="scan-btn secondary" style={{ flex:1, padding:'8px 12px', fontSize:12 }} disabled={updating===loadId} onClick={() => patchLoad(load,localIdx,{status:'billed'})}>{updating===loadId?'...':'MARK BILLED'}</button>
                     )}
                     {load.status !== 'paid' && (
-                      <button className="scan-btn success" style={{ flex:1, padding:'8px 12px', fontSize:12 }} disabled={updating===loadId} onClick={() => patchLoad(load,localIdx,{status:'paid'})}>{updating===loadId?'...':'MARK PAID'}</button>
+                      <button className="scan-btn success" style={{ flex:1, padding:'8px 12px', fontSize:12 }} disabled={updating===loadId} onClick={() => { setShowAchPanel(null); setAchReceivedAmt(''); patchLoad(load,localIdx,{status:'paid'}) }}>{updating===loadId?'...':'MARK PAID'}</button>
                     )}
-                    {load.status === 'paid' && (
+                    {load.driver === 'TIM' && load.status !== 'paid' && (
+                      <button onClick={() => {
+                        if (isAchPanel) { setShowAchPanel(null); setAchReceivedAmt('') }
+                        else { setShowAchPanel(localIdx); setAchReceivedAmt('') }
+                      }} style={{ padding:'8px 12px', borderRadius:8, fontSize:12, cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.04em', background: isAchPanel ? '#e8f5e9' : 'var(--navy3)', color: isAchPanel ? '#2e7d32' : 'var(--grey)', border: isAchPanel ? '1px solid #2e7d32' : '1px solid var(--border)' }}>⚡ ACH</button>
+                    )}
+                    {load.status === 'paid' && !load.ach_payment && (
                       <div style={{ fontSize:12, color:'var(--green)', fontFamily:'var(--font-head)', fontWeight:700, paddingTop:4 }}>PAYMENT RECEIVED</div>
+                    )}
+                    {load.status === 'paid' && load.ach_payment && (
+                      <div style={{ fontSize:11, color:'#2e7d32', fontFamily:'var(--font-head)', fontWeight:700, paddingTop:4 }}>
+                        ⚡ ACH PAID — Received: {fmt(parseFloat(load.ach_received)||0)}
+                        {achFee > 0 && <span style={{ color:'#e65100', marginLeft:6 }}>Fee: {fmt(achFee)}</span>}
+                      </div>
                     )}
                     <button style={{ padding:'8px 12px', borderRadius:8, border:'1px solid var(--amber)', background:isEditing?'var(--amber)':'transparent', color:isEditing?'var(--navy)':'var(--amber)', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }} onClick={() => openEdit(load,localIdx)}>{isEditing?'CLOSE':'EDIT'}</button>
                     <button style={{ padding:'8px 12px', borderRadius:8, border:'1px solid #ccc', background:'transparent', color:'#999', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }} onClick={() => setConfirmDelete(localIdx)}>DELETE</button>
                   </div>
+                  {isAchPanel && (
+                    <div style={{ marginTop:12, padding:14, background:'#f1f8e9', borderRadius:8, border:'1px solid #a5d6a7' }}>
+                      <div style={{ fontFamily:'var(--font-head)', fontSize:12, color:'#2e7d32', letterSpacing:'0.08em', marginBottom:10 }}>⚡ ACH PAYMENT — CONFIRM RECEIVED AMOUNT</div>
+                      <div style={{ fontSize:11, color:'#555', marginBottom:10 }}>Invoice total: <strong>{fmt(netPay)}</strong> — Broker deducted their fee before sending. Enter what actually hit the bank.</div>
+                      <div style={{ marginBottom:8 }}>
+                        <div style={{ fontSize:11, color:'#444', fontFamily:'var(--font-head)', marginBottom:4 }}>AMOUNT TIM RECEIVED ($)</div>
+                        <input type="text" inputMode="decimal" placeholder="0.00" value={achReceivedAmt} onChange={e => setAchReceivedAmt(e.target.value)} style={{ ...editInputStyle, fontSize:22, fontWeight:700, fontFamily:'var(--font-head)', background:'#fff', color:'#111', border:'1px solid #a5d6a7' }} />
+                      </div>
+                      {achReceivedAmt && parseFloat(achReceivedAmt) > 0 && (
+                        <div style={{ background:'#fff', borderRadius:6, padding:'8px 12px', marginBottom:10, border:'1px solid #e0e0e0', fontSize:12 }}>
+                          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+                            <span style={{ color:'#555' }}>Received by Tim</span>
+                            <span style={{ fontFamily:'var(--font-head)', fontWeight:700, color:'#2e7d32' }}>{fmt(parseFloat(achReceivedAmt))}</span>
+                          </div>
+                          <div style={{ display:'flex', justifyContent:'space-between' }}>
+                            <span style={{ color:'#e65100' }}>Broker convenience fee</span>
+                            <span style={{ fontFamily:'var(--font-head)', fontWeight:700, color:'#e65100' }}>{fmt(achPreviewFee)}</span>
+                          </div>
+                        </div>
+                      )}
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                        <button onClick={() => { setShowAchPanel(null); setAchReceivedAmt('') }} style={{ padding:'10px 0', borderRadius:8, border:'1px solid #ccc', background:'transparent', color:'#888', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, cursor:'pointer' }}>CANCEL</button>
+                        <button disabled={!achReceivedAmt || parseFloat(achReceivedAmt) <= 0 || updating === loadId} onClick={() => markPaidACH(load, localIdx, achReceivedAmt)} style={{ padding:'10px 0', borderRadius:8, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', background: (!achReceivedAmt||parseFloat(achReceivedAmt)<=0||updating===loadId)?'#ccc':'#2e7d32', color:'#fff' }}>{updating===loadId?'SAVING...':'✅ CONFIRM PAID — ACH'}</button>
+                      </div>
+                    </div>
+                  )}
                   {confirmDelete === localIdx && (
                     <div style={{ marginTop:12, padding:12, background:'#fff3f3', borderRadius:8, border:'1px solid #e53935' }}>
                       <div style={{ fontSize:13, color:'#c62828', marginBottom:10, fontFamily:'var(--font-head)', fontWeight:700 }}>DELETE THIS LOAD? This cannot be undone.</div>
@@ -1186,6 +1313,16 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                         <span style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color:editNetPreview()>=0?'var(--navy)':'#c62828' }}>{fmt(editNetPreview())}</span>
                       </div>
                       <div style={{ fontSize:11, color:'#888', textAlign:'center', marginBottom:10 }}>Saving will update the app and download a corrected invoice PDF.</div>
+                      {load.status === 'paid' && (
+                        <div style={{ marginBottom:10 }}>
+                          <div style={{ fontSize:11, color:'#e65100', fontFamily:'var(--font-head)', fontWeight:700, textAlign:'center', marginBottom:6 }}>
+                            {load.ach_payment ? '⚡ This load was marked ACH paid. Unpay to correct it.' : 'This load is marked paid. Unpay to correct it.'}
+                          </div>
+                          <button disabled={updating === loadId} onClick={async () => { await patchLoad(load, localIdx, { status:'billed', ach_payment:0, ach_received:0 }); closeEdit(); showToast('↩️ Load reset to billed — ready to re-pay') }} style={{ width:'100%', padding:'11px 0', borderRadius:8, border:'2px solid #e65100', background:'#fff3e0', color:'#e65100', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', letterSpacing:'0.05em' }}>
+                            {updating === loadId ? 'UPDATING...' : '↩️ MARK UNPAID — RESET TO BILLED'}
+                          </button>
+                        </div>
+                      )}
                       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
                         <button className="scan-btn secondary" style={{ padding:'10px', fontSize:13 }} onClick={closeEdit}>CANCEL</button>
                         <button className="scan-btn success" style={{ padding:'10px', fontSize:13 }} onClick={() => saveEdit(load,localIdx)}>SAVE + DOWNLOAD</button>
