@@ -1429,6 +1429,24 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                         <span style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color:editNetPreview()>=0?'var(--navy)':'#c62828' }}>{fmt(editNetPreview())}</span>
                       </div>
                       <div style={{ fontSize:11, color:'#888', textAlign:'center', marginBottom:10 }}>Saving will update the app and download a corrected invoice PDF.</div>
+                      {/* ── UNPAY BUTTON — only shows when load is already marked paid ── */}
+                      {load.status === 'paid' && (
+                        <div style={{ marginBottom:10 }}>
+                          <div style={{ fontSize:11, color:'#e65100', fontFamily:'var(--font-head)', fontWeight:700, textAlign:'center', marginBottom:6 }}>
+                            {load.ach_payment ? '⚡ This load was marked ACH paid. Unpay to correct it.' : 'This load is marked paid. Unpay to correct it.'}
+                          </div>
+                          <button
+                            disabled={updating === loadId}
+                            onClick={async () => {
+                              await patchLoad(load, localIdx, { status:'billed', ach_payment:0, ach_received:0 })
+                              closeEdit()
+                              showToast('↩️ Load reset to billed — ready to re-pay')
+                            }}
+                            style={{ width:'100%', padding:'11px 0', borderRadius:8, border:'2px solid #e65100', background:'#fff3e0', color:'#e65100', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', letterSpacing:'0.05em' }}>
+                            {updating === loadId ? 'UPDATING...' : '↩️ MARK UNPAID — RESET TO BILLED'}
+                          </button>
+                        </div>
+                      )}
                       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
                         <button className="scan-btn secondary" style={{ padding:'10px', fontSize:13 }} onClick={closeEdit}>CANCEL</button>
                         <button className="scan-btn success" style={{ padding:'10px', fontSize:13 }} onClick={() => saveEdit(load,localIdx)}>SAVE + DOWNLOAD</button>
