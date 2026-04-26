@@ -518,23 +518,27 @@ export default {
     }
 
     // ── LOADS PATCH ──────────────────────────────────────
+    // Added: ach_payment (boolean) and ach_received (amount Tim actually received)
     if (path.startsWith('/api/loads/') && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
         const b  = await request.json();
         const fields = []; const values = []
-        if (b.status      !== undefined) { fields.push('status=?');      values.push(b.status); }
-        if (b.fuel        !== undefined) { fields.push('fuel=?');        values.push(parseFloat(b.fuel) || 0); }
-        if (b.base_pay    !== undefined) { fields.push('base_pay=?');    values.push(parseFloat(b.base_pay)  || 0); }
-        if (b.detention   !== undefined) { fields.push('detention=?');   values.push(parseFloat(b.detention) || 0); }
-        if (b.pallets     !== undefined) { fields.push('pallets=?');     values.push(parseFloat(b.pallets)   || 0); }
-        if (b.net_pay     !== undefined) { fields.push('net_pay=?');     values.push(parseFloat(b.net_pay)   || 0); }
-        if (b.notes       !== undefined) { fields.push('notes=?');       values.push(b.notes); }
-        if (b.lumpers     !== undefined) { fields.push('lumpers=?');     values.push(typeof b.lumpers     === 'string' ? b.lumpers     : JSON.stringify(b.lumpers)); }
-        if (b.incidentals !== undefined) { fields.push('incidentals=?'); values.push(typeof b.incidentals === 'string' ? b.incidentals : JSON.stringify(b.incidentals)); }
-        if (b.comdatas    !== undefined) { fields.push('comdatas=?');    values.push(typeof b.comdatas    === 'string' ? b.comdatas    : JSON.stringify(b.comdatas)); }
-        if (b.edited      !== undefined) { fields.push('edited=?');      values.push(b.edited); }
-        if (b.edited_date !== undefined) { fields.push('edited_date=?'); values.push(b.edited_date); }
+        if (b.status       !== undefined) { fields.push('status=?');       values.push(b.status); }
+        if (b.fuel         !== undefined) { fields.push('fuel=?');         values.push(parseFloat(b.fuel) || 0); }
+        if (b.base_pay     !== undefined) { fields.push('base_pay=?');     values.push(parseFloat(b.base_pay)  || 0); }
+        if (b.detention    !== undefined) { fields.push('detention=?');    values.push(parseFloat(b.detention) || 0); }
+        if (b.pallets      !== undefined) { fields.push('pallets=?');      values.push(parseFloat(b.pallets)   || 0); }
+        if (b.net_pay      !== undefined) { fields.push('net_pay=?');      values.push(parseFloat(b.net_pay)   || 0); }
+        if (b.notes        !== undefined) { fields.push('notes=?');        values.push(b.notes); }
+        if (b.lumpers      !== undefined) { fields.push('lumpers=?');      values.push(typeof b.lumpers      === 'string' ? b.lumpers      : JSON.stringify(b.lumpers)); }
+        if (b.incidentals  !== undefined) { fields.push('incidentals=?');  values.push(typeof b.incidentals  === 'string' ? b.incidentals  : JSON.stringify(b.incidentals)); }
+        if (b.comdatas     !== undefined) { fields.push('comdatas=?');     values.push(typeof b.comdatas     === 'string' ? b.comdatas     : JSON.stringify(b.comdatas)); }
+        if (b.edited       !== undefined) { fields.push('edited=?');       values.push(b.edited); }
+        if (b.edited_date  !== undefined) { fields.push('edited_date=?');  values.push(b.edited_date); }
+        // ── ACH PAYMENT FIELDS ─────────────────────────────
+        if (b.ach_payment  !== undefined) { fields.push('ach_payment=?');  values.push(b.ach_payment ? 1 : 0); }
+        if (b.ach_received !== undefined) { fields.push('ach_received=?'); values.push(parseFloat(b.ach_received) || 0); }
         if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
         values.push(id);
         await env.DB.prepare('UPDATE loads SET ' + fields.join(', ') + ' WHERE id=?').bind(...values).run();
