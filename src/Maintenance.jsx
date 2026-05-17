@@ -136,7 +136,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
 
       const fleetFuel    = fuel.filter(f => f.fuel_type === 'fleet').reduce((s, f) => s + (parseFloat(f.amount) || 0), 0)
       const achDisbursed = timLoads.filter(l => l.ach_payment).reduce((s, l) => s + (parseFloat(l.ach_received) || 0), 0)
-      setTimSettlementOwed(Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuel - achDisbursed))
+      setTimSettlementOwed(Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuel - achDisbursed - escrowPaymentsTotal))
     } catch (err) {
       console.error('Settlement fetch failed:', err)
       setTimSettlementOwed(0)
@@ -411,7 +411,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
               </div>
               <div style={{background:'#1a0a2a',borderRadius:8,padding:'10px 12px',border:'1px solid #7b1fa2'}}>
                 <div style={{fontSize:10,color:'#ce93d8',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>REPAIR ESCROW</div>
-                <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#ce93d8'}}>{fmt(totalEdgerton)}</div>
+                <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#ce93d8'}}>{fmt(escrowBalance)}</div>
                 <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>Escrow Balance</div>
               </div>
             </div>
