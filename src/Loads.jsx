@@ -4,8 +4,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { jsPDF } from 'jspdf'
 
-const BRUCE_CUT = 0.20
-const TIM_CUT   = 0.80
+const BRUCE_CUT = 0.10
+const TIM_CUT   = 0.90
 
 export default function Loads({ loads, setLoads, driver, api, showToast, fetchLoads }) {
 
@@ -19,7 +19,6 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const [editIdx,              setEditIdx]              = useState(null)
   const [editData,             setEditData]             = useState(null)
   const [showSettlementReport, setShowSettlementReport] = useState(null)
-  // ── ACH PANEL STATE ───────────────────────────────────────
   const [showAchPanel,         setShowAchPanel]         = useState(null)
   const [achReceivedAmt,       setAchReceivedAmt]       = useState('')
 
@@ -277,18 +276,12 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     finally { setUpdating(null) }
   }
 
-  // ── MARK PAID VIA ACH ─────────────────────────────────────
   async function markPaidACH(load, localIdx, received) {
     const netPay = parseFloat(load.netPay || load.net_pay) || 0
     const rcvd   = parseFloat(received) || 0
     if (rcvd <= 0) { showToast('Enter the amount you received'); return }
-    await patchLoad(load, localIdx, {
-      status:       'paid',
-      ach_payment:  1,
-      ach_received: rcvd,
-    })
-    setShowAchPanel(null)
-    setAchReceivedAmt('')
+    await patchLoad(load, localIdx, { status:'paid', ach_payment:1, ach_received:rcvd })
+    setShowAchPanel(null); setAchReceivedAmt('')
     const fee = Math.max(0, netPay - rcvd)
     if (fee > 0) showToast('✅ ACH Paid! Broker fee: $' + fee.toFixed(2))
     else showToast('✅ ACH Paid!')
@@ -546,14 +539,14 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     const fuelInRange = fuelEntries.filter(f => f.driver === driverName && inPeriodByDate(f.entry_date, period, periodOffset))
     const fleetFuelTotal  = fuelInRange.filter(f => f.fuel_type === 'fleet').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
     const pocketFuelTotal = fuelInRange.filter(f => f.fuel_type === 'pocket').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
-    let totalRateCon = 0, totalGross80 = 0, totalDetention = 0, totalEarned = 0, totalAdvKept = 0, totalReimb = 0
+    let totalRateCon = 0, totalGross90 = 0, totalDetention = 0, totalEarned = 0, totalAdvKept = 0, totalReimb = 0
     const earningsRows = inRange.map(l => {
       const base    = parseFloat(l.base_pay) || 0
       const det     = parseFloat(l.detention) || 0
-      const gross80 = base * TIM_CUT
-      const earned  = gross80 + det
-      totalRateCon += base; totalGross80 += gross80; totalDetention += det; totalEarned += earned
-      return { loadNum: l.load_number || '-', base, gross80, det, earned, isAch: !!l.ach_payment, achReceived: parseFloat(l.ach_received)||0 }
+      const gross90 = base * TIM_CUT
+      const earned  = gross90 + det
+      totalRateCon += base; totalGross90 += gross90; totalDetention += det; totalEarned += earned
+      return { loadNum: l.load_number || '-', base, gross90, det, earned, isAch: !!l.ach_payment, achReceived: parseFloat(l.ach_received)||0 }
     })
     const advRows = inRange.filter(l => {
       const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(l)
@@ -573,7 +566,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     return {
       driverName, periodLabel: getPeriodLabel(period, periodOffset),
       generated: new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }),
-      earningsRows, totalRateCon, totalGross80, totalDetention, totalEarned,
+      earningsRows, totalRateCon, totalGross90, totalDetention, totalEarned,
       advRows, totalAdvKept, totalReimb,
       fuelInRange, fleetFuelTotal, pocketFuelTotal,
       achLoads, totalAchDisbursed, totalAchFees,
@@ -613,7 +606,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                 <thead><tr>
                   <th style={TH}>Load #</th>
                   <th style={{...TH,textAlign:'right'}}>Rate Con</th>
-                  <th style={{...TH,textAlign:'right'}}>80% Pay</th>
+                  <th style={{...TH,textAlign:'right'}}>90% Pay</th>
                   {d.totalDetention > 0 && <th style={{...TH,textAlign:'right'}}>Detention</th>}
                   <th style={{...TH,textAlign:'right'}}>Earned</th>
                 </tr></thead>
@@ -622,7 +615,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                     <tr key={i} style={{ background:i%2===0?'#fff':'#fafafa' }}>
                       <td style={TD}><strong>{r.loadNum}</strong>{r.isAch && <span style={{ marginLeft:6, fontSize:9, background:'#e8f5e9', color:'#2e7d32', padding:'1px 5px', borderRadius:3, fontWeight:700 }}>ACH</span>}</td>
                       <td style={TDr}>{fmt(r.base)}</td>
-                      <td style={TDr}>{fmt(r.gross80)}</td>
+                      <td style={TDr}>{fmt(r.gross90)}</td>
                       {d.totalDetention > 0 && <td style={{...TDr,color:r.det>0?'#2e7d32':'#aaa'}}>{r.det>0?fmt(r.det):'-'}</td>}
                       <td style={{...TDr,fontWeight:700}}>{fmt(r.earned)}</td>
                     </tr>
@@ -630,7 +623,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                   <tr>
                     <td style={TF}>TOTAL</td>
                     <td style={TFr}>{fmt(d.totalRateCon)}</td>
-                    <td style={TFr}>{fmt(d.totalGross80)}</td>
+                    <td style={TFr}>{fmt(d.totalGross90)}</td>
                     {d.totalDetention > 0 && <td style={{...TFr,color:'#2e7d32'}}>{fmt(d.totalDetention)}</td>}
                     <td style={{...TFr,color:'#1a2a3a'}}>{fmt(d.totalEarned)}</td>
                   </tr>
@@ -735,14 +728,14 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
             <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
               <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
                 <tbody>
-                  <tr><td style={TD}>Gross Pay (80% of rate con)</td><td style={TDr}>{fmt(d.totalGross80)}</td></tr>
+                  <tr><td style={TD}>Gross Pay (90% of rate con)</td><td style={TDr}>{fmt(d.totalGross90)}</td></tr>
                   {d.totalDetention > 0 && <tr style={{background:'#f1f8e9'}}><td style={{...TD,color:'#2e7d32'}}>+ Detention / Layover (100% to driver)</td><td style={{...TDr,color:'#2e7d32'}}>{fmt(d.totalDetention)}</td></tr>}
-                  <tr style={{background:'#fafafa'}}><td style={TD}>− Advance Kept (Comdata leftover)</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.totalAdvKept)})</td></tr>
+                  <tr style={{background:'#fafafa'}}><td style={TD}>- Advance Kept (Comdata leftover)</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.totalAdvKept)})</td></tr>
                   {d.totalReimb > 0 && <tr style={{background:'#fffde7'}}><td style={{...TD,color:'#f57c00'}}>+ Lumper Reimbursement (no comdata issued)</td><td style={{...TDr,color:'#f57c00'}}>{fmt(d.totalReimb)}</td></tr>}
-                  {d.fleetFuelTotal > 0 && <tr style={{background:'#fafafa'}}><td style={TD}>− Fleet Card Fuel</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.fleetFuelTotal)})</td></tr>}
+                  {d.fleetFuelTotal > 0 && <tr style={{background:'#fafafa'}}><td style={TD}>- Fleet Card Fuel</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.fleetFuelTotal)})</td></tr>}
                   {d.totalAchDisbursed > 0 && (
                     <tr style={{background:'#e8f5e9'}}>
-                      <td style={{...TD,color:'#2e7d32'}}>− ACH Disbursements Already Received</td>
+                      <td style={{...TD,color:'#2e7d32'}}>- ACH Disbursements Already Received</td>
                       <td style={{...TDr,color:'#2e7d32'}}>({fmt(d.totalAchDisbursed)})</td>
                     </tr>
                   )}
@@ -752,7 +745,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                   </tr>
                   {d.totalAchFees > 0 && (
                     <tr style={{background:'#fff3e0'}}>
-                      <td style={{...TD,color:'#e65100',fontSize:11}}>ACH Convenience Fees (broker kept — operating expense)</td>
+                      <td style={{...TD,color:'#e65100',fontSize:11}}>ACH Convenience Fees (broker kept - operating expense)</td>
                       <td style={{...TDr,color:'#e65100',fontSize:11}}>{fmt(d.totalAchFees)}</td>
                     </tr>
                   )}
@@ -763,10 +756,10 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
           {d.pocketFuelTotal > 0 && (
             <div style={{ background:'#e3f2fd', borderRadius:8, padding:'12px 14px', marginBottom:16, border:'1px solid #bbdefb' }}>
               <div style={{ fontSize:11, color:'#1565c0', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:4 }}>TAX NOTE</div>
-              <div style={{ fontSize:12, color:'#1a3a6a' }}>Out of Pocket Fuel: <strong>{fmt(d.pocketFuelTotal)}</strong> — paid by driver, not deducted from settlement. Deductible business expense for tax purposes.</div>
+              <div style={{ fontSize:12, color:'#1a3a6a' }}>Out of Pocket Fuel: <strong>{fmt(d.pocketFuelTotal)}</strong> - paid by driver, not deducted from settlement. Deductible business expense for tax purposes.</div>
             </div>
           )}
-          <div style={{ textAlign:'center', fontSize:10, color:'#aaa', paddingBottom:32 }}>Generated by Load Ledger V4 — dbappsystems.com | daddyboyapps.com</div>
+          <div style={{ textAlign:'center', fontSize:10, color:'#aaa', paddingBottom:32 }}>Generated by Load Ledger V4 - dbappsystems.com | daddyboyapps.com</div>
         </div>
       </div>
     )
@@ -902,8 +895,8 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       {view === 'reports' && (
         <div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16 }}>
-            <button onClick={() => setReportTab('carrier')} style={{ padding:'12px 0', borderRadius:10, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, letterSpacing:'0.06em', cursor:'pointer', background: reportTab === 'carrier' ? 'var(--amber)' : 'var(--navy3)', color: reportTab === 'carrier' ? 'var(--navy)' : 'var(--grey)' }}>🚛 CARRIER</button>
-            <button onClick={() => { setReportTab('settlement'); fetchFuelEntries() }} style={{ padding:'12px 0', borderRadius:10, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, letterSpacing:'0.06em', cursor:'pointer', background: reportTab === 'settlement' ? 'var(--amber)' : 'var(--navy3)', color: reportTab === 'settlement' ? 'var(--navy)' : 'var(--grey)' }}>💵 SETTLEMENT</button>
+            <button onClick={() => setReportTab('carrier')} style={{ padding:'12px 0', borderRadius:10, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, letterSpacing:'0.06em', cursor:'pointer', background: reportTab==='carrier'?'var(--amber)':'var(--navy3)', color: reportTab==='carrier'?'var(--navy)':'var(--grey)' }}>🚛 CARRIER</button>
+            <button onClick={() => { setReportTab('settlement'); fetchFuelEntries() }} style={{ padding:'12px 0', borderRadius:10, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, letterSpacing:'0.06em', cursor:'pointer', background: reportTab==='settlement'?'var(--amber)':'var(--navy3)', color: reportTab==='settlement'?'var(--navy)':'var(--grey)' }}>💵 SETTLEMENT</button>
           </div>
           <PeriodNav />
           {reportTab === 'carrier' && (
@@ -945,7 +938,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                 setFuelDate(new Date().toISOString().split('T')[0])
                 setFuelAmount(''); setFuelNotes(''); setFuelType('fleet')
                 setFuelReceiptB64(null); setFuelPreview(null)
-              }} style={{ width:'100%', padding:'12px 0', borderRadius:10, border:'none', marginBottom:12, fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', background: showFuelDrawer ? 'var(--navy3)' : '#1a3a1a', color: showFuelDrawer ? 'var(--grey)' : '#4caf50', letterSpacing:'0.06em' }}>
+              }} style={{ width:'100%', padding:'12px 0', borderRadius:10, border:'none', marginBottom:12, fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', background: showFuelDrawer?'var(--navy3)':'#1a3a1a', color: showFuelDrawer?'var(--grey)':'#4caf50', letterSpacing:'0.06em' }}>
                 {showFuelDrawer ? '✕ CANCEL FUEL ENTRY' : '⛽ ADD FUEL ENTRY'}
               </button>
               {showFuelDrawer && (
@@ -974,7 +967,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                       <button onClick={() => setFuelType('fleet')} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, background:fuelType==='fleet'?'var(--amber)':'var(--navy3)', color:fuelType==='fleet'?'var(--navy)':'var(--grey)' }}>🏢 FLEET CARD</button>
                       <button onClick={() => setFuelType('pocket')} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, background:fuelType==='pocket'?'#1565c0':'var(--navy3)', color:fuelType==='pocket'?'#fff':'var(--grey)' }}>💵 OUT OF POCKET</button>
                     </div>
-                    <div style={{ fontSize:10, color:'var(--grey)', marginTop:6, fontFamily:'var(--font-head)' }}>{fuelType==='fleet'?'Fleet card — deducted from what Edgerton owes driver':'Driver paid — tracked for tax purposes, not deducted from pay'}</div>
+                    <div style={{ fontSize:10, color:'var(--grey)', marginTop:6, fontFamily:'var(--font-head)' }}>{fuelType==='fleet'?'Fleet card - deducted from what Edgerton owes driver':'Driver paid - tracked for tax purposes, not deducted from pay'}</div>
                   </div>
                   <div style={{ marginBottom:12 }}>
                     <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>DATE</div>
@@ -989,7 +982,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                     {fuelPreview && (
                       <div style={{ marginTop:8, position:'relative' }}>
                         <img src={fuelPreview} alt="Receipt" style={{ width:'100%', borderRadius:6, border:'1px solid var(--border)', maxHeight:120, objectFit:'cover' }} />
-                        <button onClick={() => { setFuelPreview(null); setFuelReceiptB64(null) }} style={{ position:'absolute', top:4, right:4, background:'rgba(0,0,0,0.7)', color:'#fff', border:'none', borderRadius:4, padding:'2px 8px', cursor:'pointer', fontSize:12 }}>✕</button>
+                        <button onClick={() => { setFuelPreview(null); setFuelReceiptB64(null) }} style={{ position:'absolute', top:4, right:4, background:'rgba(0,0,0,0.7)', color:'#fff', border:'none', borderRadius:4, padding:'2px 8px', cursor:'pointer', fontSize:12 }}>x</button>
                       </div>
                     )}
                   </div>
@@ -1006,7 +999,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                 <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
                   <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>OWNER SETTLEMENT</div>
                   <div className="amount-row"><span className="label">Rate Con Total</span><span className="value">{fmt(bruceStats.rateCon)}</span></div>
-                  <div className="amount-row"><span className="label">Owner Cut (20% of rate con)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.ownerCut)}</span></div>
+                  <div className="amount-row"><span className="label">Owner Cut (10% of rate con)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(bruceStats.ownerCut)}</span></div>
                 </div>
                 {fuelEntriesForPeriod('BRUCE').length > 0 && (
                   <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
@@ -1020,7 +1013,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                         </div>
                         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                           <span style={{ fontFamily:'var(--font-head)', fontWeight:700, color:'var(--red)' }}>{fmt(f.amount)}</span>
-                          <button onClick={() => deleteFuelEntry(f.id)} style={{ background:'transparent', border:'none', color:'#666', cursor:'pointer', fontSize:14, padding:'0 2px' }}>✕</button>
+                          <button onClick={() => deleteFuelEntry(f.id)} style={{ background:'transparent', border:'none', color:'#666', cursor:'pointer', fontSize:14, padding:'0 2px' }}>x</button>
                         </div>
                       </div>
                     ))}
@@ -1033,7 +1026,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                 <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
                   <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>DRIVER SETTLEMENT</div>
                   <div className="amount-row"><span className="label">Rate Con Total</span><span className="value">{fmt(timStats.rateCon)}</span></div>
-                  <div className="amount-row"><span className="label">Gross Pay (80% of rate con)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay - timStats.detentionTotal)}</span></div>
+                  <div className="amount-row"><span className="label">Gross Pay (90% of rate con)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(timStats.grossPay - timStats.detentionTotal)}</span></div>
                   {timStats.detentionTotal > 0 && (
                     <div className="amount-row">
                       <span className="label" style={{color:'var(--green)'}}>Detention / Layover <span style={{fontSize:9}}>100% to Tim</span></span>
@@ -1087,7 +1080,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                         </div>
                         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                           <span style={{ fontFamily:'var(--font-head)', fontWeight:700, color:f.fuel_type==='fleet'?'var(--red)':'#1565c0' }}>{fmt(f.amount)}</span>
-                          <button onClick={() => deleteFuelEntry(f.id)} style={{ background:'transparent', border:'none', color:'#666', cursor:'pointer', fontSize:14, padding:'0 2px' }}>✕</button>
+                          <button onClick={() => deleteFuelEntry(f.id)} style={{ background:'transparent', border:'none', color:'#666', cursor:'pointer', fontSize:14, padding:'0 2px' }}>x</button>
                         </div>
                       </div>
                     ))}
@@ -1205,7 +1198,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                       <button onClick={() => {
                         if (isAchPanel) { setShowAchPanel(null); setAchReceivedAmt('') }
                         else { setShowAchPanel(localIdx); setAchReceivedAmt('') }
-                      }} style={{ padding:'8px 12px', borderRadius:8, fontSize:12, cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.04em', background: isAchPanel ? '#e8f5e9' : 'var(--navy3)', color: isAchPanel ? '#2e7d32' : 'var(--grey)', border: isAchPanel ? '1px solid #2e7d32' : '1px solid var(--border)' }}>⚡ ACH</button>
+                      }} style={{ padding:'8px 12px', borderRadius:8, fontSize:12, cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.04em', background: isAchPanel?'#e8f5e9':'var(--navy3)', color: isAchPanel?'#2e7d32':'var(--grey)', border: isAchPanel?'1px solid #2e7d32':'1px solid var(--border)' }}>⚡ ACH</button>
                     )}
                     {load.status === 'paid' && !load.ach_payment && (
                       <div style={{ fontSize:12, color:'var(--green)', fontFamily:'var(--font-head)', fontWeight:700, paddingTop:4 }}>PAYMENT RECEIVED</div>
@@ -1241,7 +1234,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                       )}
                       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                         <button onClick={() => { setShowAchPanel(null); setAchReceivedAmt('') }} style={{ padding:'10px 0', borderRadius:8, border:'1px solid #ccc', background:'transparent', color:'#888', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, cursor:'pointer' }}>CANCEL</button>
-                        <button disabled={!achReceivedAmt || parseFloat(achReceivedAmt) <= 0 || updating === loadId} onClick={() => markPaidACH(load, localIdx, achReceivedAmt)} style={{ padding:'10px 0', borderRadius:8, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', background: (!achReceivedAmt||parseFloat(achReceivedAmt)<=0||updating===loadId)?'#ccc':'#2e7d32', color:'#fff' }}>{updating===loadId?'SAVING...':'✅ CONFIRM PAID — ACH'}</button>
+                        <button disabled={!achReceivedAmt||parseFloat(achReceivedAmt)<=0||updating===loadId} onClick={() => markPaidACH(load, localIdx, achReceivedAmt)} style={{ padding:'10px 0', borderRadius:8, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', background:(!achReceivedAmt||parseFloat(achReceivedAmt)<=0||updating===loadId)?'#ccc':'#2e7d32', color:'#fff' }}>{updating===loadId?'SAVING...':'✅ CONFIRM PAID — ACH'}</button>
                       </div>
                     </div>
                   )}
@@ -1318,8 +1311,8 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                           <div style={{ fontSize:11, color:'#e65100', fontFamily:'var(--font-head)', fontWeight:700, textAlign:'center', marginBottom:6 }}>
                             {load.ach_payment ? '⚡ This load was marked ACH paid. Unpay to correct it.' : 'This load is marked paid. Unpay to correct it.'}
                           </div>
-                          <button disabled={updating === loadId} onClick={async () => { await patchLoad(load, localIdx, { status:'billed', ach_payment:0, ach_received:0 }); closeEdit(); showToast('↩️ Load reset to billed — ready to re-pay') }} style={{ width:'100%', padding:'11px 0', borderRadius:8, border:'2px solid #e65100', background:'#fff3e0', color:'#e65100', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', letterSpacing:'0.05em' }}>
-                            {updating === loadId ? 'UPDATING...' : '↩️ MARK UNPAID — RESET TO BILLED'}
+                          <button disabled={updating===loadId} onClick={async () => { await patchLoad(load, localIdx, { status:'billed', ach_payment:0, ach_received:0 }); closeEdit(); showToast('↩️ Load reset to billed — ready to re-pay') }} style={{ width:'100%', padding:'11px 0', borderRadius:8, border:'2px solid #e65100', background:'#fff3e0', color:'#e65100', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', letterSpacing:'0.05em' }}>
+                            {updating===loadId ? 'UPDATING...' : '↩️ MARK UNPAID — RESET TO BILLED'}
                           </button>
                         </div>
                       )}
