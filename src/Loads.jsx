@@ -36,6 +36,9 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const [fuelPreview,    setFuelPreview]    = useState(null)
   const fuelFileRef = useRef()
 
+  // ── REPAIR ESCROW TOTAL ───────────────────────────────
+  const [timEscrowTotal, setTimEscrowTotal] = useState(0)
+
   async function fetchFuelEntries() {
     try {
       const [timRes, bruceRes] = await Promise.all([
@@ -51,8 +54,21 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     } catch (err) { console.error('fetchFuelEntries failed:', err) }
   }
 
+  async function fetchTimEscrowTotal() {
+    try {
+      const res = await fetch(api + '/api/escrow-payments/TIM')
+      if (!res.ok) return
+      const data = await res.json()
+      const total = Array.isArray(data) ? data.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0) : 0
+      setTimEscrowTotal(total)
+    } catch (err) { console.error('fetchTimEscrowTotal failed:', err) }
+  }
+
   useEffect(() => {
-    if (view === 'reports' && reportTab === 'settlement') fetchFuelEntries()
+    if (view === 'reports' && reportTab === 'settlement') {
+      fetchFuelEntries()
+      fetchTimEscrowTotal()
+    }
   }, [view, reportTab])
 
   // ── B&W PIPELINE — LOCKED DO NOT MODIFY ──────────────────
@@ -562,7 +578,9 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     const achLoads          = inRange.filter(l => l.ach_payment)
     const totalAchDisbursed = achLoads.reduce((s,l) => s + (parseFloat(l.ach_received)||0), 0)
     const totalAchFees      = achLoads.reduce((s,l) => s + Math.max(0, (parseFloat(l.netPay||l.net_pay)||0) - (parseFloat(l.ach_received)||0)), 0)
-    const stillOwed = Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuelTotal - totalAchDisbursed)
+    // Deduct repair escrow payments applied by Tim
+    const escrowApplied = driverName === 'TIM' ? timEscrowTotal : 0
+    const stillOwed = Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuelTotal - totalAchDisbursed - escrowApplied)
     return {
       driverName, periodLabel: getPeriodLabel(period, periodOffset),
       generated: new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }),
@@ -570,7 +588,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       advRows, totalAdvKept, totalReimb,
       fuelInRange, fleetFuelTotal, pocketFuelTotal,
       achLoads, totalAchDisbursed, totalAchFees,
-      stillOwed,
+      escrowApplied, stillOwed,
     }
   }
 
@@ -739,6 +757,12 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                       <td style={{...TDr,color:'#2e7d32'}}>({fmt(d.totalAchDisbursed)})</td>
                     </tr>
                   )}
+                  {d.escrowApplied > 0 && (
+                    <tr style={{background:'#f3e5f5'}}>
+                      <td style={{...TD,color:'#7b1fa2'}}>- Repair Escrow Applied</td>
+                      <td style={{...TDr,color:'#7b1fa2'}}>({fmt(d.escrowApplied)})</td>
+                    </tr>
+                  )}
                   <tr style={{background:'#1a2a3a'}}>
                     <td style={{ padding:'14px 12px', fontSize:15, fontWeight:900, color:'#fff', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }}>NET AMOUNT OWED TO {driverName}</td>
                     <td style={{ padding:'14px 12px', textAlign:'right', fontSize:20, fontWeight:900, color:'#ffd54f', fontFamily:'var(--font-head)' }}>{fmt(d.stillOwed)}</td>
@@ -780,14 +804,15 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     const pocketFuel     = fuelForPeriod(driverName, 'pocket')
     const achDisbursed   = inRange.filter(l => l.ach_payment).reduce((s,l) => s + (parseFloat(l.ach_received)||0), 0)
     const achFees        = inRange.filter(l => l.ach_payment).reduce((s,l) => s + Math.max(0, (parseFloat(l.netPay||l.net_pay)||0) - (parseFloat(l.ach_received)||0)), 0)
-    const stillOwed      = gPay - advKept + reimbOwed - fleetFuel - achDisbursed
+    const escrowApplied  = driverName === 'TIM' ? timEscrowTotal : 0
+    const stillOwed      = gPay - advKept + reimbOwed - fleetFuel - achDisbursed - escrowApplied
     return {
       count: inRange.length,
       billed: billed.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
       paid:   paid.reduce((s,l)   => s+(parseFloat(l.netPay||l.net_pay)||0), 0),
       ownerCut: inRange.reduce((s,l) => s+calcPay(l).ownerCut, 0),
       grossPay: gPay, detentionTotal, advanceKept: advKept, reimbOwed,
-      fleetFuel, pocketFuel, achDisbursed, achFees,
+      fleetFuel, pocketFuel, achDisbursed, achFees, escrowApplied,
       stillOwed: Math.max(0, stillOwed),
       rateCon: inRange.reduce((s,l) => s+(parseFloat(l.base_pay)||0), 0),
     }
@@ -896,7 +921,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
         <div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16 }}>
             <button onClick={() => setReportTab('carrier')} style={{ padding:'12px 0', borderRadius:10, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, letterSpacing:'0.06em', cursor:'pointer', background: reportTab==='carrier'?'var(--amber)':'var(--navy3)', color: reportTab==='carrier'?'var(--navy)':'var(--grey)' }}>🚛 CARRIER</button>
-            <button onClick={() => { setReportTab('settlement'); fetchFuelEntries() }} style={{ padding:'12px 0', borderRadius:10, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, letterSpacing:'0.06em', cursor:'pointer', background: reportTab==='settlement'?'var(--amber)':'var(--navy3)', color: reportTab==='settlement'?'var(--navy)':'var(--grey)' }}>💵 SETTLEMENT</button>
+            <button onClick={() => { setReportTab('settlement'); fetchFuelEntries(); fetchTimEscrowTotal() }} style={{ padding:'12px 0', borderRadius:10, border:'none', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, letterSpacing:'0.06em', cursor:'pointer', background: reportTab==='settlement'?'var(--amber)':'var(--navy3)', color: reportTab==='settlement'?'var(--navy)':'var(--grey)' }}>💵 SETTLEMENT</button>
           </div>
           <PeriodNav />
           {reportTab === 'carrier' && (
@@ -1051,6 +1076,12 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                     <div className="amount-row">
                       <span className="label" style={{color:'#2e7d32'}}>ACH Disbursements Received <span style={{fontSize:9}}>already paid out</span></span>
                       <span className="value" style={{color:'#2e7d32'}}>-{fmt(timStats.achDisbursed)}</span>
+                    </div>
+                  )}
+                  {timStats.escrowApplied > 0 && (
+                    <div className="amount-row">
+                      <span className="label" style={{color:'#ce93d8'}}>Repair Escrow Applied</span>
+                      <span className="value" style={{color:'#ce93d8'}}>-{fmt(timStats.escrowApplied)}</span>
                     </div>
                   )}
                   <div style={{marginTop:8,paddingTop:8,borderTop:'2px solid var(--border)'}}>
