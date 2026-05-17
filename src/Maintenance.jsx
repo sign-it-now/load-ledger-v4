@@ -116,7 +116,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
       timLoads.forEach(l => {
         const base = parseFloat(l.base_pay) || 0
         const det  = parseFloat(l.detention) || 0
-        totalEarned += (base * 0.80) + det
+        totalEarned += (base * 0.90) + det
         const comdataTotal = (l.comdatas    || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
         const lumperTotal  = (l.lumpers     || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
         const incTotal     = (l.incidentals || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
