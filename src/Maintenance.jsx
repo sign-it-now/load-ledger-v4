@@ -117,9 +117,18 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
         const base = parseFloat(l.base_pay) || 0
         const det  = parseFloat(l.detention) || 0
         totalEarned += (base * 0.90) + det
-        const comdataTotal = (l.comdatas    || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
-        const lumperTotal  = (l.lumpers     || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
-        const incTotal     = (l.incidentals || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
+
+        // Mirror Loads.jsx getLoadTotals — check D1 columns first, fall back to arrays
+        const comdataTotal = parseFloat(l.comdata_total) > 0
+          ? parseFloat(l.comdata_total)
+          : (l.comdatas    || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
+        const lumperTotal  = parseFloat(l.lumper_total) > 0
+          ? parseFloat(l.lumper_total)
+          : (l.lumpers     || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
+        const incTotal     = parseFloat(l.incidental_total) > 0
+          ? parseFloat(l.incidental_total)
+          : (l.incidentals || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
+
         const expenses = lumperTotal + incTotal
         totalAdvKept += Math.max(0, comdataTotal - expenses)
         totalReimb   += Math.max(0, expenses - comdataTotal)
@@ -296,6 +305,9 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
     const amt = parseFloat(fundEscrowAmount)
     if (!amt || amt <= 0) { showToast('Enter a valid amount'); return }
     if (amt > escrowBalance) { showToast('Amount exceeds escrow balance'); return }
+    if (timSettlementOwed !== null && amt > timSettlementOwed) {
+      showToast('Amount exceeds your balance owed — check your settlement report'); return
+    }
     setFundingEscrow(true)
     try {
       const res = await fetch(api + '/api/escrow-payment', {
@@ -475,7 +487,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                         <div style={{fontFamily:'var(--font-head)',fontSize:15,fontWeight:900,color:'#ce93d8'}}>-{fmt(escrowBalance)}</div>
                       </div>
                       <div style={{background:'var(--navy3)',borderRadius:8,padding:'10px 12px'}}>
-                        <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>SETTLEMENT BALANCE</div>
+                        <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>BALANCE OWED TO TIM</div>
                         <div style={{fontFamily:'var(--font-head)',fontSize:15,fontWeight:900,color:'var(--amber)'}}>
                           {timSettlementOwed === null ? 'Loading...' : fmt(timSettlementOwed)}
                         </div>
