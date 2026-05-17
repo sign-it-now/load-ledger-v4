@@ -313,8 +313,10 @@ export default {
         const id = path.split('/')[3]
         const b  = await request.json()
         const fields = []; const values = []
-        if (b.paid_by  !== undefined) { fields.push('paid_by=?');  values.push(b.paid_by); }
-        if (b.asset_id !== undefined) { fields.push('asset_id=?'); values.push(b.asset_id); }
+        if (b.paid_by             !== undefined) { fields.push('paid_by=?');             values.push(b.paid_by); }
+        if (b.asset_id            !== undefined) { fields.push('asset_id=?');            values.push(b.asset_id); }
+        if (b.paid_by_changed_at  !== undefined) { fields.push('paid_by_changed_at=?');  values.push(b.paid_by_changed_at); }
+        if (b.paid_by_changed_from !== undefined) { fields.push('paid_by_changed_from=?'); values.push(b.paid_by_changed_from); }
         if (fields.length === 0) return json({ error: 'Nothing to update' }, 400)
         values.push(id)
         await env.DB.prepare('UPDATE maintenance_ledger SET ' + fields.join(', ') + ' WHERE id=?').bind(...values).run()
@@ -375,6 +377,42 @@ export default {
         return new Response(object.body, {
           headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
         })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── ESCROW PAYMENTS GET ──────────────────────────────
+    if (path.startsWith('/api/escrow-payments/') && request.method === 'GET') {
+      try {
+        const driver = path.split('/')[3].toUpperCase()
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM escrow_payments WHERE driver=? ORDER BY funded_at DESC LIMIT 200'
+        ).bind(driver).all()
+        return json(results)
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── ESCROW PAYMENT POST ──────────────────────────────
+    if (path === '/api/escrow-payment' && request.method === 'POST') {
+      try {
+        const b  = await request.json()
+        const id = crypto.randomUUID()
+        if (!b.driver) return json({ error: 'Missing driver' }, 400)
+        const amount = parseFloat(b.amount)
+        if (!amount || amount <= 0) return json({ error: 'Invalid amount' }, 400)
+        await env.DB.prepare(`
+          INSERT INTO escrow_payments (id, driver, amount, funded_at, created_at)
+          VALUES (?, ?, ?, ?, datetime('now'))
+        `).bind(
+          id,
+          b.driver.toUpperCase(),
+          amount,
+          b.funded_at || new Date().toISOString(),
+        ).run()
+        return json({ id })
       } catch(e) {
         return json({ error: e.message }, 500)
       }
@@ -518,7 +556,6 @@ export default {
     }
 
     // ── LOADS PATCH ──────────────────────────────────────
-    // Added: ach_payment (boolean) and ach_received (amount Tim actually received)
     if (path.startsWith('/api/loads/') && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
@@ -536,7 +573,6 @@ export default {
         if (b.comdatas     !== undefined) { fields.push('comdatas=?');     values.push(typeof b.comdatas     === 'string' ? b.comdatas     : JSON.stringify(b.comdatas)); }
         if (b.edited       !== undefined) { fields.push('edited=?');       values.push(b.edited); }
         if (b.edited_date  !== undefined) { fields.push('edited_date=?');  values.push(b.edited_date); }
-        // ── ACH PAYMENT FIELDS ─────────────────────────────
         if (b.ach_payment  !== undefined) { fields.push('ach_payment=?');  values.push(b.ach_payment ? 1 : 0); }
         if (b.ach_received !== undefined) { fields.push('ach_received=?'); values.push(parseFloat(b.ach_received) || 0); }
         if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
