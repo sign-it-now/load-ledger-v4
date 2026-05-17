@@ -28,20 +28,29 @@ const TYPE_ICONS = {
 }
 
 export default function Maintenance({ driver, api, showToast, onEntriesChange, role }) {
-  const [entries,       setEntries]       = useState([])
-  const [assets,        setAssets]        = useState([])
-  const [loading,       setLoading]       = useState(true)
-  const [showForm,      setShowForm]      = useState(false)
-  const [filter,        setFilter]        = useState('All')
-  const [confirmDelete, setConfirmDelete] = useState(null)
-  const [deleting,      setDeleting]      = useState(false)
-  const [uploading,     setUploading]     = useState(null)
-  const [saving,        setSaving]        = useState(false)
-  const [toggling,      setToggling]      = useState(null)
-  const [scanning,      setScanning]      = useState(false)
-  const [scannedImage,  setScannedImage]  = useState(null)
+  const [entries,            setEntries]            = useState([])
+  const [assets,             setAssets]             = useState([])
+  const [loading,            setLoading]            = useState(true)
+  const [showForm,           setShowForm]           = useState(false)
+  const [filter,             setFilter]             = useState('All')
+  const [confirmDelete,      setConfirmDelete]      = useState(null)
+  const [deleting,           setDeleting]           = useState(false)
+  const [uploading,          setUploading]          = useState(null)
+  const [saving,             setSaving]             = useState(false)
+  const [toggling,           setToggling]           = useState(null)
+  const [scanning,           setScanning]           = useState(false)
+  const [scannedImage,       setScannedImage]       = useState(null)
+
+  // ── REPAIR ESCROW STATE ───────────────────────────────────
+  const [escrowPayments,      setEscrowPayments]      = useState([])
+  const [escrowPaymentsTotal, setEscrowPaymentsTotal] = useState(0)
+  const [showFundEscrow,      setShowFundEscrow]      = useState(false)
+  const [fundEscrowAmount,    setFundEscrowAmount]    = useState('')
+  const [fundingEscrow,       setFundingEscrow]       = useState(false)
+  const [timSettlementOwed,   setTimSettlementOwed]   = useState(null)
 
   const isBookkeeper = role === 'bookkeeper'
+  const isTim        = driver === 'TIM'
 
   const [form, setForm] = useState({
     entry_date:  new Date().toISOString().split('T')[0],
@@ -75,6 +84,53 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
       console.error('Failed to load:', err)
     } finally {
       setLoading(false)
+    }
+    if (isTim && !isBookkeeper) fetchEscrowPayments()
+  }
+
+  async function fetchEscrowPayments() {
+    try {
+      const res = await fetch(api + '/api/escrow-payments/TIM')
+      if (!res.ok) return
+      const data = await res.json()
+      const payments = Array.isArray(data) ? data : []
+      setEscrowPayments(payments)
+      setEscrowPaymentsTotal(payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0))
+    } catch (err) {
+      console.error('Escrow payments fetch (non-fatal):', err)
+    }
+  }
+
+  async function fetchTimSettlementOwed() {
+    try {
+      const [loadsRes, fuelRes] = await Promise.all([
+        fetch(api + '/api/loads'),
+        fetch(api + '/api/fuel/TIM'),
+      ])
+      const allLoads = await loadsRes.json()
+      const fuelData = await fuelRes.json()
+      const timLoads = Array.isArray(allLoads) ? allLoads.filter(l => l.driver === 'TIM') : []
+      const fuel     = Array.isArray(fuelData) ? fuelData : []
+
+      let totalEarned = 0, totalAdvKept = 0, totalReimb = 0
+      timLoads.forEach(l => {
+        const base = parseFloat(l.base_pay) || 0
+        const det  = parseFloat(l.detention) || 0
+        totalEarned += (base * 0.80) + det
+        const comdataTotal = (l.comdatas    || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
+        const lumperTotal  = (l.lumpers     || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
+        const incTotal     = (l.incidentals || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
+        const expenses = lumperTotal + incTotal
+        totalAdvKept += Math.max(0, comdataTotal - expenses)
+        totalReimb   += Math.max(0, expenses - comdataTotal)
+      })
+
+      const fleetFuel    = fuel.filter(f => f.fuel_type === 'fleet').reduce((s, f) => s + (parseFloat(f.amount) || 0), 0)
+      const achDisbursed = timLoads.filter(l => l.ach_payment).reduce((s, l) => s + (parseFloat(l.ach_received) || 0), 0)
+      setTimSettlementOwed(Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuel - achDisbursed))
+    } catch (err) {
+      console.error('Settlement fetch failed:', err)
+      setTimSettlementOwed(0)
     }
   }
 
@@ -216,12 +272,52 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
     const newVal = entry.paid_by==='EDGERTON'?'TIM':'EDGERTON'
     setToggling(entry.id)
     try {
-      const res = await fetch(api+'/api/maintenance/'+entry.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({paid_by:newVal})})
+      const res = await fetch(api+'/api/maintenance/'+entry.id,{
+        method: 'PATCH',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          paid_by:              newVal,
+          paid_by_changed_at:   new Date().toISOString(),
+          paid_by_changed_from: entry.paid_by,
+        }),
+      })
       if(!res.ok) throw new Error('Update failed')
       setEntries(prev=>prev.map(e=>e.id===entry.id?{...e,paid_by:newVal}:e))
-      showToast(newVal==='EDGERTON'?'🏢 Marked as Edgerton Paid':'✅ Marked as Tim Paid')
+      if (newVal === 'TIM') {
+        showToast('✅ Moved to Tim Paid — escrow balance updated')
+      } else {
+        showToast('🏦 Added to Repair Escrow')
+      }
     } catch(err) { showToast('⚠️ Update failed: '+err.message) }
     finally { setToggling(null) }
+  }
+
+  async function fundEscrow() {
+    const amt = parseFloat(fundEscrowAmount)
+    if (!amt || amt <= 0) { showToast('Enter a valid amount'); return }
+    if (amt > escrowBalance) { showToast('Amount exceeds escrow balance'); return }
+    setFundingEscrow(true)
+    try {
+      const res = await fetch(api + '/api/escrow-payment', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driver:     'TIM',
+          amount:     amt,
+          funded_at:  new Date().toISOString(),
+        }),
+      })
+      if (!res.ok) throw new Error('Payment failed')
+      showToast('✅ Escrow funded — $' + amt.toFixed(2) + ' applied')
+      setFundEscrowAmount('')
+      setShowFundEscrow(false)
+      setTimSettlementOwed(null)
+      await fetchAll()
+    } catch (err) {
+      showToast('⚠️ Fund failed: ' + err.message)
+    } finally {
+      setFundingEscrow(false)
+    }
   }
 
   async function deleteEntry(entry) {
@@ -266,6 +362,10 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
   const totalTimPaid  = entries.filter(e=>e.paid_by!=='EDGERTON').reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
   const totalFiltered = filtered.reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
 
+  // Escrow balance = pool total minus what Tim has already funded toward it
+  const escrowBalance = Math.max(0, totalEdgerton - escrowPaymentsTotal)
+  const escrowCleared = totalEdgerton > 0 && escrowBalance <= 0
+
   if (loading) return <div className="empty-state"><div className="icon">🔧</div><h3>LOADING...</h3></div>
 
   return (
@@ -273,7 +373,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
       <input ref={scanInputRef}   type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleScan} />
       <input ref={receiptFileRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleReceiptUpload} />
 
-      {/* HEADER */}
+      {/* HEADER CARD */}
       <div className="card" style={{marginBottom:14}}>
         <div className="section-title" style={{marginBottom:8}}>{driver} — MAINTENANCE LEDGER</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
@@ -287,7 +387,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
           </div>
         </div>
 
-        {/* Payment summary — only shown to drivers, not bookkeeper */}
+        {/* PAYMENT SUMMARY — drivers only, not bookkeeper */}
         {!isBookkeeper && (
           <div style={{borderTop:'1px solid var(--border)',paddingTop:10}}>
             <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.08em',marginBottom:8}}>PAYMENT SUMMARY — ALL TIME</div>
@@ -298,15 +398,158 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                 <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>No reimbursement needed</div>
               </div>
               <div style={{background:'#1a0a2a',borderRadius:8,padding:'10px 12px',border:'1px solid #7b1fa2'}}>
-                <div style={{fontSize:10,color:'#ce93d8',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>EDGERTON PAID</div>
+                <div style={{fontSize:10,color:'#ce93d8',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>REPAIR ESCROW</div>
                 <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#ce93d8'}}>{fmt(totalEdgerton)}</div>
-                <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>Tim owes Edgerton</div>
+                <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>Escrow Balance</div>
               </div>
             </div>
-            {totalEdgerton>0&&(
-              <div style={{marginTop:8,padding:'10px 12px',background:'#2a0a2a',border:'1px solid #ce93d8',borderRadius:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,color:'#ce93d8'}}>TOTAL REIMBURSEMENT OWED</span>
-                <span style={{fontSize:18,fontFamily:'var(--font-head)',fontWeight:900,color:'#ce93d8'}}>{fmt(totalEdgerton)}</span>
+
+            {/* ESCROW BALANCE TRACKER */}
+            {totalEdgerton > 0 && (
+              <div style={{marginTop:8}}>
+                <div style={{
+                  padding:'10px 12px',
+                  background: escrowCleared ? '#0a2a0a' : '#2a0a2a',
+                  border: '1px solid ' + (escrowCleared ? '#2e7d32' : '#ce93d8'),
+                  borderRadius:8,
+                  display:'flex',
+                  justifyContent:'space-between',
+                  alignItems:'center',
+                  marginBottom: escrowPaymentsTotal > 0 ? 4 : 8,
+                }}>
+                  <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,color: escrowCleared ? '#66bb6a' : '#ce93d8'}}>
+                    {escrowCleared ? '✅ REPAIR ESCROW BALANCE' : '🏦 REPAIR ESCROW BALANCE'}
+                  </span>
+                  <span style={{fontSize:18,fontFamily:'var(--font-head)',fontWeight:900,color: escrowCleared ? '#66bb6a' : '#ce93d8'}}>
+                    {escrowCleared ? fmt(0) : '-' + fmt(escrowBalance)}
+                  </span>
+                </div>
+
+                {escrowPaymentsTotal > 0 && (
+                  <div style={{fontSize:10,color:'#66bb6a',fontFamily:'var(--font-head)',textAlign:'right',marginBottom:8}}>
+                    ✅ {fmt(escrowPaymentsTotal)} funded toward escrow
+                  </div>
+                )}
+
+                {/* FUND ESCROW BUTTON — Tim only, not bookkeeper, only when balance remains */}
+                {isTim && escrowBalance > 0 && (
+                  <button
+                    onClick={() => {
+                      const next = !showFundEscrow
+                      setShowFundEscrow(next)
+                      if (next) {
+                        setTimSettlementOwed(null)
+                        fetchTimSettlementOwed()
+                      } else {
+                        setFundEscrowAmount('')
+                      }
+                    }}
+                    style={{
+                      width:'100%', padding:'12px 0', borderRadius:8, border:'none',
+                      background: showFundEscrow ? 'var(--navy3)' : '#4a148c',
+                      color:      showFundEscrow ? 'var(--grey)' : '#ce93d8',
+                      fontSize:13, fontFamily:'var(--font-head)', fontWeight:900,
+                      cursor:'pointer', letterSpacing:'0.06em', marginBottom:8,
+                    }}
+                  >
+                    {showFundEscrow ? '✕ CANCEL' : '💳 FUND ESCROW'}
+                  </button>
+                )}
+
+                {/* FUND ESCROW PANEL */}
+                {showFundEscrow && isTim && escrowBalance > 0 && (
+                  <div style={{
+                    background:'#1a0a2a',
+                    border:'1px solid #7b1fa2',
+                    borderRadius:10,
+                    padding:16,
+                    marginBottom:8,
+                  }}>
+                    <div style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:900,color:'#ce93d8',letterSpacing:'0.08em',marginBottom:12}}>
+                      💳 FUND REPAIR ESCROW
+                    </div>
+
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
+                      <div style={{background:'var(--navy3)',borderRadius:8,padding:'10px 12px'}}>
+                        <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>ESCROW BALANCE</div>
+                        <div style={{fontFamily:'var(--font-head)',fontSize:15,fontWeight:900,color:'#ce93d8'}}>-{fmt(escrowBalance)}</div>
+                      </div>
+                      <div style={{background:'var(--navy3)',borderRadius:8,padding:'10px 12px'}}>
+                        <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>SETTLEMENT BALANCE</div>
+                        <div style={{fontFamily:'var(--font-head)',fontSize:15,fontWeight:900,color:'var(--amber)'}}>
+                          {timSettlementOwed === null ? 'Loading...' : fmt(timSettlementOwed)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',marginBottom:12}}>
+                      Enter the amount to apply from your settlement toward the escrow balance.
+                    </div>
+
+                    <div style={{marginBottom:12}}>
+                      <div style={{fontSize:11,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:6}}>AMOUNT TO FUND ($)</div>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={fundEscrowAmount}
+                        onChange={e => setFundEscrowAmount(e.target.value)}
+                        style={{
+                          width:'100%', background:'var(--navy3)',
+                          border:'1px solid #7b1fa2',
+                          color:'var(--white)', borderRadius:8,
+                          padding:'12px 14px', fontSize:22,
+                          fontFamily:'var(--font-head)', fontWeight:700,
+                          boxSizing:'border-box',
+                        }}
+                      />
+                    </div>
+
+                    {fundEscrowAmount && parseFloat(fundEscrowAmount) > 0 && (
+                      <div style={{
+                        background:'var(--navy3)', borderRadius:8,
+                        padding:'10px 12px', marginBottom:12,
+                        border:'1px solid var(--border)', fontSize:12,
+                      }}>
+                        <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                          <span style={{color:'var(--grey)'}}>Current escrow</span>
+                          <span style={{fontFamily:'var(--font-head)',fontWeight:700,color:'#ce93d8'}}>-{fmt(escrowBalance)}</span>
+                        </div>
+                        <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                          <span style={{color:'var(--grey)'}}>Funding amount</span>
+                          <span style={{fontFamily:'var(--font-head)',fontWeight:700,color:'#66bb6a'}}>+{fmt(parseFloat(fundEscrowAmount))}</span>
+                        </div>
+                        <div style={{borderTop:'1px solid var(--border)',marginTop:6,paddingTop:6,display:'flex',justifyContent:'space-between'}}>
+                          <span style={{fontWeight:700,color:'var(--white)'}}>New balance</span>
+                          <span style={{
+                            fontFamily:'var(--font-head)', fontWeight:900,
+                            color: (escrowBalance - parseFloat(fundEscrowAmount)) <= 0 ? '#66bb6a' : '#ce93d8',
+                          }}>
+                            {(escrowBalance - parseFloat(fundEscrowAmount)) <= 0
+                              ? '✅ ' + fmt(0)
+                              : '-' + fmt(escrowBalance - parseFloat(fundEscrowAmount))
+                            }
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      disabled={!fundEscrowAmount || parseFloat(fundEscrowAmount) <= 0 || fundingEscrow}
+                      onClick={fundEscrow}
+                      style={{
+                        width:'100%', padding:'14px 0', borderRadius:8, border:'none',
+                        background: (!fundEscrowAmount || parseFloat(fundEscrowAmount) <= 0 || fundingEscrow)
+                          ? '#555' : '#7b1fa2',
+                        color:'#fff',
+                        fontSize:14, fontFamily:'var(--font-head)', fontWeight:900,
+                        cursor:'pointer', letterSpacing:'0.05em',
+                      }}
+                    >
+                      {fundingEscrow ? 'APPLYING...' : '💳 APPLY TO ESCROW'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -332,7 +575,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                   <div style={{fontSize:11,color:'var(--green)',fontFamily:'var(--font-head)',fontWeight:700}}>✅ Receipt scanned</div>
                   <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>{scannedImage.name}</div>
                 </div>
-                <button onClick={()=>setScannedImage(null)} style={{background:'transparent',border:'none',color:'var(--grey)',fontSize:16,cursor:'pointer',padding:'4px 8px'}}>×</button>
+                <button onClick={()=>setScannedImage(null)} style={{background:'transparent',border:'none',color:'var(--grey)',fontSize:16,cursor:'pointer',padding:'4px 8px'}}>x</button>
               </div>
             )}
           </div>
@@ -390,7 +633,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
               style={{background:'var(--navy3)',border:scannedImage?'1px solid var(--green)':'1px solid var(--amber)',color:'var(--white)',borderRadius:8,padding:'10px 12px',fontSize:22,fontFamily:'var(--font-head)',fontWeight:700,width:'100%',boxSizing:'border-box'}} />
           </div>
 
-          {/* Paid By — only shown to drivers, not bookkeeper */}
+          {/* PAID BY — drivers only, not bookkeeper */}
           {!isBookkeeper && (
             <div style={{marginBottom:14}}>
               <div className="field-label" style={{marginBottom:8}}>Paid By</div>
@@ -408,9 +651,13 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                   color:form.paid_by==='EDGERTON'?'#fff':'var(--grey)',
                   fontSize:13,fontFamily:'var(--font-head)',fontWeight:900,cursor:'pointer',
                   borderLeft:form.paid_by==='EDGERTON'?'3px solid #ce93d8':'3px solid transparent',
-                }}>🏢 EDGERTON PAID</button>
+                }}>🏦 REPAIR ESCROW</button>
               </div>
-              {form.paid_by==='EDGERTON'&&<div style={{fontSize:11,color:'#ce93d8',marginTop:6,fontFamily:'var(--font-head)'}}>⚠️ Tim will owe reimbursement to Edgerton for this amount</div>}
+              {form.paid_by==='EDGERTON'&&(
+                <div style={{fontSize:11,color:'#ce93d8',marginTop:6,fontFamily:'var(--font-head)'}}>
+                  ⚠️ This amount will be added to the repair escrow balance
+                </div>
+              )}
             </div>
           )}
 
@@ -429,7 +676,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
         </div>
       )}
 
-      {/* FILTER */}
+      {/* FILTER BAR */}
       <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:6,marginBottom:14}}>
         {['All',...CATEGORIES].map(cat=>(
           <button key={cat} onClick={()=>setFilter(cat)} style={{
@@ -441,9 +688,21 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
         ))}
       </div>
 
-      {filter!=='All'&&<div style={{textAlign:'center',fontFamily:'var(--font-head)',fontSize:13,color:CAT_COLORS[filter],letterSpacing:'0.08em',marginBottom:10}}>{CAT_ICONS[filter]} {filter.toUpperCase()} TOTAL: {fmt(totalFiltered)}</div>}
-      {filtered.length===0&&<div className="empty-state"><div className="icon">🔧</div><h3>NO ENTRIES</h3><p>{filter==='All'?'Tap + ADD ENTRY to get started':'No '+filter+' entries yet'}</p></div>}
+      {filter!=='All'&&(
+        <div style={{textAlign:'center',fontFamily:'var(--font-head)',fontSize:13,color:CAT_COLORS[filter],letterSpacing:'0.08em',marginBottom:10}}>
+          {CAT_ICONS[filter]} {filter.toUpperCase()} TOTAL: {fmt(totalFiltered)}
+        </div>
+      )}
 
+      {filtered.length===0&&(
+        <div className="empty-state">
+          <div className="icon">🔧</div>
+          <h3>NO ENTRIES</h3>
+          <p>{filter==='All'?'Tap + ADD ENTRY to get started':'No '+filter+' entries yet'}</p>
+        </div>
+      )}
+
+      {/* ENTRY CARDS */}
       {filtered.map(entry=>{
         const isPending   = confirmDelete===entry.id
         const isUploading = uploading===entry.id
@@ -470,15 +729,26 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
               <div style={{fontSize:15,color:'var(--white)',fontWeight:600,marginBottom:4}}>{entry.description||'-'}</div>
               <div style={{fontFamily:'var(--font-head)',fontSize:22,fontWeight:900,color:'#e53935',marginBottom:8}}>{fmt(entry.amount)}</div>
 
-              {/* Paid by toggle — only shown to drivers, not bookkeeper */}
+              {/* PAID BY TOGGLE — drivers only, not bookkeeper */}
               {!isBookkeeper && (
                 <div style={{marginBottom:10}}>
                   <button disabled={isToggling} onClick={()=>togglePaidBy(entry)} style={{
                     padding:'8px 14px',borderRadius:8,border:'none',cursor:'pointer',
                     background:isEdgerton?'#4a148c':'#2e7d32',color:'#fff',
                     fontSize:12,fontFamily:'var(--font-head)',fontWeight:900,opacity:isToggling?0.6:1,
-                  }}>{isToggling?'SAVING...':isEdgerton?'🏢 EDGERTON PAID — tap to change':'✅ TIM PAID — tap to change'}</button>
-                  {isEdgerton&&<div style={{fontSize:10,color:'#ce93d8',marginTop:4,fontFamily:'var(--font-head)'}}>Reimbursement owed to Edgerton</div>}
+                  }}>
+                    {isToggling
+                      ? 'SAVING...'
+                      : isEdgerton
+                        ? '🏦 REPAIR ESCROW — tap to change'
+                        : '✅ TIM PAID — tap to change'
+                    }
+                  </button>
+                  {isEdgerton&&(
+                    <div style={{fontSize:10,color:'#ce93d8',marginTop:4,fontFamily:'var(--font-head)'}}>
+                      In escrow pool
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -500,6 +770,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                   }}>DELETE</button>
                 )}
               </div>
+
               {isPending&&(
                 <div style={{marginTop:10,background:'#2a0a0a',border:'1px solid #e53935',borderRadius:8,padding:'12px 14px'}}>
                   <div style={{fontSize:12,color:'#e53935',fontFamily:'var(--font-head)',fontWeight:700,marginBottom:10}}>DELETE THIS ENTRY? CANNOT BE UNDONE.</div>
