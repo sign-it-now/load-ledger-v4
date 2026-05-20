@@ -16,6 +16,7 @@ const API = 'https://load-ledger-v4.d49rwgmpj9.workers.dev'
 const CRED_LABELS = {
   dot_physical:    'DOT Physical',
   drivers_license: "Driver's License",
+  cab_card:        'Cab Card',
   plates:          'Truck Plates',
   authority:       'Authority (MC#)',
   insurance:       'Insurance',
