@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from 'react'
 const CREDENTIALS = [
   { key: 'dot_physical',    label: 'DOT Physical',     icon: '🏥' },
   { key: 'drivers_license', label: "Driver's License", icon: '🪪' },
+  { key: 'cab_card',        label: 'Cab Card',         icon: '🎫' },
   { key: 'plates',          label: 'Truck Plates',     icon: '🚛' },
   { key: 'authority',       label: 'Authority (MC#)',  icon: '📋' },
   { key: 'insurance',       label: 'Insurance',        icon: '🛡️' },
@@ -36,7 +37,6 @@ function statusLabel(days) {
   return 'Good — ' + days + ' days remaining'
 }
 
-// pin prop — passed from App after login, held in memory only, never stored
 export default function DriverProfile({ driver, api, showToast, pin }) {
   const [creds,      setCreds]      = useState(null)
   const [editing,    setEditing]    = useState(null)
@@ -61,7 +61,6 @@ export default function DriverProfile({ driver, api, showToast, pin }) {
     }
   }
 
-  // Check which credential files exist by probing with PIN
   async function checkFilesExist() {
     if (!pin) return
     const checks = {}
@@ -117,13 +116,11 @@ export default function DriverProfile({ driver, api, showToast, pin }) {
         reader.readAsDataURL(file)
       })
       const mediaType = file.type === 'application/pdf' ? 'application/pdf' : 'image/jpeg'
-      // PIN sent in request body — required by worker
       const res = await fetch(api + '/api/credentials/' + driver + '/file/' + key, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ base64, mediaType, pin }),
       })
       if (!res.ok) throw new Error('Upload failed')
-      // Build authenticated view URL with PIN as query param
       const viewUrl = api + '/api/credentials/' + driver + '/file/' + key + '?pin=' + encodeURIComponent(pin)
       setFileUrls(prev => ({ ...prev, [key]: viewUrl }))
       showToast('✅ File uploaded!')
