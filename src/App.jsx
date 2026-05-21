@@ -9,7 +9,8 @@ import Loads           from './Loads.jsx'
 import DriverProfile   from './DriverProfile.jsx'
 import Maintenance     from './Maintenance.jsx'
 import Assets          from './Assets.jsx'
-import Tax             from './Tax.jsx'
+import Tax              from './Tax.jsx'
+import SettlementReport from './SettlementReport.jsx'
 import BookkeeperProfile from './BookkeeperProfile.jsx'
 
 const API = 'https://load-ledger-v4.d49rwgmpj9.workers.dev'
@@ -431,6 +432,9 @@ export default function App() {
             <DriverProfile driver={driver} api={API} showToast={showToast} pin={sessionPassword} />
             <div style={{ height:32 }} />
             <Tax loads={loads} driver={driver} />
+            <div style={{ height:24 }} />
+            <div className="section-title" style={{ paddingLeft:4 }}>SETTLEMENT REPORTS</div>
+            <SettlementReport driverName={driver} loads={loads} api={API} showToast={showToast} />
           </div>
         )}
 
