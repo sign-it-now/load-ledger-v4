@@ -121,7 +121,6 @@ export default {
 
           if (existingBroker) {
             brokerId = existingBroker.id;
-            // Update broker record with any new non-empty contact data from this scan
             const uFields = []; const uVals = [];
             if (b.broker_mc      && b.broker_mc.trim())      { uFields.push('broker_mc=?');      uVals.push(b.broker_mc.trim()); }
             if (b.broker_phone   && b.broker_phone.trim())   { uFields.push('broker_phone=?');   uVals.push(b.broker_phone.trim()); }
@@ -219,9 +218,9 @@ export default {
         if (!row) {
           row = {
             driver,
-            dot_physical: '', drivers_license: '', plates: '',
+            dot_physical: '', drivers_license: '', cab_card: '', plates: '',
             authority: '', insurance: '', heavy_use_tax: '',
-            dot_physical_snooze: '', drivers_license_snooze: '',
+            dot_physical_snooze: '', drivers_license_snooze: '', cab_card_snooze: '',
             plates_snooze: '', authority_snooze: '',
             insurance_snooze: '', heavy_use_tax_snooze: '',
           }
@@ -239,25 +238,31 @@ export default {
         const b = await request.json()
         await env.DB.prepare(`
           INSERT INTO driver_credentials
-            (driver, dot_physical, drivers_license, plates, authority, insurance, heavy_use_tax,
-             dot_physical_snooze, drivers_license_snooze, plates_snooze,
+            (driver, dot_physical, drivers_license, cab_card, plates, authority, insurance, heavy_use_tax,
+             dot_physical_snooze, drivers_license_snooze, cab_card_snooze, plates_snooze,
              authority_snooze, insurance_snooze, heavy_use_tax_snooze, updated_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
           ON CONFLICT(driver) DO UPDATE SET
-            dot_physical=excluded.dot_physical, drivers_license=excluded.drivers_license,
-            plates=excluded.plates, authority=excluded.authority,
-            insurance=excluded.insurance, heavy_use_tax=excluded.heavy_use_tax,
+            dot_physical=excluded.dot_physical,
+            drivers_license=excluded.drivers_license,
+            cab_card=excluded.cab_card,
+            plates=excluded.plates,
+            authority=excluded.authority,
+            insurance=excluded.insurance,
+            heavy_use_tax=excluded.heavy_use_tax,
             dot_physical_snooze=excluded.dot_physical_snooze,
             drivers_license_snooze=excluded.drivers_license_snooze,
-            plates_snooze=excluded.plates_snooze, authority_snooze=excluded.authority_snooze,
+            cab_card_snooze=excluded.cab_card_snooze,
+            plates_snooze=excluded.plates_snooze,
+            authority_snooze=excluded.authority_snooze,
             insurance_snooze=excluded.insurance_snooze,
             heavy_use_tax_snooze=excluded.heavy_use_tax_snooze,
             updated_at=excluded.updated_at
         `).bind(
           driver,
-          b.dot_physical||'', b.drivers_license||'', b.plates||'',
+          b.dot_physical||'', b.drivers_license||'', b.cab_card||'', b.plates||'',
           b.authority||'', b.insurance||'', b.heavy_use_tax||'',
-          b.dot_physical_snooze||'', b.drivers_license_snooze||'',
+          b.dot_physical_snooze||'', b.drivers_license_snooze||'', b.cab_card_snooze||'',
           b.plates_snooze||'', b.authority_snooze||'',
           b.insurance_snooze||'', b.heavy_use_tax_snooze||'',
         ).run()
@@ -794,7 +799,6 @@ export default {
     }
 
     // ── BROKER LOADS REPORT ──────────────────────────────
-    // GET /api/brokers/:id/loads?period=week|month|year&driver=BRUCE
     if (path.startsWith('/api/brokers/') && path.endsWith('/loads') && request.method === 'GET') {
       try {
         const brokerId = path.split('/')[3]
@@ -818,10 +822,8 @@ export default {
           ORDER BY delivery_date DESC, created_at DESC
         `
         const { results } = await env.DB.prepare(query).bind(brokerId, ...driverVals).all()
-
         const totalLoads = results.length
         const totalGross = results.reduce((sum, l) => sum + (parseFloat(l.base_pay) || 0), 0)
-
         return json({ loads: results, totalLoads, totalGross })
       } catch(e) {
         return json({ error: e.message }, 500)
