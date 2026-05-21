@@ -367,7 +367,7 @@ export default function App() {
 
       {/* DRIVER BAR */}
       <div className="driver-bar" style={{ justifyContent:'space-between', alignItems:'center' }}>
-        {isBookkeeper ? (
+        {isBookkeeper && (tab === 'maintenance' || tab === 'assets') ? (
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em' }}>VIEWING:</div>
             {['BRUCE','TIM'].map(d => (
