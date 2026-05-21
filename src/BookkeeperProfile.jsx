@@ -201,7 +201,3 @@ function StatBox({ label, value, color }) {
     </div>
   )
 }
-
-function fmt(n) {
-  return '$' + (parseFloat(n) || 0).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 })
-}
