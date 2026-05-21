@@ -108,18 +108,63 @@ export default {
     // ── LOADS POST ───────────────────────────────────────
     if (path === '/api/loads' && request.method === 'POST') {
       try {
-        const b  = await request.json();
-        const id = crypto.randomUUID();
+        const b         = await request.json();
+        const id        = crypto.randomUUID();
         const driverVal = b.driver || '';
+
+        // Auto-upsert broker — build master file from every rate con saved
+        let brokerId = '';
+        if (b.broker_name && b.broker_name.trim()) {
+          const existingBroker = await env.DB.prepare(
+            'SELECT id FROM brokers WHERE UPPER(broker_name) = UPPER(?)'
+          ).bind(b.broker_name.trim()).first();
+
+          if (existingBroker) {
+            brokerId = existingBroker.id;
+            // Update broker record with any new non-empty contact data from this scan
+            const uFields = []; const uVals = [];
+            if (b.broker_mc      && b.broker_mc.trim())      { uFields.push('broker_mc=?');      uVals.push(b.broker_mc.trim()); }
+            if (b.broker_phone   && b.broker_phone.trim())   { uFields.push('broker_phone=?');   uVals.push(b.broker_phone.trim()); }
+            if (b.broker_email   && b.broker_email.trim())   { uFields.push('broker_email=?');   uVals.push(b.broker_email.trim()); }
+            if (b.broker_contact && b.broker_contact.trim()) { uFields.push('broker_contact=?'); uVals.push(b.broker_contact.trim()); }
+            if (b.broker_address && b.broker_address.trim()) { uFields.push('broker_address=?'); uVals.push(b.broker_address.trim()); }
+            if (uFields.length > 0) {
+              uFields.push("updated_at=datetime('now')");
+              uVals.push(brokerId);
+              await env.DB.prepare(
+                'UPDATE brokers SET ' + uFields.join(', ') + ' WHERE id=?'
+              ).bind(...uVals).run();
+            }
+          } else {
+            brokerId = crypto.randomUUID();
+            await env.DB.prepare(`
+              INSERT INTO brokers
+                (id, broker_name, broker_mc, broker_phone, broker_email,
+                 broker_contact, broker_address, notes, total_loads, total_gross,
+                 created_at, updated_at)
+              VALUES (?,?,?,?,?,?,?,'',0,0,datetime('now'),datetime('now'))
+            `).bind(
+              brokerId,
+              b.broker_name.trim(),
+              b.broker_mc      || '',
+              b.broker_phone   || '',
+              b.broker_email   || '',
+              b.broker_contact || '',
+              b.broker_address || '',
+            ).run();
+          }
+        }
+
         await env.DB.prepare(`
           INSERT INTO loads
-            (id, driver_id, driver, broker_name, broker_email, load_number,
+            (id, driver_id, driver, broker_id, broker_name, broker_email, load_number,
              origin, destination, pickup_date, delivery_date,
              base_pay, lumper_total, incidental_total, comdata_total,
              detention, pallets, net_pay, notes, bol_count, fuel, status, created_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
         `).bind(
           id, driverVal, driverVal,
+          brokerId,
           b.broker_name || '', b.broker_email || '', b.load_number || '',
           b.origin || '', b.destination || '', b.pickup_date || '', b.delivery_date || '',
           b.base_pay || 0, b.lumper_total || 0, b.incidental_total || 0,
@@ -313,9 +358,9 @@ export default {
         const id = path.split('/')[3]
         const b  = await request.json()
         const fields = []; const values = []
-        if (b.paid_by             !== undefined) { fields.push('paid_by=?');             values.push(b.paid_by); }
-        if (b.asset_id            !== undefined) { fields.push('asset_id=?');            values.push(b.asset_id); }
-        if (b.paid_by_changed_at  !== undefined) { fields.push('paid_by_changed_at=?');  values.push(b.paid_by_changed_at); }
+        if (b.paid_by              !== undefined) { fields.push('paid_by=?');             values.push(b.paid_by); }
+        if (b.asset_id             !== undefined) { fields.push('asset_id=?');            values.push(b.asset_id); }
+        if (b.paid_by_changed_at   !== undefined) { fields.push('paid_by_changed_at=?');  values.push(b.paid_by_changed_at); }
         if (b.paid_by_changed_from !== undefined) { fields.push('paid_by_changed_from=?'); values.push(b.paid_by_changed_from); }
         if (fields.length === 0) return json({ error: 'Nothing to update' }, 400)
         values.push(id)
@@ -688,6 +733,134 @@ export default {
       }
     }
 
+    // ── BROKERS LIST ─────────────────────────────────────
+    if (path === '/api/brokers' && request.method === 'GET') {
+      try {
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM brokers ORDER BY broker_name ASC'
+        ).all()
+        return json(results)
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── BROKERS MANUAL UPSERT ────────────────────────────
+    if (path === '/api/brokers' && request.method === 'POST') {
+      try {
+        const b = await request.json()
+        if (!b.broker_name || !b.broker_name.trim()) return json({ error: 'broker_name is required' }, 400)
+        const existing = await env.DB.prepare(
+          'SELECT id FROM brokers WHERE UPPER(broker_name) = UPPER(?)'
+        ).bind(b.broker_name.trim()).first()
+        if (existing) {
+          await env.DB.prepare(`
+            UPDATE brokers SET
+              broker_mc=?, broker_phone=?, broker_email=?,
+              broker_contact=?, broker_address=?, notes=?,
+              updated_at=datetime('now')
+            WHERE id=?
+          `).bind(
+            b.broker_mc      || '',
+            b.broker_phone   || '',
+            b.broker_email   || '',
+            b.broker_contact || '',
+            b.broker_address || '',
+            b.notes          || '',
+            existing.id,
+          ).run()
+          return json({ id: existing.id, updated: true })
+        }
+        const id = crypto.randomUUID()
+        await env.DB.prepare(`
+          INSERT INTO brokers
+            (id, broker_name, broker_mc, broker_phone, broker_email,
+             broker_contact, broker_address, notes, total_loads, total_gross,
+             created_at, updated_at)
+          VALUES (?,?,?,?,?,?,?,'',0,0,datetime('now'),datetime('now'))
+        `).bind(
+          id,
+          b.broker_name.trim(),
+          b.broker_mc      || '',
+          b.broker_phone   || '',
+          b.broker_email   || '',
+          b.broker_contact || '',
+          b.broker_address || '',
+        ).run()
+        return json({ id, updated: false })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── BROKER LOADS REPORT ──────────────────────────────
+    // GET /api/brokers/:id/loads?period=week|month|year&driver=BRUCE
+    if (path.startsWith('/api/brokers/') && path.endsWith('/loads') && request.method === 'GET') {
+      try {
+        const brokerId = path.split('/')[3]
+        const period   = url.searchParams.get('period') || 'all'
+        const driver   = url.searchParams.get('driver') || ''
+
+        let dateFilter = ''
+        if (period === 'week')  dateFilter = "AND date(delivery_date) >= date('now', '-7 days')"
+        if (period === 'month') dateFilter = "AND date(delivery_date) >= date('now', 'start of month')"
+        if (period === 'year')  dateFilter = "AND date(delivery_date) >= date('now', 'start of year')"
+
+        let driverFilter = ''
+        const driverVals = []
+        if (driver) { driverFilter = 'AND UPPER(driver) = ?'; driverVals.push(driver.toUpperCase()); }
+
+        const query = `
+          SELECT * FROM loads
+          WHERE broker_id = ?
+          ${dateFilter}
+          ${driverFilter}
+          ORDER BY delivery_date DESC, created_at DESC
+        `
+        const { results } = await env.DB.prepare(query).bind(brokerId, ...driverVals).all()
+
+        const totalLoads = results.length
+        const totalGross = results.reduce((sum, l) => sum + (parseFloat(l.base_pay) || 0), 0)
+
+        return json({ loads: results, totalLoads, totalGross })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── BROKER PATCH ─────────────────────────────────────
+    if (path.startsWith('/api/brokers/') && path.split('/').length === 4 && request.method === 'PATCH') {
+      try {
+        const id = path.split('/')[3]
+        const b  = await request.json()
+        const fields = []; const values = []
+        const allowed = ['broker_name','broker_mc','broker_phone','broker_email','broker_contact','broker_address','notes']
+        allowed.forEach(key => {
+          if (b[key] !== undefined) { fields.push(key + '=?'); values.push(b[key]); }
+        })
+        if (fields.length === 0) return json({ error: 'Nothing to update' }, 400)
+        fields.push("updated_at=datetime('now')")
+        values.push(id)
+        await env.DB.prepare('UPDATE brokers SET ' + fields.join(', ') + ' WHERE id=?').bind(...values).run()
+        return json({ ok: true })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
+    // ── BROKER DELETE ────────────────────────────────────
+    if (path.startsWith('/api/brokers/') && path.split('/').length === 4 && request.method === 'DELETE') {
+      try {
+        const id  = path.split('/')[3]
+        const row = await env.DB.prepare('SELECT id FROM brokers WHERE id=?').bind(id).first()
+        if (!row) return json({ error: 'Broker not found' }, 404)
+        await env.DB.prepare('DELETE FROM brokers WHERE id=?').bind(id).run()
+        return json({ ok: true })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
     return json({ message: 'Load Ledger V4 API — dbappsystems.com' });
   },
 };
@@ -696,8 +869,30 @@ function getPrompt(mode) {
   const prompts = {
     rateconf: `You are reading a freight rate confirmation document.
 Extract ONLY these fields and return ONLY valid JSON, nothing else:
-{"broker_name":"","broker_load_number":"","pickup_location":"","delivery_location":"","pickup_date":"","delivery_date":"","base_pay":""}
-base_pay must be a number string like "1250.00". Leave unknown fields as empty string.`,
+{
+  "broker_name": "",
+  "broker_mc": "",
+  "broker_phone": "",
+  "broker_email": "",
+  "broker_contact": "",
+  "broker_address": "",
+  "broker_load_number": "",
+  "pickup_location": "",
+  "delivery_location": "",
+  "pickup_date": "",
+  "delivery_date": "",
+  "base_pay": ""
+}
+Rules:
+- base_pay must be a number string like "1250.00" with no dollar sign
+- broker_mc is the MC number or DOT number of the brokerage (digits only, no "MC" prefix)
+- broker_phone is the broker contact phone number
+- broker_email is the broker billing or contact email address
+- broker_contact is the name of the broker agent or contact person
+- broker_address is the broker company address if shown
+- pickup_date and delivery_date as MM/DD/YYYY if possible
+- Leave any unknown fields as empty string
+- Return ONLY the JSON object, no explanation, no markdown`,
     lumper: `This is a lumper receipt for a trucking company.
 Look for any dollar amount on this document — it may say Total, Amount, Fee, or just show a number with a dollar sign.
 Return ONLY valid JSON, nothing else: {"amount":"0.00"}
