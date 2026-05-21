@@ -3,13 +3,14 @@
 // Load Ledger V4
 
 import { useState, useEffect } from 'react'
-import RateCon       from './RateCon.jsx'
-import Invoice       from './Invoice.jsx'
-import Loads         from './Loads.jsx'
-import DriverProfile from './DriverProfile.jsx'
-import Maintenance   from './Maintenance.jsx'
-import Assets        from './Assets.jsx'
-import Tax           from './Tax.jsx'
+import RateCon          from './RateCon.jsx'
+import Invoice          from './Invoice.jsx'
+import Loads            from './Loads.jsx'
+import DriverProfile    from './DriverProfile.jsx'
+import Maintenance      from './Maintenance.jsx'
+import Assets           from './Assets.jsx'
+import Tax              from './Tax.jsx'
+import BrokerDirectory  from './BrokerDirectory.jsx'
 
 const API = 'https://load-ledger-v4.d49rwgmpj9.workers.dev'
 
@@ -424,6 +425,7 @@ export default function App() {
         {tab === 'maintenance' && <Maintenance driver={activeDriver} api={API} showToast={showToast} onEntriesChange={setMaintenanceEntries} role={role} />}
         {tab === 'assets'      && <Assets driver={activeDriver} api={API} showToast={showToast} maintenanceEntries={maintenanceEntries} role={role} />}
         {tab === 'tax'         && <Tax loads={loads} driver={activeDriver} />}
+        {tab === 'brokers'     && <BrokerDirectory api={API} showToast={showToast} role={role} />}
       </div>
 
       {/* TAB BAR */}
@@ -461,6 +463,10 @@ export default function App() {
         <button className={`tab-item ${tab==='tax'?'active':''}`} onClick={() => setTab('tax')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/></svg>
           Tax
+        </button>
+        <button className={`tab-item ${tab==='brokers'?'active':''}`} onClick={() => setTab('brokers')}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+          Brokers
         </button>
       </div>
 
