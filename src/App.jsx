@@ -10,7 +10,7 @@ import DriverProfile   from './DriverProfile.jsx'
 import Maintenance     from './Maintenance.jsx'
 import Assets          from './Assets.jsx'
 import Tax             from './Tax.jsx'
-import BrokerDirectory from './BrokerDirectory.jsx'
+import BookkeeperProfile from './BookkeeperProfile.jsx'
 
 const API = 'https://load-ledger-v4.d49rwgmpj9.workers.dev'
 
@@ -434,9 +434,9 @@ export default function App() {
           </div>
         )}
 
-        {/* ── PROFILE TAB — BOOKKEEPER (Phase B: BookkeeperProfile.jsx) */}
+        {/* ── PROFILE TAB — BOOKKEEPER */}
         {tab === 'profile' && isBookkeeper && (
-          <BrokerDirectory api={API} showToast={showToast} role={role} />
+          <BookkeeperProfile loads={loads} api={API} showToast={showToast} />
         )}
 
         {/* ── REPAIRS TAB ───────────────────────────────── */}
