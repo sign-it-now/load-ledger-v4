@@ -248,7 +248,7 @@ export default function App() {
     return (
       <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.85)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
         <div style={{ background: isExpired ? '#2a0a0a' : '#1a1200', border:'2px solid '+borderColor, borderRadius:14, padding:24, width:'100%', maxWidth:360 }}>
-          <div style={{ fontSize:13, color:titleColor, fontFamily:'var(--font-head)', fontWeight:900, letterSpacing:'0.1em', marginBottom:8 }}>⚠️ CREDENTIAL ALERT</div>
+          <div style={{ fontSize:13, color:titleColor, fontFamily:'var(--font-head)', fontWeight:900, letterSpacing:'0.1em', marginBottom:8 }}>CREDENTIAL ALERT</div>
           <div style={{ fontSize:20, fontFamily:'var(--font-head)', fontWeight:900, color:'#fff', marginBottom:8 }}>{label}</div>
           <div style={{ fontSize:14, color:titleColor, fontFamily:'var(--font-head)', fontWeight:700, marginBottom:16 }}>
             {isUnset   && 'No expiration date on file. Please update.'}
@@ -267,7 +267,7 @@ export default function App() {
             <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
               <button onClick={() => { dismissAlert(); setTab('profile') }} style={{ padding:'14px 0', borderRadius:8, border:'none', background:'var(--amber)', color:'#0A1628', fontSize:14, fontFamily:'var(--font-head)', fontWeight:900, cursor:'pointer' }}>UPDATE NOW</button>
               <button onClick={() => setShowSnooze(true)} style={{ padding:'12px 0', borderRadius:8, border:'1px solid #555', background:'transparent', color:'#aaa', fontSize:13, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>REMIND ME ON A SPECIFIC DATE</button>
-              <button onClick={dismissAlert} style={{ padding:'12px 0', borderRadius:8, border:'1px solid #333', background:'transparent', color:'#666', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>OK — DISMISS FOR NOW</button>
+              <button onClick={dismissAlert} style={{ padding:'12px 0', borderRadius:8, border:'1px solid #333', background:'transparent', color:'#666', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>OK - DISMISS FOR NOW</button>
             </div>
           ) : (
             <div>
@@ -289,7 +289,7 @@ export default function App() {
     return (
       <button onClick={() => setLightMode(m => !m)} title={lightMode ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
         style={{ padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'var(--navy3)', color:'var(--white)', fontSize:16, cursor:'pointer', lineHeight:1, flexShrink:0 }}>
-        {lightMode ? '🌙' : '☀️'}
+        {lightMode ? '\uD83C\uDF19' : '\u2600\uFE0F'}
       </button>
     )
   }
@@ -303,7 +303,7 @@ export default function App() {
     )
   }
 
-  // ── LOGIN SCREEN ─────────────────────────────────────────
+  // -- LOGIN SCREEN -----------------------------------------
   if (!driver) {
     return (
       <div style={{ display:'flex', flexDirection:'column', height:'100dvh', background:'var(--navy)', alignItems:'center', justifyContent:'center', padding:24 }}>
@@ -329,7 +329,7 @@ export default function App() {
                   onKeyDown={e => e.key === 'Enter' && handleLogin()}
                   style={{ paddingRight:48 }} />
                 <button onClick={() => setShowPassword(p => !p)} style={{ position:'absolute', right:12, top:'50%', transform:'translateY(-50%)', background:'transparent', border:'none', color:'var(--grey)', fontSize:14, cursor:'pointer', padding:'4px 8px' }}>
-                  {showPassword ? '🙈' : '👁'}
+                  {showPassword ? '\uD83D\uDE48' : '\uD83D\uDC41'}
                 </button>
               </div>
             </div>
@@ -347,7 +347,7 @@ export default function App() {
     )
   }
 
-  // ── MAIN APP ─────────────────────────────────────────────
+  // -- MAIN APP ---------------------------------------------
   const isBookkeeper = role === 'bookkeeper'
 
   return (
@@ -386,7 +386,7 @@ export default function App() {
       {/* MAIN CONTENT */}
       <div className="tab-content">
 
-        {/* ── LOADS TAB ─────────────────────────────────── */}
+        {/* -- LOADS TAB ------------------------------------- */}
         {tab === 'loads' && (
           <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
 
@@ -394,10 +394,10 @@ export default function App() {
             {!isBookkeeper && (loadsSubView === 'ratecon' || loadsSubView === 'invoice') && (
               <div style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 16px 8px', borderBottom:'1px solid var(--border)', background:'var(--navy2)', flexShrink:0 }}>
                 <button onClick={() => setLoadsSubView('list')} style={{ background:'transparent', border:'none', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, cursor:'pointer', letterSpacing:'0.06em', padding:0 }}>
-                  ← LOADS
+                  LOADS
                 </button>
                 <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>
-                  {loadsSubView === 'ratecon' ? 'NEW LOAD — RATE CONFIRMATION' : 'NEW LOAD — INVOICE'}
+                  {loadsSubView === 'ratecon' ? 'NEW LOAD - RATE CONFIRMATION' : 'NEW LOAD - INVOICE'}
                 </div>
               </div>
             )}
@@ -416,7 +416,7 @@ export default function App() {
               </div>
             )}
 
-            {/* Load list — default, always shown for bookkeeper */}
+            {/* Load list -- default, always shown for bookkeeper */}
             {(loadsSubView === 'list' || isBookkeeper) && (
               <div style={{ flex:1, overflowY:'auto' }}>
                 <Loads loads={loads} setLoads={setLoads} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} />
@@ -426,36 +426,37 @@ export default function App() {
           </div>
         )}
 
-        {/* ── PROFILE TAB — DRIVER ──────────────────────── */}
+        {/* -- PROFILE TAB - DRIVER -------------------------- */}
         {tab === 'profile' && !isBookkeeper && (
           <div>
-            <DriverProfile driver={driver} api={API} showToast={showToast} pin={sessionPassword} />
-            <div style={{ height:32 }} />
-            <Tax loads={loads} driver={driver} />
-            <div style={{ height:24 }} />
             <div className="section-title" style={{ paddingLeft:4 }}>SETTLEMENT REPORTS</div>
             <SettlementReport driverName={driver} loads={loads} api={API} showToast={showToast} />
+            <div style={{ height:32 }} />
+            <Tax loads={loads} driver={driver} />
+            <div style={{ height:32 }} />
+            <DriverProfile driver={driver} api={API} showToast={showToast} pin={sessionPassword} />
+            <div style={{ height:24 }} />
           </div>
         )}
 
-        {/* ── PROFILE TAB — BOOKKEEPER */}
+        {/* -- PROFILE TAB - BOOKKEEPER ---------------------- */}
         {tab === 'profile' && isBookkeeper && (
           <BookkeeperProfile loads={loads} api={API} showToast={showToast} />
         )}
 
-        {/* ── REPAIRS TAB ───────────────────────────────── */}
+        {/* -- REPAIRS TAB ----------------------------------- */}
         {tab === 'maintenance' && (
           <Maintenance driver={activeDriver} api={API} showToast={showToast} onEntriesChange={setMaintenanceEntries} role={role} />
         )}
 
-        {/* ── ASSETS TAB ────────────────────────────────── */}
+        {/* -- ASSETS TAB ------------------------------------ */}
         {tab === 'assets' && (
           <Assets driver={activeDriver} api={API} showToast={showToast} maintenanceEntries={maintenanceEntries} role={role} />
         )}
 
       </div>
 
-      {/* ── TAB BAR — 4 TABS ──────────────────────────── */}
+      {/* -- TAB BAR - 4 TABS ------------------------------ */}
       <div className="tab-bar">
 
         <button className={`tab-item ${tab==='loads'?'active':''}`} onClick={() => setTab('loads')}>
