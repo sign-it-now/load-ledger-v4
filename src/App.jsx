@@ -3,12 +3,12 @@
 // Load Ledger V4 — Phase A: 4-tab restructure + PIN persistence fix
 
 import { useState, useEffect } from 'react'
-import RateCon         from './RateCon.jsx'
-import Invoice         from './Invoice.jsx'
-import Loads           from './Loads.jsx'
-import DriverProfile   from './DriverProfile.jsx'
-import Maintenance     from './Maintenance.jsx'
-import Assets          from './Assets.jsx'
+import RateCon          from './RateCon.jsx'
+import Invoice          from './Invoice.jsx'
+import Loads            from './Loads.jsx'
+import DriverProfile    from './DriverProfile.jsx'
+import Maintenance      from './Maintenance.jsx'
+import Assets           from './Assets.jsx'
 import Tax              from './Tax.jsx'
 import SettlementReport from './SettlementReport.jsx'
 import BookkeeperProfile from './BookkeeperProfile.jsx'
@@ -168,7 +168,7 @@ export default function App() {
         setLoginError(data.error || 'Invalid email or password')
       }
     } catch {
-      setLoginError('Connection error — try again')
+      setLoginError('Connection error - try again')
     } finally {
       setLoginLoading(false)
     }
@@ -386,11 +386,10 @@ export default function App() {
       {/* MAIN CONTENT */}
       <div className="tab-content">
 
-        {/* -- LOADS TAB ------------------------------------- */}
+        {/* -- LOADS TAB ---------------------------------- */}
         {tab === 'loads' && (
           <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
 
-            {/* Breadcrumb shown during Rate Con / Invoice flow */}
             {!isBookkeeper && (loadsSubView === 'ratecon' || loadsSubView === 'invoice') && (
               <div style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 16px 8px', borderBottom:'1px solid var(--border)', background:'var(--navy2)', flexShrink:0 }}>
                 <button onClick={() => setLoadsSubView('list')} style={{ background:'transparent', border:'none', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, cursor:'pointer', letterSpacing:'0.06em', padding:0 }}>
@@ -402,21 +401,18 @@ export default function App() {
               </div>
             )}
 
-            {/* Rate Con sub-view */}
             {loadsSubView === 'ratecon' && !isBookkeeper && (
               <div style={{ flex:1, overflowY:'auto' }}>
                 <RateCon load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} onNext={() => setLoadsSubView('invoice')} />
               </div>
             )}
 
-            {/* Invoice sub-view */}
             {loadsSubView === 'invoice' && !isBookkeeper && (
               <div style={{ flex:1, overflowY:'auto' }}>
                 <Invoice load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} resetLoad={afterInvoiceSave} />
               </div>
             )}
 
-            {/* Load list -- default, always shown for bookkeeper */}
             {(loadsSubView === 'list' || isBookkeeper) && (
               <div style={{ flex:1, overflowY:'auto' }}>
                 <Loads loads={loads} setLoads={setLoads} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} />
@@ -426,37 +422,37 @@ export default function App() {
           </div>
         )}
 
-        {/* -- PROFILE TAB - DRIVER -------------------------- */}
+        {/* -- PROFILE TAB - DRIVER ---------------------- */}
         {tab === 'profile' && !isBookkeeper && (
           <div>
             <div className="section-title" style={{ paddingLeft:4 }}>SETTLEMENT REPORTS</div>
             <SettlementReport driverName={driver} loads={loads} api={API} showToast={showToast} />
             <div style={{ height:32 }} />
-            <Tax loads={loads} driver={driver} />
+            <Tax loads={loads} driver={driver} api={API} />
             <div style={{ height:32 }} />
             <DriverProfile driver={driver} api={API} showToast={showToast} pin={sessionPassword} />
             <div style={{ height:24 }} />
           </div>
         )}
 
-        {/* -- PROFILE TAB - BOOKKEEPER ---------------------- */}
+        {/* -- PROFILE TAB - BOOKKEEPER ------------------ */}
         {tab === 'profile' && isBookkeeper && (
           <BookkeeperProfile loads={loads} api={API} showToast={showToast} />
         )}
 
-        {/* -- REPAIRS TAB ----------------------------------- */}
+        {/* -- REPAIRS TAB ------------------------------- */}
         {tab === 'maintenance' && (
           <Maintenance driver={activeDriver} api={API} showToast={showToast} onEntriesChange={setMaintenanceEntries} role={role} />
         )}
 
-        {/* -- ASSETS TAB ------------------------------------ */}
+        {/* -- ASSETS TAB -------------------------------- */}
         {tab === 'assets' && (
           <Assets driver={activeDriver} api={API} showToast={showToast} maintenanceEntries={maintenanceEntries} role={role} />
         )}
 
       </div>
 
-      {/* -- TAB BAR - 4 TABS ------------------------------ */}
+      {/* -- TAB BAR ------------------------------------ */}
       <div className="tab-bar">
 
         <button className={`tab-item ${tab==='loads'?'active':''}`} onClick={() => setTab('loads')}>
