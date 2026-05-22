@@ -1,7 +1,18 @@
 // src/SettlementReport.jsx
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V4 — Settlement Report
-// FIX: Escrow now filtered by funded_at period date — no longer a lifetime running total
+//
+// ACCOUNTING MODEL — v2:
+// "Still Owed to TIM" is a RUNNING BALANCE (all-time cumulative).
+// Think of it like a bank account — it doesn't reset by period.
+// Period filters only control which ACTIVITY ROWS are displayed (loads,
+// fuel, escrow events that occurred in that window) so Tim and Bruce
+// can audit what happened in a given window. The bottom-line balance
+// is always the full picture: all earned − all fuel − all ACH − all escrow.
+//
+// Escrow is a one-time settlement event. Once applied it lives in the
+// running balance forever. It should NEVER drive "still owed" to $0
+// just because the period slice is smaller than the escrow amount.
 
 import { useState, useRef } from 'react'
 
@@ -223,6 +234,7 @@ function StatementOverlay({ data, driverName, onClose }) {
         <div>
           <div style={{ fontSize:11, color:'rgba(255,255,255,0.6)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>SETTLEMENT STATEMENT</div>
           <div style={{ fontSize:16, fontFamily:'var(--font-head)', fontWeight:900, color: driverName==='TIM'?'#ff6b6b':'#64b5f6' }}>{driverName}</div>
+          <div style={{ fontSize:10, color:'rgba(255,255,255,0.5)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginTop:2 }}>PERIOD ACTIVITY: {d.periodLabel}</div>
         </div>
         <button onClick={onClose} style={{ background:'rgba(255,255,255,0.15)', border:'none', color:'#fff', borderRadius:8, padding:'8px 16px', fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>X CLOSE</button>
       </div>
@@ -231,13 +243,14 @@ function StatementOverlay({ data, driverName, onClose }) {
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, fontSize:12, color:'#444' }}>
             <div><span style={{ color:'#888', fontSize:11 }}>COMPANY</span><br /><strong>Edgerton Truck &amp; Trailer Repair</strong></div>
             <div><span style={{ color:'#888', fontSize:11 }}>DRIVER</span><br /><strong>{driverName}</strong></div>
-            <div><span style={{ color:'#888', fontSize:11 }}>PERIOD</span><br /><strong>{d.periodLabel}</strong></div>
+            <div><span style={{ color:'#888', fontSize:11 }}>PERIOD SHOWN</span><br /><strong>{d.periodLabel}</strong></div>
             <div><span style={{ color:'#888', fontSize:11 }}>GENERATED</span><br /><strong>{d.generated}</strong></div>
           </div>
         </div>
-        {/* EARNINGS */}
+
+        {/* PERIOD EARNINGS */}
         <div style={{ marginBottom:16 }}>
-          <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>EARNINGS</div>
+          <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>PERIOD EARNINGS</div>
           <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
               <thead><tr>
@@ -258,7 +271,7 @@ function StatementOverlay({ data, driverName, onClose }) {
                   </tr>
                 ))}
                 <tr>
-                  <td style={TF}>TOTAL</td>
+                  <td style={TF}>PERIOD TOTAL</td>
                   <td style={TFr}>{fmt(d.totalRateCon)}</td>
                   <td style={TFr}>{fmt(d.totalGross90)}</td>
                   {d.totalDetention > 0 && <td style={{...TFr,color:'#2e7d32'}}>{fmt(d.totalDetention)}</td>}
@@ -268,6 +281,7 @@ function StatementOverlay({ data, driverName, onClose }) {
             </table>
           </div>
         </div>
+
         {/* ADVANCES */}
         {d.advRows.length > 0 && (
           <div style={{ marginBottom:16 }}>
@@ -301,6 +315,7 @@ function StatementOverlay({ data, driverName, onClose }) {
             </div>
           </div>
         )}
+
         {/* ACH */}
         {d.achLoads.length > 0 && (
           <div style={{ marginBottom:16 }}>
@@ -337,10 +352,11 @@ function StatementOverlay({ data, driverName, onClose }) {
             </div>
           </div>
         )}
+
         {/* FUEL */}
         {d.fuelInRange.length > 0 && (
           <div style={{ marginBottom:16 }}>
-            <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>FUEL</div>
+            <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>FUEL (PERIOD)</div>
             <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
               <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
                 <thead><tr>
@@ -356,28 +372,32 @@ function StatementOverlay({ data, driverName, onClose }) {
                       <td style={{...TDr,color:f.fuel_type==='fleet'?'#c62828':'#1565c0'}}>{fmt(f.amount)}</td>
                     </tr>
                   ))}
-                  {d.fleetFuelTotal > 0 && <tr style={{background:'#fff8f8'}}><td style={TF} colSpan={3}>Fleet Card Total (deducted from pay)</td><td style={{...TFr,color:'#c62828'}}>{fmt(d.fleetFuelTotal)}</td></tr>}
+                  {d.fleetFuelTotal > 0 && <tr style={{background:'#fff8f8'}}><td style={TF} colSpan={3}>Fleet Card Total (period)</td><td style={{...TFr,color:'#c62828'}}>{fmt(d.fleetFuelTotal)}</td></tr>}
                   {d.pocketFuelTotal > 0 && <tr style={{background:'#f0f4ff'}}><td style={{...TF,color:'#1565c0'}} colSpan={3}>Out of Pocket Total (tax expense only)</td><td style={{...TFr,color:'#1565c0'}}>{fmt(d.pocketFuelTotal)}</td></tr>}
                 </tbody>
               </table>
             </div>
           </div>
         )}
-        {/* SETTLEMENT SUMMARY */}
+
+        {/* RUNNING BALANCE SUMMARY */}
         <div style={{ marginBottom:24 }}>
-          <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>SETTLEMENT SUMMARY</div>
+          <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>RUNNING BALANCE — ALL TIME</div>
+          <div style={{ background:'#fff8e1', border:'1px solid #ffe082', borderRadius:8, padding:'10px 14px', marginBottom:8, fontSize:11, color:'#7a5c00' }}>
+            The running balance reflects ALL loads, fuel, ACH payments, and escrow ever recorded — not just this period. This is what is currently owed.
+          </div>
           <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
               <tbody>
-                <tr><td style={TD}>Gross Pay (90% of rate con)</td><td style={TDr}>{fmt(d.totalGross90)}</td></tr>
-                {d.totalDetention > 0 && <tr style={{background:'#f1f8e9'}}><td style={{...TD,color:'#2e7d32'}}>+ Detention / Layover (100% to driver)</td><td style={{...TDr,color:'#2e7d32'}}>{fmt(d.totalDetention)}</td></tr>}
-                <tr style={{background:'#fafafa'}}><td style={TD}>- Advance Kept (Comdata leftover)</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.totalAdvKept)})</td></tr>
-                {d.totalReimb > 0 && <tr style={{background:'#fffde7'}}><td style={{...TD,color:'#f57c00'}}>+ Lumper Reimbursement (no comdata issued)</td><td style={{...TDr,color:'#f57c00'}}>{fmt(d.totalReimb)}</td></tr>}
-                {d.fleetFuelTotal > 0 && <tr style={{background:'#fafafa'}}><td style={TD}>- Fleet Card Fuel</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.fleetFuelTotal)})</td></tr>}
-                {d.totalAchDisbursed > 0 && <tr style={{background:'#e8f5e9'}}><td style={{...TD,color:'#2e7d32'}}>- ACH Disbursements Already Received</td><td style={{...TDr,color:'#2e7d32'}}>({fmt(d.totalAchDisbursed)})</td></tr>}
-                {d.escrowApplied > 0 && <tr style={{background:'#f3e5f5'}}><td style={{...TD,color:'#7b1fa2'}}>- Repair Escrow Applied</td><td style={{...TDr,color:'#7b1fa2'}}>({fmt(d.escrowApplied)})</td></tr>}
+                <tr><td style={TD}>Gross Pay — All Loads (90% of rate con)</td><td style={TDr}>{fmt(d.allGross90)}</td></tr>
+                {d.allDetention > 0 && <tr style={{background:'#f1f8e9'}}><td style={{...TD,color:'#2e7d32'}}>+ Detention (all time)</td><td style={{...TDr,color:'#2e7d32'}}>{fmt(d.allDetention)}</td></tr>}
+                {d.allAdvKept > 0 && <tr style={{background:'#fafafa'}}><td style={TD}>- Advance Kept (all time)</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.allAdvKept)})</td></tr>}
+                {d.allReimb > 0 && <tr style={{background:'#fffde7'}}><td style={{...TD,color:'#f57c00'}}>+ Lumper Reimbursements (all time)</td><td style={{...TDr,color:'#f57c00'}}>{fmt(d.allReimb)}</td></tr>}
+                {d.allFleetFuel > 0 && <tr style={{background:'#fafafa'}}><td style={TD}>- Fleet Card Fuel (all time)</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.allFleetFuel)})</td></tr>}
+                {d.allAchDisbursed > 0 && <tr style={{background:'#e8f5e9'}}><td style={{...TD,color:'#2e7d32'}}>- ACH Payments Made (all time)</td><td style={{...TDr,color:'#2e7d32'}}>({fmt(d.allAchDisbursed)})</td></tr>}
+                {d.allEscrow > 0 && <tr style={{background:'#f3e5f5'}}><td style={{...TD,color:'#7b1fa2'}}>- Escrow Applied (settled against earnings)</td><td style={{...TDr,color:'#7b1fa2'}}>({fmt(d.allEscrow)})</td></tr>}
                 <tr style={{background:'#1a2a3a'}}>
-                  <td style={{ padding:'14px 12px', fontSize:15, fontWeight:900, color:'#fff', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }}>NET AMOUNT OWED TO {driverName}</td>
+                  <td style={{ padding:'14px 12px', fontSize:15, fontWeight:900, color:'#fff', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }}>BALANCE CURRENTLY OWED TO {driverName}</td>
                   <td style={{ padding:'14px 12px', textAlign:'right', fontSize:20, fontWeight:900, color:'#ffd54f', fontFamily:'var(--font-head)' }}>{fmt(d.stillOwed)}</td>
                 </tr>
                 {d.totalAchFees > 0 && <tr style={{background:'#fff3e0'}}><td style={{...TD,color:'#e65100',fontSize:11}}>ACH Convenience Fees (broker kept - operating expense)</td><td style={{...TDr,color:'#e65100',fontSize:11}}>{fmt(d.totalAchFees)}</td></tr>}
@@ -387,8 +407,8 @@ function StatementOverlay({ data, driverName, onClose }) {
         </div>
         {d.pocketFuelTotal > 0 && (
           <div style={{ background:'#e3f2fd', borderRadius:8, padding:'12px 14px', marginBottom:16, border:'1px solid #bbdefb' }}>
-            <div style={{ fontSize:11, color:'#1565c0', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:4 }}>TAX NOTE</div>
-            <div style={{ fontSize:12, color:'#1a3a6a' }}>Out of Pocket Fuel: <strong>{fmt(d.pocketFuelTotal)}</strong> — paid by driver, deductible business expense.</div>
+            <div style={{ fontSize:11, color:'#1565c0', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:4 }}>TAX NOTE — PERIOD</div>
+            <div style={{ fontSize:12, color:'#1a3a6a' }}>Out of Pocket Fuel this period: <strong>{fmt(d.pocketFuelTotal)}</strong> — paid by driver, deductible business expense.</div>
           </div>
         )}
         <div style={{ textAlign:'center', fontSize:10, color:'#aaa', paddingBottom:32 }}>Generated by Load Ledger V4 — dbappsystems.com</div>
@@ -404,8 +424,7 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
   const [loaded,          setLoaded]          = useState(false)
   const [loading,         setLoading]         = useState(false)
   const [fuelEntries,     setFuelEntries]     = useState([])
-  // FIX: Store raw escrow records array — NOT a lifetime running total.
-  // Escrow is filtered by funded_at per period, same pattern as fuel entries.
+  // Raw escrow records — filtered all-time for running balance, by period for display row
   const [escrowPayments,  setEscrowPayments]  = useState([])
   const [period,          setPeriod]          = useState('monthly')
   const [periodOffset,    setPeriodOffset]    = useState(0)
@@ -444,8 +463,6 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
       ])
       if (results[2]) {
         const escrowData = await results[2].json()
-        // FIX: Store the raw array — do NOT sum here.
-        // Period filtering happens in escrowForPeriod() at render time.
         setEscrowPayments(Array.isArray(escrowData) ? escrowData : [])
       }
       setLoaded(true)
@@ -472,18 +489,21 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
     } catch {}
   }
 
-  // -- ESCROW HELPER — period-filtered, not lifetime total --------
-  // Only escrow payments whose funded_at falls inside the current
-  // period window are included. Past periods that already used their
-  // escrow will show $0 for new periods automatically.
+  // -- ESCROW HELPERS ------------------------------------------------
+  // Period display: only show escrow that was recorded in the selected period
   function escrowForPeriod(dn) {
     if (dn !== 'TIM') return 0
     return escrowPayments
       .filter(p => inPeriodByDate(p.funded_at, period, periodOffset))
       .reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
   }
+  // Running balance: ALL escrow ever applied — used for the bottom-line balance
+  function escrowAllTime(dn) {
+    if (dn !== 'TIM') return 0
+    return escrowPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+  }
 
-  // -- HELPERS ---------------------------------------------------
+  // -- PERIOD FUEL HELPERS -------------------------------------------
   function fuelForPeriod(dn, fuelTypeFilter) {
     return fuelEntries
       .filter(f => f.driver === dn.toUpperCase() && f.fuel_type === fuelTypeFilter && inPeriodByDate(f.entry_date, period, periodOffset))
@@ -492,6 +512,26 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
 
   function fuelEntriesForPeriod(dn) {
     return fuelEntries.filter(f => f.driver === dn.toUpperCase() && inPeriodByDate(f.entry_date, period, periodOffset))
+  }
+
+  // -- RUNNING BALANCE — all-time ------------------------------------
+  // This is the true "what does Bruce owe Tim right now" number.
+  // It uses every load, every fuel entry, every ACH payment, every escrow
+  // ever recorded. Not period-filtered. Never resets.
+  function runningBalance(dn) {
+    const dLoads = loads.filter(l => l.driver === dn)
+    const allGrossPay     = dLoads.reduce((s,l) => s + calcPay(l).driverNet, 0)
+    const allAdvKept      = dLoads.reduce((s,l) => s + advanceKept(l), 0)
+    const allReimb        = dLoads.reduce((s,l) => s + reimbursementOwed(l), 0)
+    const allFleetFuel    = fuelEntries.filter(f => f.driver === dn.toUpperCase() && f.fuel_type === 'fleet').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
+    const allAchDisbursed = dLoads.filter(l => l.ach_payment).reduce((s,l) => s+(parseFloat(l.ach_received)||0), 0)
+    const allEscrow       = escrowAllTime(dn)
+    return {
+      allGrossPay, allAdvKept, allReimb, allFleetFuel, allAchDisbursed, allEscrow,
+      allDetention: dLoads.reduce((s,l) => s+(parseFloat(l.detention)||0), 0),
+      allGross90: dLoads.reduce((s,l) => s+(parseFloat(l.base_pay)||0)*TIM_CUT, 0),
+      stillOwed: Math.max(0, allGrossPay - allAdvKept + allReimb - allFleetFuel - allAchDisbursed - allEscrow),
+    }
   }
 
   function buildSettlementData(dn) {
@@ -523,9 +563,8 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
     const achLoads          = inRange.filter(l => l.ach_payment)
     const totalAchDisbursed = achLoads.reduce((s,l) => s + (parseFloat(l.ach_received)||0), 0)
     const totalAchFees      = achLoads.reduce((s,l) => s + Math.max(0, (parseFloat(l.netPay||l.net_pay)||0) - (parseFloat(l.ach_received)||0)), 0)
-    // FIX: use period-filtered escrow, not lifetime total
-    const escrowApplied = escrowForPeriod(dn)
-    const stillOwed     = Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuelTotal - totalAchDisbursed - escrowApplied)
+    // Running balance for bottom-line "owed" number
+    const rb = runningBalance(dn)
     return {
       driverName: dn,
       periodLabel: getPeriodLabel(period, periodOffset),
@@ -534,29 +573,44 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
       advRows, totalAdvKept, totalReimb,
       fuelInRange, fleetFuelTotal, pocketFuelTotal,
       achLoads, totalAchDisbursed, totalAchFees,
-      escrowApplied, stillOwed,
+      // Running balance fields for the summary table
+      ...rb,
     }
   }
 
+  // driverStats: period display rows + running balance for "still owed"
   function driverStats(dn) {
     const dLoads = loads.filter(l => l.driver === dn)
-    const inRange        = dLoads.filter(l => inPeriod(l, period, periodOffset))
-    const advKept        = inRange.reduce((s,l) => s + advanceKept(l), 0)
-    const reimbOwed      = inRange.reduce((s,l) => s + reimbursementOwed(l), 0)
-    const gPay           = inRange.reduce((s,l) => s + calcPay(l).driverNet, 0)
+    const inRange = dLoads.filter(l => inPeriod(l, period, periodOffset))
+
+    // Period display values (shown as activity rows in the card)
     const detentionTotal = inRange.reduce((s,l) => s + (parseFloat(l.detention)||0), 0)
-    const fleetFuel      = fuelForPeriod(dn, 'fleet')
-    const pocketFuel     = fuelForPeriod(dn, 'pocket')
-    const achDisbursed   = inRange.filter(l => l.ach_payment).reduce((s,l) => s + (parseFloat(l.ach_received)||0), 0)
-    const achFees        = inRange.filter(l => l.ach_payment).reduce((s,l) => s + Math.max(0, (parseFloat(l.netPay||l.net_pay)||0) - (parseFloat(l.ach_received)||0)), 0)
-    // FIX: use period-filtered escrow, not lifetime total
-    const escrowApplied = escrowForPeriod(dn)
-    const stillOwed     = Math.max(0, gPay - advKept + reimbOwed - fleetFuel - achDisbursed - escrowApplied)
+    const advKeptPeriod  = inRange.reduce((s,l) => s + advanceKept(l), 0)
+    const reimbPeriod    = inRange.reduce((s,l) => s + reimbursementOwed(l), 0)
+    const gPayPeriod     = inRange.reduce((s,l) => s + calcPay(l).driverNet, 0)
+    const fleetFuelPrd   = fuelForPeriod(dn, 'fleet')
+    const pocketFuelPrd  = fuelForPeriod(dn, 'pocket')
+    const achDisbPeriod  = inRange.filter(l => l.ach_payment).reduce((s,l) => s+(parseFloat(l.ach_received)||0), 0)
+    const achFeesPeriod  = inRange.filter(l => l.ach_payment).reduce((s,l) => s+Math.max(0,(parseFloat(l.netPay||l.net_pay)||0)-(parseFloat(l.ach_received)||0)), 0)
+    // Escrow: show as a line item only when it was applied in the selected period
+    const escrowPeriod   = escrowForPeriod(dn)
+
+    // Running balance — the only correct "still owed" answer
+    const rb = runningBalance(dn)
+
     return {
       count: inRange.length,
       rateCon: inRange.reduce((s,l) => s+(parseFloat(l.base_pay)||0), 0),
-      grossPay: gPay, detentionTotal, advanceKept: advKept, reimbOwed,
-      fleetFuel, pocketFuel, achDisbursed, achFees, escrowApplied, stillOwed,
+      grossPay: gPayPeriod,
+      detentionTotal,
+      advanceKept: advKeptPeriod,
+      reimbOwed: reimbPeriod,
+      fleetFuel: fleetFuelPrd,
+      pocketFuel: pocketFuelPrd,
+      achDisbursed: achDisbPeriod,
+      achFees: achFeesPeriod,
+      escrowApplied: escrowPeriod, // display row: only when in this period
+      stillOwed: rb.stillOwed,     // running balance — all-time correct answer
     }
   }
 
@@ -587,7 +641,7 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
       setFuelReceiptType('image/jpeg')
       setFuelPreview(scanned.dataUrl)
       showToast('Fuel receipt scanned! $' + amount)
-    } catch (err) {
+    } catch {
       showToast('Scan failed — enter amount manually')
     } finally {
       setFuelScanning(false)
@@ -713,6 +767,12 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
             return (
               <div key={dn} className="card" style={{ borderLeft:'3px solid ' + color, marginBottom:12 }}>
                 <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color, marginBottom:10 }}>{dn}</div>
+
+                {/* PERIOD ACTIVITY LABEL */}
+                <div style={{ fontSize:9, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.1em', marginBottom:8, textTransform:'uppercase' }}>
+                  Period Activity — {getPeriodLabel(period, periodOffset)}
+                </div>
+
                 <div className="amount-row"><span className="label">Loads</span><span className="value">{s.count}</span></div>
                 <div className="amount-row"><span className="label">Rate Con Total</span><span className="value">{fmt(s.rateCon)}</span></div>
                 <div className="amount-row"><span className="label">Gross Pay (90%)</span><span className="value" style={{color:'var(--amber)'}}>{fmt(s.grossPay - s.detentionTotal)}</span></div>
@@ -721,13 +781,25 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
                 {s.reimbOwed > 0 && <div className="amount-row"><span className="label" style={{color:'var(--amber)'}}>+ Lumper Reimb</span><span className="value" style={{color:'var(--amber)'}}>+{fmt(s.reimbOwed)}</span></div>}
                 {s.fleetFuel > 0 && <div className="amount-row"><span className="label">Fleet Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(s.fleetFuel)}</span></div>}
                 {s.achDisbursed > 0 && <div className="amount-row"><span className="label" style={{color:'#2e7d32'}}>ACH Paid Out</span><span className="value" style={{color:'#2e7d32'}}>-{fmt(s.achDisbursed)}</span></div>}
-                {s.escrowApplied > 0 && <div className="amount-row"><span className="label" style={{color:'#ce93d8'}}>Escrow Applied</span><span className="value" style={{color:'#ce93d8'}}>-{fmt(s.escrowApplied)}</span></div>}
-                <div style={{ borderTop:'2px solid var(--border)', marginTop:8, paddingTop:8 }}>
+                {/* Escrow: display row only when it was recorded in this period */}
+                {s.escrowApplied > 0 && (
                   <div className="amount-row">
-                    <span className="label" style={{fontWeight:900,color:'var(--white)',fontSize:14}}>Still Owed to {dn}</span>
+                    <span className="label" style={{color:'#ce93d8'}}>Escrow Applied (this period)</span>
+                    <span className="value" style={{color:'#ce93d8'}}>-{fmt(s.escrowApplied)}</span>
+                  </div>
+                )}
+
+                {/* RUNNING BALANCE — separated clearly */}
+                <div style={{ borderTop:'2px solid var(--border)', marginTop:10, paddingTop:10 }}>
+                  <div style={{ fontSize:9, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.1em', marginBottom:6, textTransform:'uppercase' }}>
+                    Running Balance — All Time
+                  </div>
+                  <div className="amount-row">
+                    <span className="label" style={{fontWeight:900,color:'var(--white)',fontSize:14}}>Balance Owed to {dn}</span>
                     <span className="value" style={{color:'var(--amber)',fontSize:18,fontWeight:900}}>{fmt(s.stillOwed)}</span>
                   </div>
                 </div>
+
                 {s.achFees > 0 && <div className="amount-row" style={{marginTop:4}}><span className="label" style={{color:'#e65100',fontSize:11}}>ACH Broker Fees</span><span className="value" style={{color:'#e65100',fontSize:11}}>{fmt(s.achFees)}</span></div>}
 
                 {/* Fuel entries for this driver in period */}
