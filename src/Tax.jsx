@@ -2,11 +2,11 @@
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V4 — Tax Desk (Bruce + Tim)
 //
-// FIXES:
-// 1. All setTaxData functional updaters now use `prev` properly instead of
-//    stale closure captures — prevents lost updates under React 18 batching.
-// 2. Number inputs changed from type="number" to type="text" + inputMode="decimal"
-//    — fixes iOS Chrome refusing partial values and silently dropping onChange.
+// AUTO-PULL: Fuel expenses are fetched from /api/fuel/{driver} (fleet + pocket).
+// Repair expenses are fetched from /api/maintenance/{driver} (paid_by TIM only).
+// Both are filtered by quarter using entry_date. These replace manual Fuel/Repair
+// sections — data already in the system is NOT re-entered manually here.
+// The drop-list remains for additional operating expenses not tracked elsewhere.
 
 import { useState, useEffect } from 'react'
 
@@ -138,77 +138,33 @@ function daysUntil(dateStr) {
 function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
 function uid()  { return Math.random().toString(36).slice(2,9) }
 
-// -- PINNED SECTION — defined OUTSIDE Tax so React never remounts it ---
-// FIX: inputs are now type="text" inputMode="decimal" — iOS was silently
-// rejecting partial number values (e.g. "0.") and swallowing onChange events.
-function PinnedSection({ entries, label, onAdd, onUpdate, onRemove }) {
-  const total = entries.reduce((s,e) => s + (parseFloat(e.amount)||0), 0)
-  return (
-    <div style={{ marginBottom:14 }}>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
-        <div style={{ fontSize:12, color:'var(--white)', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.04em' }}>
-          {label}
-        </div>
-        <button
-          onClick={(ev) => { ev.stopPropagation(); onAdd() }}
-          style={{
-            padding:'4px 12px', borderRadius:6, border:'1px solid var(--amber)',
-            background:'transparent', color:'var(--amber)',
-            fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer',
-          }}
-        >+ ADD</button>
-      </div>
-      {entries.length === 0 && (
-        <div style={{ fontSize:11, color:'var(--grey)', marginBottom:4 }}>
-          Tap + ADD to enter a {label.toLowerCase()} expense
-        </div>
-      )}
-      {entries.map(e => (
-        <div key={e.id} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-          <span style={{ fontSize:12, color:'var(--grey)', minWidth:16 }}>$</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            pattern="[0-9]*\.?[0-9]*"
-            placeholder="0.00"
-            value={e.amount}
-            onChange={ev => onUpdate(e.id, ev.target.value)}
-            style={{
-              flex:1, background:'var(--navy3)', border:'1px solid var(--border)',
-              color:'var(--white)', borderRadius:8, padding:'8px 10px',
-              fontSize:14, fontFamily:'var(--font-body)',
-            }}
-          />
-          <button
-            onClick={(ev) => { ev.stopPropagation(); onRemove(e.id) }}
-            style={{
-              padding:'6px 10px', borderRadius:6, border:'none',
-              background:'#3a1010', color:'#e53935',
-              fontSize:13, fontWeight:900, cursor:'pointer',
-            }}
-          >x</button>
-        </div>
-      ))}
-      <div style={{ fontSize:11, color:'var(--amber)', textAlign:'right', marginTop:2 }}>
-        Total: {fmt(total)}
-      </div>
-    </div>
-  )
+// Returns true if a YYYY-MM-DD date string falls in a given set of months for YEAR
+function inQuarter(dateStr, qMonths) {
+  if (!dateStr) return false
+  // Use T12:00:00 to prevent UTC midnight rolling back to prior day in Central time
+  const d = new Date(dateStr.substring(0,10) + 'T12:00:00')
+  return d.getFullYear() === YEAR && qMonths.includes(d.getMonth())
 }
 
-export default function Tax({ loads, driver }) {
+export default function Tax({ loads, driver, api }) {
 
   const stateInfo   = STATE_RATES[driver] || STATE_RATES.TIM
   const driverColor = driver === 'BRUCE' ? '#1e88e5' : '#e53935'
 
-  const [taxData, setTaxData] = useState(() => loadStorage(driver))
-  const [fedRate, setFedRate] = useState(FED_DEFAULT)
-  const [openQ,   setOpenQ]   = useState(null)
+  const [taxData,       setTaxData]       = useState(() => loadStorage(driver))
+  const [fedRate,       setFedRate]       = useState(FED_DEFAULT)
+  const [openQ,         setOpenQ]         = useState(null)
+  const [menuOpen,      setMenuOpen]      = useState(false)
+  const [openCatIdx,    setOpenCatIdx]    = useState(null)
+  const [menuQIdx,      setMenuQIdx]      = useState(null)
 
-  const [menuOpen,   setMenuOpen]   = useState(false)
-  const [openCatIdx, setOpenCatIdx] = useState(null)
-  const [menuQIdx,   setMenuQIdx]   = useState(null)
+  // Auto-pulled operating expense data from existing app records
+  const [fuelEntries,   setFuelEntries]   = useState([])
+  const [maintEntries,  setMaintEntries]  = useState([])
+  const [expLoading,    setExpLoading]    = useState(false)
+  const [expLoaded,     setExpLoaded]     = useState(false)
 
+  // Reset local tax prefs when driver changes
   useEffect(() => {
     setTaxData(loadStorage(driver))
     setFedRate(FED_DEFAULT)
@@ -216,14 +172,67 @@ export default function Tax({ loads, driver }) {
     setMenuOpen(false)
     setOpenCatIdx(null)
     setMenuQIdx(null)
+    setFuelEntries([])
+    setMaintEntries([])
+    setExpLoaded(false)
   }, [driver])
 
+  // Persist manual drop-list expenses and notes to localStorage
   useEffect(() => { saveStorage(driver, taxData) }, [taxData, driver])
 
-  function getQKey(qIdx)  { return YEAR + '_Q' + (qIdx + 1) }
-  function getQData(qIdx) { return taxData[getQKey(qIdx)] || {} }
+  // Fetch fuel log and maintenance ledger when the Tax desk is rendered
+  useEffect(() => {
+    if (!api || !driver || expLoaded) return
+    async function fetchExpenses() {
+      setExpLoading(true)
+      try {
+        const [fuelRes, maintRes] = await Promise.all([
+          fetch(api + '/api/fuel/' + driver),
+          fetch(api + '/api/maintenance/' + driver),
+        ])
+        const fuelData  = await fuelRes.json()
+        const maintData = await maintRes.json()
+        setFuelEntries(Array.isArray(fuelData)  ? fuelData  : [])
+        setMaintEntries(Array.isArray(maintData) ? maintData : [])
+        setExpLoaded(true)
+      } catch (err) {
+        console.error('Tax: failed to fetch expenses', err)
+      } finally {
+        setExpLoading(false)
+      }
+    }
+    fetchExpenses()
+  }, [api, driver, expLoaded])
 
-  // FIX: updateQData properly uses prev inside the functional updater
+  // ── QUARTER EXPENSE HELPERS — AUTO-PULLED ──────────────
+  // Fuel: ALL fuel entries (fleet + pocket) are IRS-deductible business expenses.
+  // Fleet card fuel is still Tim's operating cost even though Bruce's card pays it.
+  function getQFuelEntries(qMonths) {
+    return fuelEntries.filter(f => inQuarter(f.entry_date, qMonths))
+  }
+  function getQFuelTotal(qMonths) {
+    return getQFuelEntries(qMonths).reduce((s, f) => s + (parseFloat(f.amount) || 0), 0)
+  }
+  function getQFleetFuelTotal(qMonths) {
+    return getQFuelEntries(qMonths).filter(f => f.fuel_type === 'fleet').reduce((s, f) => s + (parseFloat(f.amount) || 0), 0)
+  }
+  function getQPocketFuelTotal(qMonths) {
+    return getQFuelEntries(qMonths).filter(f => f.fuel_type === 'pocket').reduce((s, f) => s + (parseFloat(f.amount) || 0), 0)
+  }
+
+  // Repairs: only entries where Tim paid (paid_by === 'TIM').
+  // EDGERTON-paid repairs are Bruce's expense, not Tim's deduction.
+  function getQMaintEntries(qMonths) {
+    return maintEntries.filter(m => inQuarter(m.entry_date, qMonths) && (m.paid_by === 'TIM' || m.paid_by === 'Tim'))
+  }
+  function getQMaintTotal(qMonths) {
+    return getQMaintEntries(qMonths).reduce((s, m) => s + (parseFloat(m.amount) || 0), 0)
+  }
+
+  // ── MANUAL DROP-LIST EXPENSE HELPERS ───────────────────
+  function getQKey(qIdx)   { return YEAR + '_Q' + (qIdx + 1) }
+  function getQData(qIdx)  { return taxData[getQKey(qIdx)] || {} }
+
   function updateQData(qIdx, field, value) {
     const key = getQKey(qIdx)
     setTaxData(prev => ({ ...prev, [key]: { ...(prev[key]||{}), [field]: value } }))
@@ -233,44 +242,8 @@ export default function Tax({ loads, driver }) {
     const key = getQKey(qIdx)
     setTaxData(prev => ({
       ...prev,
-      [key]: { ...(prev[key]||{}), paid: !(prev[key] || {}).paid }
+      [key]: { ...(prev[key]||{}), paid: !((prev[key] || {}).paid) }
     }))
-  }
-
-  function getPinnedEntries(qIdx, type) {
-    return (getQData(qIdx))['pinned_' + type] || []
-  }
-
-  // FIX: use prev inside setTaxData — no stale closure on cur
-  function addPinnedEntry(qIdx, type) {
-    const key      = getQKey(qIdx)
-    const newEntry = { id: uid(), amount: '' }
-    setTaxData(prev => {
-      const existing = (prev[key] || {})['pinned_' + type] || []
-      return { ...prev, [key]: { ...(prev[key]||{}), ['pinned_' + type]: [...existing, newEntry] } }
-    })
-  }
-
-  function updatePinnedEntry(qIdx, type, id, amount) {
-    const key = getQKey(qIdx)
-    setTaxData(prev => {
-      const existing = (prev[key] || {})['pinned_' + type] || []
-      return {
-        ...prev,
-        [key]: { ...(prev[key]||{}), ['pinned_' + type]: existing.map(e => e.id === id ? { ...e, amount } : e) }
-      }
-    })
-  }
-
-  function removePinnedEntry(qIdx, type, id) {
-    const key = getQKey(qIdx)
-    setTaxData(prev => {
-      const existing = (prev[key] || {})['pinned_' + type] || []
-      return {
-        ...prev,
-        [key]: { ...(prev[key]||{}), ['pinned_' + type]: existing.filter(e => e.id !== id) }
-      }
-    })
   }
 
   function getDropEntries(qIdx) {
@@ -311,32 +284,33 @@ export default function Tax({ loads, driver }) {
     })
   }
 
-  // -- REVENUE — uses delivery_date first for correct quarter assignment
+  // ── REVENUE — auto-pulled from loads by delivery date ──
   function getQuarterRevenue(qMonths) {
     return loads
       .filter(l => {
         if (l.driver !== driver) return false
         const dateStr = l.delivery_date || l.date || l.created_at
         if (!dateStr) return false
-        const d = new Date(dateStr)
+        const d = new Date(dateStr.substring(0,10) + 'T12:00:00')
         return d.getFullYear() === YEAR && qMonths.includes(d.getMonth())
       })
       .reduce((sum, l) => sum + (parseFloat(l.net_pay || l.netPay) || 0), 0)
   }
 
+  // Total expenses: auto-pulled fuel + auto-pulled repairs + manual drop-list
   function getExpenseTotal(qIdx) {
-    const fuel   = getPinnedEntries(qIdx,'fuel').reduce((s,e)   => s + (parseFloat(e.amount)||0), 0)
-    const repair = getPinnedEntries(qIdx,'repair').reduce((s,e) => s + (parseFloat(e.amount)||0), 0)
-    const drop   = getDropEntries(qIdx).reduce((s,e)            => s + (parseFloat(e.amount)||0), 0)
-    return fuel + repair + drop
+    const q           = QUARTERS[qIdx]
+    const autoFuel    = getQFuelTotal(q.months)
+    const autoRepair  = getQMaintTotal(q.months)
+    const manualDrop  = getDropEntries(qIdx).reduce((s,e) => s+(parseFloat(e.amount)||0), 0)
+    return autoFuel + autoRepair + manualDrop
   }
 
   function calcTax(revenue, expenses) {
     const netIncome = Math.max(0, revenue - expenses)
     const fedTax    = netIncome * (fedRate / 100)
     const stateTax  = netIncome * stateInfo.rate
-    const totalTax  = fedTax + stateTax
-    return { netIncome, fedTax, stateTax, totalTax }
+    return { netIncome, fedTax, stateTax, totalTax: fedTax + stateTax }
   }
 
   const grandTotals = QUARTERS.reduce((acc, q, i) => {
@@ -350,6 +324,15 @@ export default function Tax({ loads, driver }) {
     return acc
   }, { revenue:0, expenses:0, tax:0, paid:0 })
 
+  // ── SHARED STYLES ──────────────────────────────────────
+  const autoBox = {
+    background:'var(--navy3)', borderRadius:8, padding:'10px 12px', marginBottom:12,
+  }
+  const autoLabel = {
+    fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)',
+    letterSpacing:'0.08em', marginBottom:6, textTransform:'uppercase',
+  }
+
   return (
     <div style={{ paddingBottom:16 }}>
 
@@ -359,8 +342,13 @@ export default function Tax({ loads, driver }) {
           {driver}'S TAX DESK - {YEAR}
         </div>
         <div style={{ fontSize:11, color:'var(--grey)', marginBottom:10 }}>
-          {stateInfo.label} resident - state tax {stateInfo.default}%
+          {stateInfo.label} resident - state rate {stateInfo.default}%
         </div>
+        {expLoading && (
+          <div style={{ fontSize:11, color:'var(--amber)', fontFamily:'var(--font-head)', marginBottom:8 }}>
+            Loading expense data...
+          </div>
+        )}
         <div className="amount-row"><span className="label">Total Revenue</span><span className="value" style={{color:'var(--amber)'}}>{fmt(grandTotals.revenue)}</span></div>
         <div className="amount-row"><span className="label">Total Expenses</span><span className="value" style={{color:'var(--grey)'}}>-{fmt(grandTotals.expenses)}</span></div>
         <div className="amount-row"><span className="label">Est. Tax Owed (All Quarters)</span><span className="value" style={{color:'#e53935'}}>{fmt(grandTotals.tax)}</span></div>
@@ -398,6 +386,14 @@ export default function Tax({ loads, driver }) {
         const dropEntries = getDropEntries(qIdx)
         const isMenuOpen  = menuOpen && menuQIdx === qIdx
 
+        // Auto-pulled quarter data
+        const qFleet   = getQFleetFuelTotal(q.months)
+        const qPocket  = getQPocketFuelTotal(q.months)
+        const qFuel    = qFleet + qPocket
+        const qRepairs = getQMaintTotal(q.months)
+        const qFuelCount  = getQFuelEntries(q.months).length
+        const qRepairCount = getQMaintEntries(q.months).length
+
         let countdownColor = 'var(--green)'
         let countdownText  = days + ' days away'
         if (days < 0)                { countdownColor='var(--grey)';  countdownText='Past due' }
@@ -407,7 +403,7 @@ export default function Tax({ loads, driver }) {
         return (
           <div key={qIdx} className="card" style={{borderLeft:'3px solid '+q.color, marginBottom:12}}>
 
-            {/* Quarter header — tap to open/close */}
+            {/* Quarter header */}
             <div
               style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', cursor:'pointer'}}
               onClick={() => setOpenQ(isOpen ? null : qIdx)}
@@ -430,15 +426,13 @@ export default function Tax({ loads, driver }) {
               </div>
             </div>
 
-            {/* Expanded quarter body */}
+            {/* Expanded quarter body — stopPropagation prevents header toggle on inner taps */}
             {isOpen && (
               <div style={{marginTop:14}} onClick={e => e.stopPropagation()}>
 
-                {/* Auto-pulled revenue */}
-                <div style={{background:'var(--navy3)', borderRadius:8, padding:'10px 12px', marginBottom:16}}>
-                  <div style={{fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6}}>
-                    AUTO-PULLED FROM LOADS - BY DELIVERY DATE
-                  </div>
+                {/* REVENUE — auto-pulled from loads */}
+                <div style={autoBox}>
+                  <div style={autoLabel}>Auto-Pulled - Revenue from Loads</div>
                   <div className="amount-row" style={{marginBottom:0}}>
                     <span className="label">Gross Revenue</span>
                     <span className="value" style={{color:'var(--amber)'}}>{fmt(revenue)}</span>
@@ -450,29 +444,72 @@ export default function Tax({ loads, driver }) {
                   )}
                 </div>
 
-                {/* Pinned expense sections — Fuel and Repairs */}
-                <PinnedSection
-                  entries={getPinnedEntries(qIdx, 'fuel')}
-                  label="Fuel"
-                  onAdd={()           => addPinnedEntry(qIdx, 'fuel')}
-                  onUpdate={(id, val) => updatePinnedEntry(qIdx, 'fuel', id, val)}
-                  onRemove={(id)      => removePinnedEntry(qIdx, 'fuel', id)}
-                />
+                {/* FUEL — auto-pulled from fuel log */}
+                <div style={autoBox}>
+                  <div style={autoLabel}>
+                    Auto-Pulled - Fuel Log ({qFuelCount} {qFuelCount === 1 ? 'entry' : 'entries'})
+                  </div>
+                  {qFuelCount === 0 ? (
+                    <div style={{fontSize:11, color:'var(--grey)'}}>
+                      No fuel entries in this quarter
+                    </div>
+                  ) : (
+                    <>
+                      {qFleet > 0 && (
+                        <div className="amount-row" style={{marginBottom:4}}>
+                          <span className="label" style={{color:'var(--amber)'}}>Fleet Card Fuel</span>
+                          <span className="value" style={{color:'var(--amber)'}}>{fmt(qFleet)}</span>
+                        </div>
+                      )}
+                      {qPocket > 0 && (
+                        <div className="amount-row" style={{marginBottom:4}}>
+                          <span className="label" style={{color:'#64b5f6'}}>Out of Pocket Fuel</span>
+                          <span className="value" style={{color:'#64b5f6'}}>{fmt(qPocket)}</span>
+                        </div>
+                      )}
+                      <div style={{borderTop:'1px solid var(--border)', paddingTop:6, marginTop:4}}>
+                        <div className="amount-row" style={{marginBottom:0}}>
+                          <span className="label" style={{fontWeight:700}}>Total Fuel Deduction</span>
+                          <span className="value" style={{color:'var(--green)', fontWeight:700}}>{fmt(qFuel)}</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
 
-                <PinnedSection
-                  entries={getPinnedEntries(qIdx, 'repair')}
-                  label="Repairs & Maintenance"
-                  onAdd={()           => addPinnedEntry(qIdx, 'repair')}
-                  onUpdate={(id, val) => updatePinnedEntry(qIdx, 'repair', id, val)}
-                  onRemove={(id)      => removePinnedEntry(qIdx, 'repair', id)}
-                />
+                {/* REPAIRS — auto-pulled from maintenance ledger (Tim paid only) */}
+                <div style={autoBox}>
+                  <div style={autoLabel}>
+                    Auto-Pulled - Maintenance Ledger / Tim Paid ({qRepairCount} {qRepairCount === 1 ? 'entry' : 'entries'})
+                  </div>
+                  {qRepairCount === 0 ? (
+                    <div style={{fontSize:11, color:'var(--grey)'}}>
+                      No Tim-paid maintenance in this quarter
+                    </div>
+                  ) : (
+                    <>
+                      {getQMaintEntries(q.months).map((m, i) => (
+                        <div key={m.id || i} className="amount-row" style={{marginBottom:4}}>
+                          <span className="label" style={{fontSize:11}}>{m.description || m.category || 'Repair'}</span>
+                          <span className="value" style={{color:'var(--green)'}}>{fmt(m.amount)}</span>
+                        </div>
+                      ))}
+                      <div style={{borderTop:'1px solid var(--border)', paddingTop:6, marginTop:4}}>
+                        <div className="amount-row" style={{marginBottom:0}}>
+                          <span className="label" style={{fontWeight:700}}>Total Repair Deduction</span>
+                          <span className="value" style={{color:'var(--green)', fontWeight:700}}>{fmt(qRepairs)}</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
 
-                <div style={{borderTop:'1px solid var(--border)', margin:'14px 0'}} />
+                <div style={{borderTop:'1px solid var(--border)', margin:'12px 0'}} />
 
-                {/* Drop-in expense entries from the category list */}
+                {/* MANUAL ADDITIONAL EXPENSES from drop list */}
                 {dropEntries.length > 0 && (
                   <div style={{marginBottom:12}}>
-                    <div style={{fontSize:12, color:'var(--white)', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.04em', marginBottom:8}}>
+                    <div style={{fontSize:11, color:'var(--white)', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.06em', marginBottom:8}}>
                       ADDITIONAL EXPENSES
                     </div>
                     {dropEntries.map(e => (
@@ -491,7 +528,7 @@ export default function Tax({ loads, driver }) {
                           />
                           <button
                             onClick={(ev) => { ev.stopPropagation(); removeDropEntry(qIdx, e.id) }}
-                            style={{ padding:'6px 10px', borderRadius:6, border:'none', background:'#3a1010', color:'#e53935', fontSize:13, fontWeight:900, cursor:'pointer' }}
+                            style={{padding:'6px 10px', borderRadius:6, border:'none', background:'#3a1010', color:'#e53935', fontSize:13, fontWeight:900, cursor:'pointer'}}
                           >x</button>
                         </div>
                       </div>
@@ -499,13 +536,13 @@ export default function Tax({ loads, driver }) {
                   </div>
                 )}
 
-                {/* Add expense from category list */}
+                {/* ADD EXPENSE FROM LIST */}
                 <div style={{position:'relative', marginBottom:16}}>
                   <button
                     onClick={(ev) => {
                       ev.stopPropagation()
                       if (isMenuOpen) { setMenuOpen(false); setMenuQIdx(null); setOpenCatIdx(null) }
-                      else { setMenuOpen(true); setMenuQIdx(qIdx); setOpenCatIdx(null) }
+                      else            { setMenuOpen(true);  setMenuQIdx(qIdx); setOpenCatIdx(null) }
                     }}
                     style={{
                       width:'100%', padding:'11px 0', borderRadius:8,
@@ -539,9 +576,7 @@ export default function Tax({ loads, driver }) {
                             <span style={{fontSize:13, color:'var(--white)', fontFamily:'var(--font-head)', fontWeight:700}}>
                               {cat.label}
                             </span>
-                            <span style={{fontSize:12, color:'var(--grey)'}}>
-                              {openCatIdx === catIdx ? '▲' : '▼'}
-                            </span>
+                            <span style={{fontSize:12, color:'var(--grey)'}}>{openCatIdx === catIdx ? '▲' : '▼'}</span>
                           </div>
                           {openCatIdx === catIdx && (
                             <div style={{background:'var(--navy3)'}}>
@@ -567,11 +602,20 @@ export default function Tax({ loads, driver }) {
                   )}
                 </div>
 
-                {/* Tax breakdown */}
+                {/* TAX BREAKDOWN */}
                 <div style={{background:'var(--navy3)', borderRadius:8, padding:'10px 12px', marginBottom:12}}>
                   <div style={{fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:8}}>TAX BREAKDOWN</div>
                   <div className="amount-row"><span className="label">Gross Revenue</span><span className="value">{fmt(revenue)}</span></div>
-                  <div className="amount-row"><span className="label">Total Expenses</span><span className="value" style={{color:'var(--grey)'}}>-{fmt(expenses)}</span></div>
+                  {qFuel > 0 && (
+                    <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- Fuel (auto)</span><span className="value" style={{color:'var(--grey)'}}>({fmt(qFuel)})</span></div>
+                  )}
+                  {qRepairs > 0 && (
+                    <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- Repairs (auto)</span><span className="value" style={{color:'var(--grey)'}}>({fmt(qRepairs)})</span></div>
+                  )}
+                  {getDropEntries(qIdx).reduce((s,e) => s+(parseFloat(e.amount)||0),0) > 0 && (
+                    <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- Other Expenses</span><span className="value" style={{color:'var(--grey)'}}>({fmt(getDropEntries(qIdx).reduce((s,e) => s+(parseFloat(e.amount)||0),0))})</span></div>
+                  )}
+                  <div className="amount-row"><span className="label">Total Deductions</span><span className="value" style={{color:'var(--grey)'}}>-{fmt(expenses)}</span></div>
                   <div className="amount-row" style={{borderTop:'1px solid var(--border)', paddingTop:8, marginTop:4}}>
                     <span className="label">Net Taxable Income</span>
                     <span className="value" style={{color:'var(--white)'}}>{fmt(netIncome)}</span>
@@ -585,12 +629,12 @@ export default function Tax({ loads, driver }) {
                     <span className="value" style={{color:'#e53935'}}>{fmt(stateTax)}</span>
                   </div>
                   <div className="net-total" style={{marginTop:10}}>
-                    <span className="label">ESTIMATED TAX</span>
+                    <span className="label">ESTIMATED TAX DUE</span>
                     <span className="value" style={{color:'#e53935'}}>{fmt(totalTax)}</span>
                   </div>
                 </div>
 
-                {/* Notes */}
+                {/* NOTES */}
                 <div className="field-row" style={{marginBottom:12}}>
                   <div className="field-label">Notes</div>
                   <textarea
@@ -601,7 +645,7 @@ export default function Tax({ loads, driver }) {
                   />
                 </div>
 
-                {/* Mark payment */}
+                {/* MARK PAYMENT */}
                 <button
                   className={isPaid ? 'scan-btn secondary' : 'scan-btn success'}
                   style={{width:'100%'}}
