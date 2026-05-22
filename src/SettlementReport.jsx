@@ -1,19 +1,18 @@
 // src/SettlementReport.jsx
 // (c) dbappsystems.com | daddyboyapps.com
-// Load Ledger V4 — Settlement Report (extracted from Loads.jsx)
-// Props: driverName ('TIM'|'BRUCE'|null), loads, api, showToast
-// driverName = null → show both drivers (bookkeeper view)
+// Load Ledger V4 — Settlement Report
+// FIX: Escrow now filtered by funded_at period date — no longer a lifetime running total
 
 import { useState, useRef } from 'react'
 
-// ── CONSTANTS — DO NOT CHANGE ─────────────────────────────────
+// -- CONSTANTS — DO NOT CHANGE -----------------------------------------
 const BRUCE_CUT = 0.10
 const TIM_CUT   = 0.90
 
-// ── FORMATTERS ────────────────────────────────────────────────
+// -- FORMATTERS --------------------------------------------------------
 function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
 
-// ── DATE / PERIOD HELPERS ─────────────────────────────────────
+// -- DATE / PERIOD HELPERS ---------------------------------------------
 function inPeriodByDate(dateStr, p, offset) {
   if (!dateStr) return false
   const d = new Date(dateStr), now = new Date()
@@ -46,7 +45,7 @@ function getPeriodLabel(p, offset) {
     const end = new Date(now); end.setDate(end.getDate() + offset * 7)
     const start = new Date(end); start.setDate(end.getDate() - 6)
     return start.toLocaleDateString('en-US', { month:'short', day:'numeric' }).toUpperCase()
-      + ' – ' + end.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }).toUpperCase()
+      + ' - ' + end.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }).toUpperCase()
   }
   if (p === 'monthly') {
     const target = new Date(now.getFullYear(), now.getMonth() + offset, 1)
@@ -56,7 +55,7 @@ function getPeriodLabel(p, offset) {
   return ''
 }
 
-// ── LOAD HELPERS — DO NOT CHANGE ──────────────────────────────
+// -- LOAD HELPERS — DO NOT CHANGE --------------------------------------
 function loadDate(load) { return load.created_at || load.date || null }
 
 function inPeriod(load, p, offset) {
@@ -95,7 +94,7 @@ function reimbursementOwed(load) {
   return Math.max(0, (lumperTotal + incTotal) - comdataTotal)
 }
 
-// ── B&W SCANNER PIPELINE — LOCKED DO NOT MODIFY ──────────────
+// -- B&W SCANNER PIPELINE — LOCKED DO NOT MODIFY ----------------------
 function isPDF(file) { return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf') }
 
 async function renderPdfToCanvas(file) {
@@ -210,7 +209,7 @@ function toBase64(file) {
   })
 }
 
-// ── FULL STATEMENT OVERLAY ─────────────────────────────────────
+// -- FULL STATEMENT OVERLAY --------------------------------------------
 function StatementOverlay({ data, driverName, onClose }) {
   const d = data
   const TH  = { background:'#1a2a3a', color:'#fff', padding:'8px 10px', fontSize:11, fontWeight:700, textAlign:'left', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }
@@ -225,7 +224,7 @@ function StatementOverlay({ data, driverName, onClose }) {
           <div style={{ fontSize:11, color:'rgba(255,255,255,0.6)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>SETTLEMENT STATEMENT</div>
           <div style={{ fontSize:16, fontFamily:'var(--font-head)', fontWeight:900, color: driverName==='TIM'?'#ff6b6b':'#64b5f6' }}>{driverName}</div>
         </div>
-        <button onClick={onClose} style={{ background:'rgba(255,255,255,0.15)', border:'none', color:'#fff', borderRadius:8, padding:'8px 16px', fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>✕ CLOSE</button>
+        <button onClick={onClose} style={{ background:'rgba(255,255,255,0.15)', border:'none', color:'#fff', borderRadius:8, padding:'8px 16px', fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>X CLOSE</button>
       </div>
       <div style={{ padding:'16px', maxWidth:600, margin:'0 auto' }}>
         <div style={{ background:'#f8f8f8', borderRadius:8, padding:'12px 14px', marginBottom:16, border:'1px solid #e0e0e0' }}>
@@ -398,18 +397,19 @@ function StatementOverlay({ data, driverName, onClose }) {
   )
 }
 
-// ── MAIN EXPORTED COMPONENT ───────────────────────────────────
+// -- MAIN EXPORTED COMPONENT -------------------------------------------
 export default function SettlementReport({ driverName, loads, api, showToast }) {
-  // driverName = 'TIM' | 'BRUCE' | null (null = both, bookkeeper view)
   const isBookkeeper = driverName === null
 
-  const [loaded,        setLoaded]        = useState(false)
-  const [loading,       setLoading]       = useState(false)
-  const [fuelEntries,   setFuelEntries]   = useState([])
-  const [timEscrow,     setTimEscrow]     = useState(0)
-  const [period,        setPeriod]        = useState('monthly')
-  const [periodOffset,  setPeriodOffset]  = useState(0)
-  const [showStatement, setShowStatement] = useState(null)  // null | 'TIM' | 'BRUCE'
+  const [loaded,          setLoaded]          = useState(false)
+  const [loading,         setLoading]         = useState(false)
+  const [fuelEntries,     setFuelEntries]     = useState([])
+  // FIX: Store raw escrow records array — NOT a lifetime running total.
+  // Escrow is filtered by funded_at per period, same pattern as fuel entries.
+  const [escrowPayments,  setEscrowPayments]  = useState([])
+  const [period,          setPeriod]          = useState('monthly')
+  const [periodOffset,    setPeriodOffset]    = useState(0)
+  const [showStatement,   setShowStatement]   = useState(null)
 
   // Fuel entry form state
   const [showFuelDrawer,  setShowFuelDrawer]  = useState(false)
@@ -444,10 +444,9 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
       ])
       if (results[2]) {
         const escrowData = await results[2].json()
-        const total = Array.isArray(escrowData)
-          ? escrowData.reduce((s,p) => s + (parseFloat(p.amount)||0), 0)
-          : 0
-        setTimEscrow(total)
+        // FIX: Store the raw array — do NOT sum here.
+        // Period filtering happens in escrowForPeriod() at render time.
+        setEscrowPayments(Array.isArray(escrowData) ? escrowData : [])
       }
       setLoaded(true)
     } catch (err) {
@@ -473,7 +472,18 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
     } catch {}
   }
 
-  // ── HELPERS ────────────────────────────────────────────────
+  // -- ESCROW HELPER — period-filtered, not lifetime total --------
+  // Only escrow payments whose funded_at falls inside the current
+  // period window are included. Past periods that already used their
+  // escrow will show $0 for new periods automatically.
+  function escrowForPeriod(dn) {
+    if (dn !== 'TIM') return 0
+    return escrowPayments
+      .filter(p => inPeriodByDate(p.funded_at, period, periodOffset))
+      .reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+  }
+
+  // -- HELPERS ---------------------------------------------------
   function fuelForPeriod(dn, fuelTypeFilter) {
     return fuelEntries
       .filter(f => f.driver === dn.toUpperCase() && f.fuel_type === fuelTypeFilter && inPeriodByDate(f.entry_date, period, periodOffset))
@@ -513,8 +523,9 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
     const achLoads          = inRange.filter(l => l.ach_payment)
     const totalAchDisbursed = achLoads.reduce((s,l) => s + (parseFloat(l.ach_received)||0), 0)
     const totalAchFees      = achLoads.reduce((s,l) => s + Math.max(0, (parseFloat(l.netPay||l.net_pay)||0) - (parseFloat(l.ach_received)||0)), 0)
-    const escrowApplied     = dn === 'TIM' ? timEscrow : 0
-    const stillOwed         = Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuelTotal - totalAchDisbursed - escrowApplied)
+    // FIX: use period-filtered escrow, not lifetime total
+    const escrowApplied = escrowForPeriod(dn)
+    const stillOwed     = Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuelTotal - totalAchDisbursed - escrowApplied)
     return {
       driverName: dn,
       periodLabel: getPeriodLabel(period, periodOffset),
@@ -538,8 +549,9 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
     const pocketFuel     = fuelForPeriod(dn, 'pocket')
     const achDisbursed   = inRange.filter(l => l.ach_payment).reduce((s,l) => s + (parseFloat(l.ach_received)||0), 0)
     const achFees        = inRange.filter(l => l.ach_payment).reduce((s,l) => s + Math.max(0, (parseFloat(l.netPay||l.net_pay)||0) - (parseFloat(l.ach_received)||0)), 0)
-    const escrowApplied  = dn === 'TIM' ? timEscrow : 0
-    const stillOwed      = Math.max(0, gPay - advKept + reimbOwed - fleetFuel - achDisbursed - escrowApplied)
+    // FIX: use period-filtered escrow, not lifetime total
+    const escrowApplied = escrowForPeriod(dn)
+    const stillOwed     = Math.max(0, gPay - advKept + reimbOwed - fleetFuel - achDisbursed - escrowApplied)
     return {
       count: inRange.length,
       rateCon: inRange.reduce((s,l) => s+(parseFloat(l.base_pay)||0), 0),
@@ -548,12 +560,12 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
     }
   }
 
-  // ── FUEL ENTRY HANDLERS ───────────────────────────────────
+  // -- FUEL ENTRY HANDLERS ---------------------------------------
   async function handleFuelFile(e) {
     const file = e.target.files[0]
     if (!file) return
     setFuelScanning(true)
-    showToast('📡 Scanning fuel receipt...')
+    showToast('Scanning fuel receipt...')
     try {
       const scanned   = await processFile(file)
       const base64    = await toBase64(file)
@@ -562,9 +574,9 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ base64, mediaType, mode: 'fuel' }),
       })
-      const json = await res.json()
-      if (json.error) throw new Error(json.detail || json.error)
-      let raw = json.result || ''
+      const json2 = await res.json()
+      if (json2.error) throw new Error(json2.detail || json2.error)
+      let raw = json2.result || ''
       raw = raw.replace(/```json/gi,'').replace(/```/gi,'').trim()
       const start = raw.indexOf('{'), end = raw.lastIndexOf('}')
       if (start === -1 || end === -1) throw new Error('No data found')
@@ -625,7 +637,7 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
 
   function changePeriod(p) { setPeriod(p); setPeriodOffset(0) }
 
-  // ── RENDER ─────────────────────────────────────────────────
+  // -- RENDER ----------------------------------------------------
   const navBtn = {
     padding:'6px 18px', borderRadius:8, border:'1px solid var(--border)',
     background:'var(--navy3)', color:'var(--white)', fontSize:22,
@@ -660,7 +672,7 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
             disabled={loading}
             style={{ padding:'14px 32px', borderRadius:10, border:'none', background: loading ? '#555' : 'var(--amber)', color: loading ? '#aaa' : '#0A1628', fontFamily:'var(--font-head)', fontWeight:900, fontSize:14, cursor:'pointer', letterSpacing:'0.06em' }}
           >
-            {loading ? 'LOADING...' : '💵 LOAD SETTLEMENT DATA'}
+            {loading ? 'LOADING...' : '\uD83D\uDCB5 LOAD SETTLEMENT DATA'}
           </button>
         </div>
       )}
@@ -731,7 +743,7 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
                         </div>
                         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                           <span style={{ fontFamily:'var(--font-head)', fontWeight:700, color:f.fuel_type==='fleet'?'var(--red)':'#1565c0' }}>{fmt(f.amount)}</span>
-                          <button onClick={() => deleteFuelEntry(f.id)} style={{ background:'transparent', border:'none', color:'#666', cursor:'pointer', fontSize:14, padding:'0 2px' }}>✕</button>
+                          <button onClick={() => deleteFuelEntry(f.id)} style={{ background:'transparent', border:'none', color:'#666', cursor:'pointer', fontSize:14, padding:'0 2px' }}>X</button>
                         </div>
                       </div>
                     ))}
@@ -743,7 +755,7 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
                   onClick={() => setShowStatement(dn)}
                   style={{ width:'100%', marginTop:12, padding:'10px 0', borderRadius:8, border:'1px solid ' + color, background:'transparent', color, fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, cursor:'pointer', letterSpacing:'0.06em' }}
                 >
-                  📋 VIEW FULL STATEMENT — {dn}
+                  VIEW FULL STATEMENT - {dn}
                 </button>
               </div>
             )
@@ -759,7 +771,7 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
             }}
             style={{ width:'100%', padding:'12px 0', borderRadius:10, border:'none', marginBottom:12, fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', background: showFuelDrawer ? 'var(--navy3)' : '#1a3a1a', color: showFuelDrawer ? 'var(--grey)' : '#4caf50', letterSpacing:'0.06em' }}
           >
-            {showFuelDrawer ? '✕ CANCEL FUEL ENTRY' : '⛽ ADD FUEL ENTRY'}
+            {showFuelDrawer ? 'X CANCEL FUEL ENTRY' : '\u26FD ADD FUEL ENTRY'}
           </button>
 
           {showFuelDrawer && (
@@ -778,8 +790,8 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
               <div style={{ marginBottom:12 }}>
                 <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>FUEL TYPE</div>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                  <button onClick={() => setFuelType('fleet')} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, background:fuelType==='fleet'?'var(--amber)':'var(--navy3)', color:fuelType==='fleet'?'var(--navy)':'var(--grey)' }}>🏢 FLEET CARD</button>
-                  <button onClick={() => setFuelType('pocket')} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, background:fuelType==='pocket'?'#1565c0':'var(--navy3)', color:fuelType==='pocket'?'#fff':'var(--grey)' }}>💵 OUT OF POCKET</button>
+                  <button onClick={() => setFuelType('fleet')} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, background:fuelType==='fleet'?'var(--amber)':'var(--navy3)', color:fuelType==='fleet'?'var(--navy)':'var(--grey)' }}>FLEET CARD</button>
+                  <button onClick={() => setFuelType('pocket')} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, background:fuelType==='pocket'?'#1565c0':'var(--navy3)', color:fuelType==='pocket'?'#fff':'var(--grey)' }}>OUT OF POCKET</button>
                 </div>
                 <div style={{ fontSize:10, color:'var(--grey)', marginTop:6, fontFamily:'var(--font-head)' }}>{fuelType==='fleet'?'Fleet card — deducted from driver pay':'Driver paid — tracked for tax purposes only'}</div>
               </div>
@@ -792,11 +804,11 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
                 <input type="number" inputMode="decimal" placeholder="0.00" value={fuelAmount} onChange={e => setFuelAmount(e.target.value)} style={{ ...inputStyle, fontSize:22, fontWeight:700, fontFamily:'var(--font-head)' }} />
               </div>
               <div style={{ marginBottom:12 }}>
-                <button onClick={() => fuelFileRef.current.click()} disabled={fuelScanning} style={{ width:'100%', padding:'10px 0', borderRadius:8, border:'1px solid var(--border)', background:'var(--navy3)', color:fuelScanning?'var(--grey)':'var(--white)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, cursor:'pointer' }}>{fuelScanning?'📡 Scanning...':'📷 Scan Receipt (optional)'}</button>
+                <button onClick={() => fuelFileRef.current.click()} disabled={fuelScanning} style={{ width:'100%', padding:'10px 0', borderRadius:8, border:'1px solid var(--border)', background:'var(--navy3)', color:fuelScanning?'var(--grey)':'var(--white)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, cursor:'pointer' }}>{fuelScanning?'Scanning...':'Scan Receipt (optional)'}</button>
                 {fuelPreview && (
                   <div style={{ marginTop:8, position:'relative' }}>
                     <img src={fuelPreview} alt="Receipt" style={{ width:'100%', borderRadius:6, border:'1px solid var(--border)', maxHeight:120, objectFit:'cover' }} />
-                    <button onClick={() => { setFuelPreview(null); setFuelReceiptB64(null) }} style={{ position:'absolute', top:4, right:4, background:'rgba(0,0,0,0.7)', color:'#fff', border:'none', borderRadius:4, padding:'2px 8px', cursor:'pointer', fontSize:12 }}>✕</button>
+                    <button onClick={() => { setFuelPreview(null); setFuelReceiptB64(null) }} style={{ position:'absolute', top:4, right:4, background:'rgba(0,0,0,0.7)', color:'#fff', border:'none', borderRadius:4, padding:'2px 8px', cursor:'pointer', fontSize:12 }}>X</button>
                   </div>
                 )}
               </div>
