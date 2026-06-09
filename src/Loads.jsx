@@ -2,9 +2,28 @@
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V4 — Load list, leaderboard, edit, ACH, delete
 // Phase C Step 2: Settlement + fuel reports moved to Profile tab
+// 2026-06-09: hardened array-column reads (lumpers/incidentals/comdatas)
+//             to parse D1 string/array/null safely — fixes blank-screen crash
 
 import { useState, useEffect } from 'react'
 import { jsPDF } from 'jspdf'
+
+// Safely turn a D1 column that may be an array, a JSON string, null, or ''
+// into a real array. Never throws.
+function asArray(val) {
+  if (Array.isArray(val)) return val
+  if (typeof val === 'string') {
+    const s = val.trim()
+    if (!s) return []
+    try {
+      const parsed = JSON.parse(s)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
 
 export default function Loads({ loads, setLoads, driver, api, showToast, fetchLoads }) {
 
@@ -31,18 +50,22 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
           let errMsg = 'unknown'
           try { const d = await res.json(); errMsg = d.error || errMsg } catch {}
           showToast('Update failed: ' + errMsg)
-          setUpdating(null); return
+          setUpdating(null); return false
         }
         try { await fetchLoads() } catch {}
         if (fields.status === 'paid')   showToast('Marked as paid!')
         if (fields.status === 'billed') showToast('Marked as billed!')
+        setUpdating(null); return true
       } else {
         setLoads(prev => prev.map((l,i) => i === localIdx ? { ...l, ...fields } : l))
         if (fields.status === 'paid')   showToast('Marked as paid!')
         if (fields.status === 'billed') showToast('Marked as billed!')
+        setUpdating(null); return true
       }
-    } catch (err) { showToast('Update failed: ' + err.message) }
-    finally { setUpdating(null) }
+    } catch (err) {
+      showToast('Update failed: ' + err.message)
+      setUpdating(null); return false
+    }
   }
 
   async function markPaidACH(load, localIdx, received) {
@@ -87,9 +110,9 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       detention:   String(load.detention   || ''),
       pallets:     String(load.pallets     || ''),
       notes:       String(load.notes       || ''),
-      lumpers:     (load.lumpers     || []).map(i => ({ ...i, amount: String(i.amount || '0') })),
-      incidentals: (load.incidentals || []).map(i => ({ ...i, amount: String(i.amount || '0') })),
-      comdatas:    (load.comdatas    || []).map(i => ({ ...i, amount: String(i.amount || '0') })),
+      lumpers:     asArray(load.lumpers).map(i => ({ ...i, amount: String(i.amount || '0') })),
+      incidentals: asArray(load.incidentals).map(i => ({ ...i, amount: String(i.amount || '0') })),
+      comdatas:    asArray(load.comdatas).map(i => ({ ...i, amount: String(i.amount || '0') })),
     })
   }
   function closeEdit() { setEditIdx(null); setEditData(null) }
@@ -201,7 +224,8 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
       incidentals: JSON.stringify(editData.incidentals), comdatas: JSON.stringify(editData.comdatas),
       net_pay: newNetPay, edited: 1, edited_date: new Date().toISOString(),
     }
-    await patchLoad(load, localIdx, fields)
+    const ok = await patchLoad(load, localIdx, fields)
+    if (!ok) { showToast('Save failed — invoice not downloaded'); return }
     generateCorrectedPDF(load, editData, newNetPay)
     showToast('Corrected invoice downloaded!')
     closeEdit()
@@ -316,9 +340,9 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
         const basePay     = parseFloat(load.base_pay)   || 0
         const detention   = parseFloat(load.detention)  || 0
         const pallets     = parseFloat(load.pallets)    || 0
-        const lumpers     = load.lumpers      || []
-        const incidentals = load.incidentals  || []
-        const comdatas    = load.comdatas     || []
+        const lumpers     = asArray(load.lumpers)
+        const incidentals = asArray(load.incidentals)
+        const comdatas    = asArray(load.comdatas)
         const lumperTot   = lumpers.reduce((s,i)     => s+(parseFloat(i.amount)||0), 0)
         const incTot      = incidentals.reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
         const subtotal    = basePay + lumperTot + incTot + detention + pallets
@@ -456,16 +480,16 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                   <div style={{ fontFamily:'var(--font-head)', fontSize:12, color:'var(--amber)', letterSpacing:'0.1em', marginBottom:12 }}>EDIT INVOICE AMOUNTS</div>
                   <div style={{ marginBottom:12 }}>
                     <div style={{ fontSize:11, color:'#666', marginBottom:4, fontFamily:'var(--font-head)' }}>BASE PAY ($)</div>
-                    <input style={editInputStyle} type="number" inputMode="decimal" value={editData.base_pay} onChange={e => setEditData(p=>({...p,base_pay:e.target.value}))} placeholder="0.00" />
+                    <input style={editInputStyle} type="text" inputMode="decimal" value={editData.base_pay} onChange={e => setEditData(p=>({...p,base_pay:e.target.value}))} placeholder="0.00" />
                   </div>
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
                     <div>
                       <div style={{ fontSize:11, color:'#666', marginBottom:4, fontFamily:'var(--font-head)' }}>DETENTION ($)</div>
-                      <input style={editInputStyle} type="number" inputMode="decimal" value={editData.detention} onChange={e => setEditData(p=>({...p,detention:e.target.value}))} placeholder="0.00" />
+                      <input style={editInputStyle} type="text" inputMode="decimal" value={editData.detention} onChange={e => setEditData(p=>({...p,detention:e.target.value}))} placeholder="0.00" />
                     </div>
                     <div>
                       <div style={{ fontSize:11, color:'#666', marginBottom:4, fontFamily:'var(--font-head)' }}>PALLETS ($)</div>
-                      <input style={editInputStyle} type="number" inputMode="decimal" value={editData.pallets} onChange={e => setEditData(p=>({...p,pallets:e.target.value}))} placeholder="0.00" />
+                      <input style={editInputStyle} type="text" inputMode="decimal" value={editData.pallets} onChange={e => setEditData(p=>({...p,pallets:e.target.value}))} placeholder="0.00" />
                     </div>
                   </div>
                   <div style={{ marginBottom:12 }}>
@@ -473,7 +497,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                     {editData.lumpers.map((item,i) => (
                       <div key={i} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
                         <div style={{ fontSize:12, color:'#666', minWidth:70 }}>Lumper {i+1}</div>
-                        <input style={{ ...editInputStyle, flex:1 }} type="number" inputMode="decimal" value={item.amount} onChange={e => updateItemAmount('lumpers',i,e.target.value)} placeholder="0.00" />
+                        <input style={{ ...editInputStyle, flex:1 }} type="text" inputMode="decimal" value={item.amount} onChange={e => updateItemAmount('lumpers',i,e.target.value)} placeholder="0.00" />
                         <button onClick={() => removeEditItem('lumpers',i)} style={{ background:'transparent', border:'1px solid #ccc', color:'#999', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
                       </div>
                     ))}
@@ -484,7 +508,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                     {editData.incidentals.map((item,i) => (
                       <div key={i} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
                         <div style={{ fontSize:12, color:'#666', minWidth:70 }}>Inc. {i+1}</div>
-                        <input style={{ ...editInputStyle, flex:1 }} type="number" inputMode="decimal" value={item.amount} onChange={e => updateItemAmount('incidentals',i,e.target.value)} placeholder="0.00" />
+                        <input style={{ ...editInputStyle, flex:1 }} type="text" inputMode="decimal" value={item.amount} onChange={e => updateItemAmount('incidentals',i,e.target.value)} placeholder="0.00" />
                         <button onClick={() => removeEditItem('incidentals',i)} style={{ background:'transparent', border:'1px solid #ccc', color:'#999', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
                       </div>
                     ))}
@@ -495,7 +519,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                     {editData.comdatas.map((item,i) => (
                       <div key={i} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
                         <div style={{ fontSize:12, color:'#c62828', minWidth:70 }}>Comdata {i+1}</div>
-                        <input style={{ ...editInputStyle, flex:1, borderColor:'#e57373' }} type="number" inputMode="decimal" value={item.amount} onChange={e => updateItemAmount('comdatas',i,e.target.value)} placeholder="0.00" />
+                        <input style={{ ...editInputStyle, flex:1, borderColor:'#e57373' }} type="text" inputMode="decimal" value={item.amount} onChange={e => updateItemAmount('comdatas',i,e.target.value)} placeholder="0.00" />
                         <button onClick={() => removeEditItem('comdatas',i)} style={{ background:'transparent', border:'1px solid #ccc', color:'#999', borderRadius:6, padding:'6px 10px', cursor:'pointer', fontSize:13, fontWeight:700 }}>x</button>
                       </div>
                     ))}
