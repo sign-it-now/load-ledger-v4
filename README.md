@@ -23,3 +23,4 @@ driver={driver} prop must be passed to Loads component
 5. Scanner pipeline LOCKED — never modify
 6. Never rename: bols, lumpers, incidentals, comdatas
 7. Test only at ettrapp.com
+ 
