@@ -18,6 +18,9 @@
 //             at that time, and breaks the balance owed into the delivery
 //             months it comes from. Pure render-time math on existing
 //             records — running balance number is UNCHANGED.
+// 2026-06-11e: ETTR FINANCED REPAIR — display rename from "escrow"
+//             (labels only — API routes, fields, and internal variable
+//             names UNCHANGED: /api/escrow-payments, funded_at).
 //
 // ACCOUNTING MODEL — v2:
 // "Still Owed to TIM" is a RUNNING BALANCE (all-time cumulative).
@@ -210,7 +213,7 @@ function buildFifoLedger(dLoads, driverFuel, driverEscrow) {
     const amt = parseFloat(p.amount) || 0
     if (amt <= 0.005) return
     const dt = parseAppDate(p.funded_at) || new Date(0)
-    debits.push({ date: dt, type:'ESCROW', label:'Escrow Applied', amount: amt })
+    debits.push({ date: dt, type:'ETTR', label:'ETTR Financed Repair Payment', amount: amt })
   })
   credits.sort((a,b) => a.date - b.date)
   debits.sort((a,b) => a.date - b.date)
@@ -551,7 +554,7 @@ function StatementOverlay({ data, driverName, onClose }) {
         <div style={{ marginBottom:24 }}>
           <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>RUNNING BALANCE — ALL TIME</div>
           <div style={{ background:'#fff8e1', border:'1px solid #ffe082', borderRadius:8, padding:'10px 14px', marginBottom:8, fontSize:11, color:'#7a5c00' }}>
-            The running balance reflects ALL loads, fuel, ACH payments, and escrow ever recorded — not just this period. This is what is currently owed.
+            The running balance reflects ALL loads, fuel, ACH payments, and ETTR financed repair payments ever recorded — not just this period. This is what is currently owed.
           </div>
           <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
@@ -562,7 +565,7 @@ function StatementOverlay({ data, driverName, onClose }) {
                 {d.allReimb > 0 && <tr style={{background:'#fffde7'}}><td style={{...TD,color:'#f57c00'}}>+ Lumper Reimbursements (all time)</td><td style={{...TDr,color:'#f57c00'}}>{fmt(d.allReimb)}</td></tr>}
                 {d.allFleetFuel > 0 && <tr style={{background:'#fafafa'}}><td style={TD}>- Fleet Card Fuel (all time)</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.allFleetFuel)})</td></tr>}
                 {d.allAchDisbursed > 0 && <tr style={{background:'#e8f5e9'}}><td style={{...TD,color:'#2e7d32'}}>- ACH Payments Made (all time)</td><td style={{...TDr,color:'#2e7d32'}}>({fmt(d.allAchDisbursed)})</td></tr>}
-                {d.allEscrow > 0 && <tr style={{background:'#f3e5f5'}}><td style={{...TD,color:'#7b1fa2'}}>- Escrow Applied (settled against earnings)</td><td style={{...TDr,color:'#7b1fa2'}}>({fmt(d.allEscrow)})</td></tr>}
+                {d.allEscrow > 0 && <tr style={{background:'#f3e5f5'}}><td style={{...TD,color:'#7b1fa2'}}>- ETTR Financed Repair Payments</td><td style={{...TDr,color:'#7b1fa2'}}>({fmt(d.allEscrow)})</td></tr>}
                 <tr style={{background:'#1a2a3a'}}>
                   <td style={{ padding:'14px 12px', fontSize:15, fontWeight:900, color:'#fff', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }}>BALANCE CURRENTLY OWED TO {driverName}</td>
                   <td style={{ padding:'14px 12px', textAlign:'right', fontSize:20, fontWeight:900, color:'#ffd54f', fontFamily:'var(--font-head)' }}>{fmt(d.stillOwed)}</td>
@@ -589,7 +592,7 @@ function StatementOverlay({ data, driverName, onClose }) {
                   </tr></thead>
                   <tbody>
                     {d.fifoRows.map((r,i) => {
-                      const tcol = r.type==='FUEL' ? '#c62828' : r.type==='ACH' ? '#2e7d32' : r.type==='ESCROW' ? '#7b1fa2' : '#f57c00'
+                      const tcol = r.type==='FUEL' ? '#c62828' : r.type==='ACH' ? '#2e7d32' : r.type==='ETTR' ? '#7b1fa2' : '#f57c00'
                       return (
                         <tr key={i} style={{ background:i%2===0?'#fff':'#fafafa' }}>
                           <td style={TD}>
@@ -1040,7 +1043,7 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
 
           {/* Chronology note */}
           <div style={{ fontSize:9, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', textAlign:'center', marginBottom:12, textTransform:'uppercase' }}>
-            Loads shown by delivery date — fuel &amp; escrow by entry date
+            Loads shown by delivery date — fuel &amp; repair payments by entry date
           </div>
 
           {/* Driver settlement cards */}
@@ -1068,7 +1071,7 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
                 {/* Escrow: display row only when it was recorded in this period */}
                 {s.escrowApplied > 0 && (
                   <div className="amount-row">
-                    <span className="label" style={{color:'#ce93d8'}}>Escrow Applied (this period)</span>
+                    <span className="label" style={{color:'#ce93d8'}}>ETTR Repair Payment (this period)</span>
                     <span className="value" style={{color:'#ce93d8'}}>-{fmt(s.escrowApplied)}</span>
                   </div>
                 )}
