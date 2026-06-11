@@ -4,6 +4,11 @@
 // 2026-06-11: hardened array-column reads (lumpers/incidentals/comdatas)
 //             to parse D1 string/array/null safely — fixes blank-screen crash
 //             (same asArray guard as Loads.jsx — see INCIDENT_2026-06-11)
+// 2026-06-11b: RATE CON CHRONOLOGY — period filters key loads by DELIVERY
+//             DATE (from the rate con), not by the date the driver entered
+//             them. parseAppDate() handles MM/DD/YYYY, M/D/YYYY, MM/DD/YY
+//             (scanner) and YYYY-MM-DD (fuel/escrow). Running balance is
+//             all-time and unaffected.
 //
 // ACCOUNTING MODEL — v2:
 // "Still Owed to TIM" is a RUNNING BALANCE (all-time cumulative).
@@ -40,13 +45,40 @@ function asArray(val) {
   return []
 }
 
+// Parse any date format that exists in this app's data into a Date at
+// local noon (prevents UTC midnight rolling back a day in Central time).
+// Handles: YYYY-MM-DD | MM/DD/YYYY | M/D/YYYY | MM/DD/YY. Never throws.
+function parseAppDate(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return null
+  const s = dateStr.trim()
+  // ISO: YYYY-MM-DD (with or without trailing time)
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const d = new Date(s.substring(0,10) + 'T12:00:00')
+    return isNaN(d.getTime()) ? null : d
+  }
+  // US: M/D/YY or MM/DD/YYYY etc.
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  if (m) {
+    const month = parseInt(m[1], 10)
+    const day   = parseInt(m[2], 10)
+    let year    = parseInt(m[3], 10)
+    if (m[3].length === 2) year += 2000
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null
+    const d = new Date(year, month - 1, day, 12, 0, 0)
+    return isNaN(d.getTime()) ? null : d
+  }
+  return null
+}
+
 // -- FORMATTERS --------------------------------------------------------
 function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
 
 // -- DATE / PERIOD HELPERS ---------------------------------------------
 function inPeriodByDate(dateStr, p, offset) {
   if (!dateStr) return false
-  const d = new Date(dateStr), now = new Date()
+  const d = parseAppDate(dateStr)
+  if (!d) return false
+  const now = new Date()
   if (p === 'daily') {
     const target = new Date(now); target.setDate(target.getDate() + offset)
     return d.toDateString() === target.toDateString()
@@ -87,7 +119,9 @@ function getPeriodLabel(p, offset) {
 }
 
 // -- LOAD HELPERS — DO NOT CHANGE --------------------------------------
-function loadDate(load) { return load.created_at || load.date || null }
+// RATE CON CHRONOLOGY: a load's accounting date is its DELIVERY DATE.
+// created_at (entry date) is only a last-resort fallback.
+function loadDate(load) { return load.delivery_date || load.date || load.created_at || null }
 
 function inPeriod(load, p, offset) {
   const dateStr = loadDate(load)
@@ -270,7 +304,7 @@ function StatementOverlay({ data, driverName, onClose }) {
 
         {/* PERIOD EARNINGS */}
         <div style={{ marginBottom:16 }}>
-          <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>PERIOD EARNINGS</div>
+          <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>PERIOD EARNINGS (BY DELIVERY DATE)</div>
           <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
               <thead><tr>
@@ -777,6 +811,11 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
               {periodOffset === 0 && <div style={{ fontSize:10, color:'var(--grey)', marginTop:2 }}>CURRENT</div>}
             </div>
             <button style={{ ...navBtn, opacity: periodOffset >= 0 ? 0.3 : 1 }} disabled={periodOffset >= 0} onClick={() => setPeriodOffset(o => o + 1)}>&#8250;</button>
+          </div>
+
+          {/* Chronology note */}
+          <div style={{ fontSize:9, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', textAlign:'center', marginBottom:12, textTransform:'uppercase' }}>
+            Loads shown by delivery date — fuel &amp; escrow by entry date
           </div>
 
           {/* Driver settlement cards */}
