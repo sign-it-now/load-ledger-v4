@@ -686,6 +686,25 @@ export default {
       }
     }
 
+    // ── FUEL ENTRIES PATCH ───────────────────────────────
+    if (path.startsWith('/api/fuel/') && path.split('/').length === 4 && request.method === 'PATCH') {
+      try {
+        const id = path.split('/')[3]
+        const b  = await request.json()
+        const fields = []; const values = []
+        if (b.entry_date !== undefined) { fields.push('entry_date=?'); values.push(b.entry_date); }
+        if (b.amount     !== undefined) { fields.push('amount=?');     values.push(parseFloat(b.amount) || 0); }
+        if (b.fuel_type  !== undefined) { fields.push('fuel_type=?');  values.push(b.fuel_type === 'pocket' ? 'pocket' : 'fleet'); }
+        if (b.notes      !== undefined) { fields.push('notes=?');      values.push(b.notes); }
+        if (fields.length === 0) return json({ error: 'Nothing to update' }, 400)
+        values.push(id)
+        await env.DB.prepare('UPDATE fuel_entries SET ' + fields.join(', ') + ' WHERE id=?').bind(...values).run()
+        return json({ ok: true })
+      } catch(e) {
+        return json({ error: e.message }, 500)
+      }
+    }
+
     // ── FUEL ENTRIES DELETE ──────────────────────────────
     if (path.startsWith('/api/fuel/') && path.split('/').length === 4 && request.method === 'DELETE') {
       try {
