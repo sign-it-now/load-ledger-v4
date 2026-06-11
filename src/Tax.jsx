@@ -13,9 +13,16 @@
 //             DOT drivers (IRS Notice 2025-54, rates effective Oct 1, 2025).
 //             Dollar-entry per diem items removed from the drop list to
 //             prevent double counting.
+// 2026-06-11c: ETTR FINANCED REPAIR PAYMENTS — Tim's payback of repairs
+//             ETTR financed (escrow_payments rows) now auto-pulls as a
+//             repair deduction in the quarter PAID (cash basis — confirm
+//             treatment with tax preparer). No double count possible:
+//             paid_by='TIM' entries and payback rows are separate datasets.
 //
 // AUTO-PULL: Fuel expenses are fetched from /api/fuel/{driver} (fleet + pocket).
 // Repair expenses are fetched from /api/maintenance/{driver} (paid_by TIM only).
+// ETTR financed repair payments (Tim's payback) are fetched from
+// /api/escrow-payments/TIM and deducted in the quarter PAID.
 // Both are filtered by quarter using entry_date. These replace manual Fuel/Repair
 // sections — data already in the system is NOT re-entered manually here.
 // The drop-list remains for additional operating expenses not tracked elsewhere.
@@ -202,6 +209,7 @@ export default function Tax({ loads, driver, api }) {
   // Auto-pulled operating expense data from existing app records
   const [fuelEntries,   setFuelEntries]   = useState([])
   const [maintEntries,  setMaintEntries]  = useState([])
+  const [ettrPayments,  setEttrPayments]  = useState([])
   const [expLoading,    setExpLoading]    = useState(false)
   const [expLoaded,     setExpLoaded]     = useState(false)
 
@@ -215,6 +223,7 @@ export default function Tax({ loads, driver, api }) {
     setMenuQIdx(null)
     setFuelEntries([])
     setMaintEntries([])
+    setEttrPayments([])
     setExpLoaded(false)
   }, [driver])
 
@@ -227,14 +236,20 @@ export default function Tax({ loads, driver, api }) {
     async function fetchExpenses() {
       setExpLoading(true)
       try {
-        const [fuelRes, maintRes] = await Promise.all([
+        const fetches = [
           fetch(api + '/api/fuel/' + driver),
           fetch(api + '/api/maintenance/' + driver),
-        ])
-        const fuelData  = await fuelRes.json()
-        const maintData = await maintRes.json()
+        ]
+        if (driver === 'TIM') fetches.push(fetch(api + '/api/escrow-payments/TIM'))
+        const results   = await Promise.all(fetches)
+        const fuelData  = await results[0].json()
+        const maintData = await results[1].json()
         setFuelEntries(Array.isArray(fuelData)  ? fuelData  : [])
         setMaintEntries(Array.isArray(maintData) ? maintData : [])
+        if (results[2]) {
+          const ettrData = await results[2].json()
+          setEttrPayments(Array.isArray(ettrData) ? ettrData : [])
+        }
         setExpLoaded(true)
       } catch (err) {
         console.error('Tax: failed to fetch expenses', err)
@@ -268,6 +283,15 @@ export default function Tax({ loads, driver, api }) {
   }
   function getQMaintTotal(qMonths) {
     return getQMaintEntries(qMonths).reduce((s, m) => s + (parseFloat(m.amount) || 0), 0)
+  }
+
+  // ETTR financed repair payments: Tim's payback of repairs ETTR financed.
+  // Deducted in the quarter PAID (cash basis — confirm with tax preparer).
+  function getQEttrPayments(qMonths) {
+    return ettrPayments.filter(p => inQuarter(p.funded_at, qMonths))
+  }
+  function getQEttrTotal(qMonths) {
+    return getQEttrPayments(qMonths).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
   }
 
   // ── MANUAL DROP-LIST EXPENSE HELPERS ───────────────────
@@ -360,9 +384,10 @@ export default function Tax({ loads, driver, api }) {
     const q           = QUARTERS[qIdx]
     const autoFuel    = getQFuelTotal(q.months)
     const autoRepair  = getQMaintTotal(q.months)
+    const autoEttr    = getQEttrTotal(q.months)
     const perDiem     = getPerDiemDeduction(qIdx)
     const manualDrop  = getDropEntries(qIdx).reduce((s,e) => s+(parseFloat(e.amount)||0), 0)
-    return autoFuel + autoRepair + perDiem + manualDrop
+    return autoFuel + autoRepair + autoEttr + perDiem + manualDrop
   }
 
   function calcTax(revenue, expenses) {
@@ -456,8 +481,10 @@ export default function Tax({ loads, driver, api }) {
         const qPocket  = getQPocketFuelTotal(q.months)
         const qFuel    = qFleet + qPocket
         const qRepairs = getQMaintTotal(q.months)
-        const qFuelCount  = getQFuelEntries(q.months).length
+        const qEttr    = getQEttrTotal(q.months)
+        const qFuelCount   = getQFuelEntries(q.months).length
         const qRepairCount = getQMaintEntries(q.months).length
+        const qEttrCount   = getQEttrPayments(q.months).length
 
         // Per diem
         const pd          = getPerDiemDays(qIdx)
@@ -572,6 +599,38 @@ export default function Tax({ loads, driver, api }) {
                     </>
                   )}
                 </div>
+
+                {/* ETTR FINANCED REPAIR PAYMENTS — Tim's payback, deducted when paid */}
+                {driver === 'TIM' && (
+                  <div style={autoBox}>
+                    <div style={autoLabel}>
+                      Auto-Pulled - ETTR Financed Repair Payments ({qEttrCount} {qEttrCount === 1 ? 'payment' : 'payments'})
+                    </div>
+                    {qEttrCount === 0 ? (
+                      <div style={{fontSize:11, color:'var(--grey)'}}>
+                        No repair payments in this quarter
+                      </div>
+                    ) : (
+                      <>
+                        {getQEttrPayments(q.months).map((p, i) => (
+                          <div key={p.id || i} className="amount-row" style={{marginBottom:4}}>
+                            <span className="label" style={{fontSize:11}}>Payment — {(p.funded_at || '').substring(0,10)}</span>
+                            <span className="value" style={{color:'var(--green)'}}>{fmt(p.amount)}</span>
+                          </div>
+                        ))}
+                        <div style={{borderTop:'1px solid var(--border)', paddingTop:6, marginTop:4}}>
+                          <div className="amount-row" style={{marginBottom:0}}>
+                            <span className="label" style={{fontWeight:700}}>Total Repair Payment Deduction</span>
+                            <span className="value" style={{color:'var(--green)', fontWeight:700}}>{fmt(qEttr)}</span>
+                          </div>
+                        </div>
+                        <div style={{fontSize:10, color:'var(--grey)', marginTop:6}}>
+                          Payback of ETTR-financed repairs — deducted in the quarter paid. Confirm with your tax preparer.
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {/* PER DIEM — day counts */}
                 <div style={autoBox}>
@@ -730,6 +789,9 @@ export default function Tax({ loads, driver, api }) {
                   )}
                   {qRepairs > 0 && (
                     <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- Repairs (auto)</span><span className="value" style={{color:'var(--grey)'}}>({fmt(qRepairs)})</span></div>
+                  )}
+                  {qEttr > 0 && (
+                    <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- ETTR Repair Payments (auto)</span><span className="value" style={{color:'var(--grey)'}}>({fmt(qEttr)})</span></div>
                   )}
                   {pdDeduction > 0 && (
                     <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- Per Diem ({pd.full} full{pd.half > 0 ? ', ' + pd.half + ' half' : ''})</span><span className="value" style={{color:'var(--grey)'}}>({fmt(pdDeduction)})</span></div>
