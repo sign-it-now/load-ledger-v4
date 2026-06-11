@@ -4,6 +4,10 @@
 // Phase C Step 2: Settlement + fuel reports moved to Profile tab
 // 2026-06-09: hardened array-column reads (lumpers/incidentals/comdatas)
 //             to parse D1 string/array/null safely — fixes blank-screen crash
+// 2026-06-11: RATE CON CHRONOLOGY — loads are listed and dated by DELIVERY
+//             DATE (from the rate con), not by the date the driver entered
+//             them. List sorts newest delivery first. parseAppDate() handles
+//             MM/DD/YYYY, M/D/YYYY, MM/DD/YY (scanner) and YYYY-MM-DD (D1).
 
 import { useState, useEffect } from 'react'
 import { jsPDF } from 'jspdf'
@@ -23,6 +27,31 @@ function asArray(val) {
     }
   }
   return []
+}
+
+// Parse any date format that exists in this app's data into a Date at
+// local noon (prevents UTC midnight rolling back a day in Central time).
+// Handles: YYYY-MM-DD | MM/DD/YYYY | M/D/YYYY | MM/DD/YY. Never throws.
+function parseAppDate(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return null
+  const s = dateStr.trim()
+  // ISO: YYYY-MM-DD (with or without trailing time)
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const d = new Date(s.substring(0,10) + 'T12:00:00')
+    return isNaN(d.getTime()) ? null : d
+  }
+  // US: M/D/YY or MM/DD/YYYY etc.
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  if (m) {
+    const month = parseInt(m[1], 10)
+    const day   = parseInt(m[2], 10)
+    let year    = parseInt(m[3], 10)
+    if (m[3].length === 2) year += 2000
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null
+    const d = new Date(year, month - 1, day, 12, 0, 0)
+    return isNaN(d.getTime()) ? null : d
+  }
+  return null
 }
 
 export default function Loads({ loads, setLoads, driver, api, showToast, fetchLoads }) {
@@ -233,7 +262,13 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
 
   // ── HELPERS ───────────────────────────────────────────────
   function fmt(n)         { return '$' + (parseFloat(n)||0).toFixed(2) }
-  function loadDate(load) { return load.created_at || load.date || null }
+  // RATE CON CHRONOLOGY: the load's accounting date is its DELIVERY DATE.
+  // created_at (entry date) is only a last-resort fallback.
+  function loadDate(load) { return load.delivery_date || load.date || load.created_at || null }
+  function loadSortTime(load) {
+    const d = parseAppDate(loadDate(load))
+    return d ? d.getTime() : 0
+  }
   function invoiceHref(load) {
     if (!load.invoice_url) return null
     if (load.invoice_url.startsWith('http')) return load.invoice_url
@@ -250,6 +285,10 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
   const timPercent        = 100 - brucePercent
   const leader            = bruceTotalAllTime > timTotalAllTime ? 'BRUCE' : timTotalAllTime > bruceTotalAllTime ? 'TIM' : 'TIE'
   const filteredLoads     = view === 'BRUCE' ? bruceLoads : view === 'TIM' ? timLoads : loads
+  // Display in rate con chronology — newest delivery first.
+  // Sort a copy: loads.indexOf(load) below still resolves against the
+  // original array, so edit/delete/ACH actions are unaffected.
+  const sortedLoads       = [...filteredLoads].sort((a,b) => loadSortTime(b) - loadSortTime(a))
   const totalNet          = filteredLoads.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
   const totalPaid         = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
   const totalUnpaid       = totalNet - totalPaid
@@ -330,8 +369,8 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
         <div className="empty-state"><div className="icon">📋</div><h3>NO LOADS</h3><p>No loads found for this driver yet</p></div>
       )}
 
-      {/* Load cards */}
-      {filteredLoads.map((load, idx) => {
+      {/* Load cards — rate con chronology, newest delivery first */}
+      {sortedLoads.map((load, idx) => {
         const localIdx    = loads.indexOf(load)
         const isEditing   = editIdx === localIdx
         const isAchPanel  = showAchPanel === localIdx
@@ -347,7 +386,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
         const incTot      = incidentals.reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
         const subtotal    = basePay + lumperTot + incTot + detention + pallets
         const bolCount    = load.bol_count || (load.bols && load.bols.length) || 0
-        const dateStr     = loadDate(load)
+        const dateObj     = parseAppDate(loadDate(load))
         const invHref     = invoiceHref(load)
         const achFee      = load.ach_payment ? Math.max(0, netPay - (parseFloat(load.ach_received)||0)) : 0
         const achPreviewFee = achReceivedAmt ? Math.max(0, netPay - (parseFloat(achReceivedAmt)||0)) : 0
@@ -371,7 +410,7 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
                 <div style={{ fontSize:14, fontFamily:'var(--font-head)', fontWeight:900, color:'var(--navy)', marginBottom:2 }}>{load.broker_name||'Unknown Broker'}</div>
                 <div style={{ fontSize:12, color:'#555', marginBottom:1 }}>{load.origin||'-'} → {load.destination||'-'}</div>
                 <div style={{ fontSize:11, color:'#888' }}>
-                  {dateStr ? new Date(dateStr).toLocaleDateString() : '-'}
+                  Delivered {dateObj ? dateObj.toLocaleDateString() : (loadDate(load) || '-')}
                   {(load.edited||load.edited_date) && <span style={{ marginLeft:6, color:'var(--amber)', fontSize:10, fontWeight:700 }}>EDITED {load.edited_date?new Date(load.edited_date).toLocaleDateString():''}</span>}
                 </div>
               </div>
