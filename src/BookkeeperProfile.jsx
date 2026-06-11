@@ -1,14 +1,45 @@
 // src/BookkeeperProfile.jsx
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V4 — Bookkeeper Profile: Billing + Settlement + Brokers
+// 2026-06-11: RATE CON CHRONOLOGY — billing report period filters key loads
+//             by DELIVERY DATE (from the rate con), not by the date the
+//             driver entered them. parseAppDate() handles MM/DD/YYYY,
+//             M/D/YYYY, MM/DD/YY (scanner) and YYYY-MM-DD formats.
 
 import { useState } from 'react'
 import BrokerDirectory  from './BrokerDirectory.jsx'
 import SettlementReport from './SettlementReport.jsx'
 
+// Parse any date format that exists in this app's data into a Date at
+// local noon (prevents UTC midnight rolling back a day in Central time).
+// Handles: YYYY-MM-DD | MM/DD/YYYY | M/D/YYYY | MM/DD/YY. Never throws.
+function parseAppDate(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return null
+  const s = dateStr.trim()
+  // ISO: YYYY-MM-DD (with or without trailing time)
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const d = new Date(s.substring(0,10) + 'T12:00:00')
+    return isNaN(d.getTime()) ? null : d
+  }
+  // US: M/D/YY or MM/DD/YYYY etc.
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  if (m) {
+    const month = parseInt(m[1], 10)
+    const day   = parseInt(m[2], 10)
+    let year    = parseInt(m[3], 10)
+    if (m[3].length === 2) year += 2000
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null
+    const d = new Date(year, month - 1, day, 12, 0, 0)
+    return isNaN(d.getTime()) ? null : d
+  }
+  return null
+}
+
 function inPeriodByDate(dateStr, p, offset) {
   if (!dateStr) return false
-  const d = new Date(dateStr), now = new Date()
+  const d = parseAppDate(dateStr)
+  if (!d) return false
+  const now = new Date()
   if (p === 'daily') {
     const target = new Date(now)
     target.setDate(target.getDate() + offset)
@@ -56,9 +87,11 @@ function fmt(n) {
 }
 
 function buildDriverStats(loads, driverName, period, offset) {
+  // RATE CON CHRONOLOGY: loads are filtered by DELIVERY DATE.
+  // created_at (entry date) is only a last-resort fallback.
   const inRange    = loads.filter(l =>
     l.driver === driverName &&
-    inPeriodByDate(l.created_at || l.date, period, offset)
+    inPeriodByDate(l.delivery_date || l.date || l.created_at, period, offset)
   )
   const billed     = inRange.filter(l => l.status === 'billed' || l.status === 'paid')
   const paid       = inRange.filter(l => l.status === 'paid')
@@ -132,6 +165,10 @@ export default function BookkeeperProfile({ loads, api, showToast }) {
               {offset === 0 && <div style={{ fontSize:10, color:'var(--grey)', marginTop:2 }}>CURRENT</div>}
             </div>
             <button style={{ ...navBtn, opacity: offset >= 0 ? 0.3 : 1 }} disabled={offset >= 0} onClick={() => setOffset(o => o + 1)}>&#8250;</button>
+          </div>
+          {/* Chronology note */}
+          <div style={{ fontSize:9, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', textAlign:'center', marginBottom:12, textTransform:'uppercase' }}>
+            Loads shown by delivery date
           </div>
           {/* Combined bar */}
           <div className="card" style={{ background:'var(--navy3)', borderLeft:'3px solid var(--amber)', marginBottom:12 }}>
