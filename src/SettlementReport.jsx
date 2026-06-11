@@ -1,6 +1,9 @@
 // src/SettlementReport.jsx
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V4 — Settlement Report
+// 2026-06-11: hardened array-column reads (lumpers/incidentals/comdatas)
+//             to parse D1 string/array/null safely — fixes blank-screen crash
+//             (same asArray guard as Loads.jsx — see INCIDENT_2026-06-11)
 //
 // ACCOUNTING MODEL — v2:
 // "Still Owed to TIM" is a RUNNING BALANCE (all-time cumulative).
@@ -19,6 +22,23 @@ import { useState, useRef } from 'react'
 // -- CONSTANTS — DO NOT CHANGE -----------------------------------------
 const BRUCE_CUT = 0.10
 const TIM_CUT   = 0.90
+
+// Safely turn a D1 column that may be an array, a JSON string, null, or ''
+// into a real array. Never throws.
+function asArray(val) {
+  if (Array.isArray(val)) return val
+  if (typeof val === 'string') {
+    const s = val.trim()
+    if (!s) return []
+    try {
+      const parsed = JSON.parse(s)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
 
 // -- FORMATTERS --------------------------------------------------------
 function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
@@ -78,13 +98,13 @@ function inPeriod(load, p, offset) {
 function getLoadTotals(load) {
   const comdataTotal = parseFloat(load.comdata_total) > 0
     ? parseFloat(load.comdata_total)
-    : (load.comdatas || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
+    : asArray(load.comdatas).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
   const lumperTotal = parseFloat(load.lumper_total) > 0
     ? parseFloat(load.lumper_total)
-    : (load.lumpers || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
+    : asArray(load.lumpers).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
   const incTotal = parseFloat(load.incidental_total) > 0
     ? parseFloat(load.incidental_total)
-    : (load.incidentals || []).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
+    : asArray(load.incidentals).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
   return { comdataTotal, lumperTotal, incTotal }
 }
 
@@ -873,7 +893,7 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
               </div>
               <div style={{ marginBottom:12 }}>
                 <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>AMOUNT ($)</div>
-                <input type="number" inputMode="decimal" placeholder="0.00" value={fuelAmount} onChange={e => setFuelAmount(e.target.value)} style={{ ...inputStyle, fontSize:22, fontWeight:700, fontFamily:'var(--font-head)' }} />
+                <input type="text" inputMode="decimal" placeholder="0.00" value={fuelAmount} onChange={e => setFuelAmount(e.target.value)} style={{ ...inputStyle, fontSize:22, fontWeight:700, fontFamily:'var(--font-head)' }} />
               </div>
               <div style={{ marginBottom:12 }}>
                 <button onClick={() => fuelFileRef.current.click()} disabled={fuelScanning} style={{ width:'100%', padding:'10px 0', borderRadius:8, border:'1px solid var(--border)', background:'var(--navy3)', color:fuelScanning?'var(--grey)':'var(--white)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, cursor:'pointer' }}>{fuelScanning?'Scanning...':'Scan Receipt (optional)'}</button>
