@@ -1,6 +1,12 @@
 // src/Tax.jsx
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V4 — Tax Desk (Bruce + Tim)
+// 2026-06-11: robust date parsing — delivery_date is stored as MM/DD/YYYY,
+//             M/D/YYYY, or MM/DD/YY from the rate con scanner, while fuel
+//             and maintenance use YYYY-MM-DD. parseAppDate() handles all
+//             formats so quarter revenue is no longer $0. Revenue is
+//             accounted by DELIVERY DATE (rate con chronology), not by
+//             the date the driver entered the load.
 //
 // AUTO-PULL: Fuel expenses are fetched from /api/fuel/{driver} (fleet + pocket).
 // Repair expenses are fetched from /api/maintenance/{driver} (paid_by TIM only).
@@ -138,11 +144,35 @@ function daysUntil(dateStr) {
 function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
 function uid()  { return Math.random().toString(36).slice(2,9) }
 
-// Returns true if a YYYY-MM-DD date string falls in a given set of months for YEAR
+// Parse any date format that exists in this app's data into a Date at
+// local noon (prevents UTC midnight rolling back a day in Central time).
+// Handles: YYYY-MM-DD | MM/DD/YYYY | M/D/YYYY | MM/DD/YY. Never throws.
+function parseAppDate(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return null
+  const s = dateStr.trim()
+  // ISO: YYYY-MM-DD (with or without trailing time)
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const d = new Date(s.substring(0,10) + 'T12:00:00')
+    return isNaN(d.getTime()) ? null : d
+  }
+  // US: M/D/YY or MM/DD/YYYY etc.
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  if (m) {
+    const month = parseInt(m[1], 10)
+    const day   = parseInt(m[2], 10)
+    let year    = parseInt(m[3], 10)
+    if (m[3].length === 2) year += 2000
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null
+    const d = new Date(year, month - 1, day, 12, 0, 0)
+    return isNaN(d.getTime()) ? null : d
+  }
+  return null
+}
+
+// Returns true if a date string falls in a given set of months for YEAR
 function inQuarter(dateStr, qMonths) {
-  if (!dateStr) return false
-  // Use T12:00:00 to prevent UTC midnight rolling back to prior day in Central time
-  const d = new Date(dateStr.substring(0,10) + 'T12:00:00')
+  const d = parseAppDate(dateStr)
+  if (!d) return false
   return d.getFullYear() === YEAR && qMonths.includes(d.getMonth())
 }
 
@@ -284,15 +314,15 @@ export default function Tax({ loads, driver, api }) {
     })
   }
 
-  // ── REVENUE — auto-pulled from loads by delivery date ──
+  // ── REVENUE — auto-pulled from loads by DELIVERY DATE ──
+  // Rate con chronology: a load belongs to the quarter it was delivered,
+  // not the date the driver entered it into the app.
   function getQuarterRevenue(qMonths) {
     return loads
       .filter(l => {
         if (l.driver !== driver) return false
         const dateStr = l.delivery_date || l.date || l.created_at
-        if (!dateStr) return false
-        const d = new Date(dateStr.substring(0,10) + 'T12:00:00')
-        return d.getFullYear() === YEAR && qMonths.includes(d.getMonth())
+        return inQuarter(dateStr, qMonths)
       })
       .reduce((sum, l) => sum + (parseFloat(l.net_pay || l.netPay) || 0), 0)
   }
@@ -432,7 +462,7 @@ export default function Tax({ loads, driver, api }) {
 
                 {/* REVENUE — auto-pulled from loads */}
                 <div style={autoBox}>
-                  <div style={autoLabel}>Auto-Pulled - Revenue from Loads</div>
+                  <div style={autoLabel}>Auto-Pulled - Revenue from Loads (by delivery date)</div>
                   <div className="amount-row" style={{marginBottom:0}}>
                     <span className="label">Gross Revenue</span>
                     <span className="value" style={{color:'var(--amber)'}}>{fmt(revenue)}</span>
