@@ -13,6 +13,11 @@
 //             notes) in the settlement fuel list, saved via new Worker
 //             route PATCH /api/fuel/{id}. Running balance and period
 //             totals recompute automatically from refreshed entries.
+// 2026-06-11d: FIFO SOURCE OF FUNDS — full statement traces every payout
+//             (fleet fuel, ACH, escrow) to the oldest unclaimed earnings
+//             at that time, and breaks the balance owed into the delivery
+//             months it comes from. Pure render-time math on existing
+//             records — running balance number is UNCHANGED.
 //
 // ACCOUNTING MODEL — v2:
 // "Still Owed to TIM" is a RUNNING BALANCE (all-time cumulative).
@@ -161,6 +166,110 @@ function advanceKept(load) {
 function reimbursementOwed(load) {
   const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
   return Math.max(0, (lumperTotal + incTotal) - comdataTotal)
+}
+
+// -- FIFO SOURCE OF FUNDS — display-only audit trail --------------------
+// Traces every payout (fleet fuel, ACH, escrow) to the oldest earnings
+// still unclaimed at that point — first in, first out, the way an auditor
+// reads a ledger. Pure render-time math on records that already exist.
+// Does NOT change the running balance — stillOwed stays authoritative.
+function monthKey(d) {
+  return d.toLocaleDateString('en-US', { month:'short', year:'numeric' }).toUpperCase()
+}
+
+function buildFifoLedger(dLoads, driverFuel, driverEscrow) {
+  const credits = []
+  const debits  = []
+  // CREDITS: each load's net earnings at its delivery date
+  // (driver net pay − comdata advance kept + lumper reimbursement)
+  dLoads.forEach(l => {
+    const dt  = parseAppDate(loadDate(l)) || new Date(0)
+    const net = calcPay(l).driverNet - advanceKept(l) + reimbursementOwed(l)
+    if (net > 0.005) {
+      credits.push({ date: dt, month: monthKey(dt), amount: net })
+    } else if (net < -0.005) {
+      // Rare: comdata advance exceeded the load's pay — treat as a payout
+      debits.push({ date: dt, type:'ADV', label:'Advance over earnings — Load ' + (l.load_number || '-'), amount: -net })
+    }
+    // DEBIT: ACH payment disbursed against this load
+    if (l.ach_payment) {
+      const recv = parseFloat(l.ach_received) || 0
+      if (recv > 0.005) debits.push({ date: dt, type:'ACH', label:'ACH — Load ' + (l.load_number || '-'), amount: recv })
+    }
+  })
+  // DEBITS: fleet card fuel at entry date
+  driverFuel.forEach(f => {
+    if (f.fuel_type !== 'fleet') return
+    const amt = parseFloat(f.amount) || 0
+    if (amt <= 0.005) return
+    const dt = parseAppDate(f.entry_date) || new Date(0)
+    debits.push({ date: dt, type:'FUEL', label:'Fleet Fuel', amount: amt })
+  })
+  // DEBITS: escrow draws at funded date
+  driverEscrow.forEach(p => {
+    const amt = parseFloat(p.amount) || 0
+    if (amt <= 0.005) return
+    const dt = parseAppDate(p.funded_at) || new Date(0)
+    debits.push({ date: dt, type:'ESCROW', label:'Escrow Applied', amount: amt })
+  })
+  credits.sort((a,b) => a.date - b.date)
+  debits.sort((a,b) => a.date - b.date)
+
+  // FIFO allocation: each payout consumes the oldest unclaimed earnings
+  let ci = 0
+  let creditLeft = credits.length > 0 ? credits[0].amount : 0
+  const debitRows = []
+  let unfunded = 0
+  debits.forEach(db => {
+    let need = db.amount
+    const sources = {}
+    while (need > 0.005 && ci < credits.length) {
+      const take = Math.min(need, creditLeft)
+      sources[credits[ci].month] = (sources[credits[ci].month] || 0) + take
+      need       -= take
+      creditLeft -= take
+      if (creditLeft <= 0.005) {
+        ci++
+        creditLeft = ci < credits.length ? credits[ci].amount : 0
+      }
+    }
+    if (need > 0.005) { sources['AHEAD OF EARNINGS'] = (sources['AHEAD OF EARNINGS'] || 0) + need; unfunded += need }
+    debitRows.push({ date: db.date, type: db.type, label: db.label, amount: db.amount, sources })
+  })
+  // Whatever earnings were never consumed = the balance owed, by month
+  const unpaid = {}
+  if (ci < credits.length && creditLeft > 0.005) unpaid[credits[ci].month] = creditLeft
+  for (let j = ci + 1; j < credits.length; j++) {
+    unpaid[credits[j].month] = (unpaid[credits[j].month] || 0) + credits[j].amount
+  }
+  return { debitRows, unpaid, unfunded }
+}
+
+// Display compaction only: merge individual fleet-fuel debits into one
+// row per month. The FIFO allocation above already ran per entry — this
+// merges display rows; sources merge cleanly (month-labeled amounts).
+function mergeFuelRowsByMonth(debitRows) {
+  const out = []
+  const fuelByMonth = {}
+  debitRows.forEach(r => {
+    if (r.type !== 'FUEL') { out.push(r); return }
+    const key = monthKey(r.date)
+    if (!fuelByMonth[key]) {
+      fuelByMonth[key] = { date: r.date, type:'FUEL', label:'Fleet Fuel — ' + key, amount: 0, sources: {} }
+      out.push(fuelByMonth[key])
+    }
+    fuelByMonth[key].amount += r.amount
+    Object.keys(r.sources).forEach(m => {
+      fuelByMonth[key].sources[m] = (fuelByMonth[key].sources[m] || 0) + r.sources[m]
+    })
+  })
+  return out
+}
+
+function fmtSources(sources) {
+  const keys = Object.keys(sources)
+  if (keys.length === 0) return '-'
+  return keys.map(m => m + ' ' + fmt(sources[m])).join(' + ')
 }
 
 // -- B&W SCANNER PIPELINE — LOCKED DO NOT MODIFY ----------------------
@@ -463,6 +572,71 @@ function StatementOverlay({ data, driverName, onClose }) {
             </table>
           </div>
         </div>
+        {/* SOURCE OF FUNDS — FIFO */}
+        {(d.fifoRows.length > 0 || Object.keys(d.fifoUnpaid).length > 0) && (
+          <div style={{ marginBottom:24 }}>
+            <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>SOURCE OF FUNDS — FIFO</div>
+            <div style={{ background:'#fff8e1', border:'1px solid #ffe082', borderRadius:8, padding:'10px 14px', marginBottom:8, fontSize:11, color:'#7a5c00' }}>
+              Every payout is traced to the oldest earnings still on the books at that time — first in, first out, the way an auditor reads a ledger. The balance owed is whatever earnings remain unclaimed at the bottom.
+            </div>
+            {d.fifoRows.length > 0 && (
+              <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden', marginBottom:8 }}>
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                  <thead><tr>
+                    <th style={TH}>Paid Out</th>
+                    <th style={{...TH,textAlign:'right'}}>Amount</th>
+                    <th style={{...TH,textAlign:'right'}}>Funded By</th>
+                  </tr></thead>
+                  <tbody>
+                    {d.fifoRows.map((r,i) => {
+                      const tcol = r.type==='FUEL' ? '#c62828' : r.type==='ACH' ? '#2e7d32' : r.type==='ESCROW' ? '#7b1fa2' : '#f57c00'
+                      return (
+                        <tr key={i} style={{ background:i%2===0?'#fff':'#fafafa' }}>
+                          <td style={TD}>
+                            <span style={{ fontSize:9, fontWeight:700, padding:'1px 5px', borderRadius:3, background:tcol+'18', color:tcol, marginRight:6 }}>{r.type}</span>
+                            <span style={{ fontSize:11 }}>{r.label}</span>
+                            <div style={{ fontSize:10, color:'#888' }}>{r.date.toLocaleDateString('en-US',{ month:'short', day:'numeric', year:'numeric' })}</div>
+                          </td>
+                          <td style={{...TDr,color:tcol}}>{fmt(r.amount)}</td>
+                          <td style={{...TDr,fontSize:10,fontWeight:600,color:'#555',maxWidth:160,whiteSpace:'normal'}}>{fmtSources(r.sources)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                <thead><tr>
+                  <th style={TH}>Balance Owed Is Made Of</th>
+                  <th style={{...TH,textAlign:'right'}}>Unpaid Earnings</th>
+                </tr></thead>
+                <tbody>
+                  {Object.keys(d.fifoUnpaid).length === 0 && (
+                    <tr><td style={TD} colSpan={2}>All earnings to date have been paid out.</td></tr>
+                  )}
+                  {Object.keys(d.fifoUnpaid).map((m,i) => (
+                    <tr key={m} style={{ background:i%2===0?'#fff':'#fafafa' }}>
+                      <td style={TD}>{m} deliveries</td>
+                      <td style={{...TDr,color:'#1a2a3a'}}>{fmt(d.fifoUnpaid[m])}</td>
+                    </tr>
+                  ))}
+                  <tr style={{background:'#1a2a3a'}}>
+                    <td style={{ padding:'10px 12px', fontSize:12, fontWeight:900, color:'#fff', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }}>TOTAL UNPAID EARNINGS</td>
+                    <td style={{ padding:'10px 12px', textAlign:'right', fontSize:14, fontWeight:900, color:'#ffd54f', fontFamily:'var(--font-head)' }}>{fmt(Object.keys(d.fifoUnpaid).reduce((s,m) => s + d.fifoUnpaid[m], 0))}</td>
+                  </tr>
+                  {d.fifoUnfunded > 0.005 && (
+                    <tr style={{background:'#ffebee'}}>
+                      <td style={{...TD,color:'#c62828',fontSize:11}}>Payouts ahead of earnings (drawn before the earnings existed)</td>
+                      <td style={{...TDr,color:'#c62828',fontSize:11}}>{fmt(d.fifoUnfunded)}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
         {d.pocketFuelTotal > 0 && (
           <div style={{ background:'#e3f2fd', borderRadius:8, padding:'12px 14px', marginBottom:16, border:'1px solid #bbdefb' }}>
             <div style={{ fontSize:11, color:'#1565c0', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:4 }}>TAX NOTE — PERIOD</div>
@@ -631,6 +805,13 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
     const totalAchFees      = achLoads.reduce((s,l) => s + Math.max(0, (parseFloat(l.netPay||l.net_pay)||0) - (parseFloat(l.ach_received)||0)), 0)
     // Running balance for bottom-line "owed" number
     const rb = runningBalance(dn)
+    // FIFO source-of-funds — display-only audit trail (all-time)
+    const fifo = buildFifoLedger(
+      dLoads,
+      fuelEntries.filter(f => f.driver === dn.toUpperCase()),
+      dn === 'TIM' ? escrowPayments : [],
+    )
+    const fifoRows = mergeFuelRowsByMonth(fifo.debitRows)
     return {
       driverName: dn,
       periodLabel: getPeriodLabel(period, periodOffset),
@@ -639,6 +820,7 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
       advRows, totalAdvKept, totalReimb,
       fuelInRange, fleetFuelTotal, pocketFuelTotal,
       achLoads, totalAchDisbursed, totalAchFees,
+      fifoRows, fifoUnpaid: fifo.unpaid, fifoUnfunded: fifo.unfunded,
       // Running balance fields for the summary table
       ...rb,
     }
