@@ -9,6 +9,10 @@
 //             them. parseAppDate() handles MM/DD/YYYY, M/D/YYYY, MM/DD/YY
 //             (scanner) and YYYY-MM-DD (fuel/escrow). Running balance is
 //             all-time and unaffected.
+// 2026-06-11c: FUEL ENTRY EDITING — inline edit (date / amount / type /
+//             notes) in the settlement fuel list, saved via new Worker
+//             route PATCH /api/fuel/{id}. Running balance and period
+//             totals recompute automatically from refreshed entries.
 //
 // ACCOUNTING MODEL — v2:
 // "Still Owed to TIM" is a RUNNING BALANCE (all-time cumulative).
@@ -498,6 +502,14 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
   const [fuelPreview,     setFuelPreview]     = useState(null)
   const fuelFileRef = useRef()
 
+  // Fuel entry EDIT state
+  const [editFuelId,      setEditFuelId]      = useState(null)
+  const [editFuelDate,    setEditFuelDate]    = useState('')
+  const [editFuelAmount,  setEditFuelAmount]  = useState('')
+  const [editFuelType,    setEditFuelType]    = useState('fleet')
+  const [editFuelNotes,   setEditFuelNotes]   = useState('')
+  const [editFuelSaving,  setEditFuelSaving]  = useState(false)
+
   async function loadData() {
     if (loaded || loading) return
     setLoading(true)
@@ -743,6 +755,37 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
     } catch { showToast('Delete failed') }
   }
 
+  function startEditFuel(f) {
+    setEditFuelId(f.id)
+    setEditFuelDate(f.entry_date || '')
+    setEditFuelAmount(f.amount !== undefined && f.amount !== null ? String(f.amount) : '')
+    setEditFuelType(f.fuel_type === 'pocket' ? 'pocket' : 'fleet')
+    setEditFuelNotes(f.notes || '')
+  }
+
+  function cancelEditFuel() { setEditFuelId(null) }
+
+  async function saveEditFuel() {
+    const amt = parseFloat(editFuelAmount)
+    if (!amt || amt <= 0) { showToast('Enter a valid amount'); return }
+    setEditFuelSaving(true)
+    try {
+      const res = await fetch(api + '/api/fuel/' + editFuelId, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entry_date: editFuelDate, amount: amt, fuel_type: editFuelType, notes: editFuelNotes }),
+      })
+      const data = await res.json()
+      if (!res.ok) { showToast('Update failed: ' + (data.error || 'unknown')); return }
+      showToast('Fuel entry updated')
+      setEditFuelId(null)
+      await refreshFuel()
+    } catch (err) {
+      showToast('Update failed: ' + err.message)
+    } finally {
+      setEditFuelSaving(false)
+    }
+  }
+
   function changePeriod(p) { setPeriod(p); setPeriodOffset(0) }
 
   // -- RENDER ----------------------------------------------------
@@ -866,6 +909,22 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
                   <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
                     <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>FUEL ENTRIES</div>
                     {fuelList.map(f => (
+                      editFuelId === f.id ? (
+                        <div key={f.id} style={{ background:'var(--navy3)', borderRadius:8, padding:10, marginBottom:8 }}>
+                          <div style={{ fontSize:10, color:'var(--amber)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:8 }}>EDIT FUEL ENTRY</div>
+                          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6, marginBottom:8 }}>
+                            <button onClick={() => setEditFuelType('fleet')} style={{ padding:'8px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:11, background:editFuelType==='fleet'?'var(--amber)':'var(--navy2)', color:editFuelType==='fleet'?'var(--navy)':'var(--grey)' }}>FLEET CARD</button>
+                            <button onClick={() => setEditFuelType('pocket')} style={{ padding:'8px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:11, background:editFuelType==='pocket'?'#1565c0':'var(--navy2)', color:editFuelType==='pocket'?'#fff':'var(--grey)' }}>OUT OF POCKET</button>
+                          </div>
+                          <input type="date" value={editFuelDate} onChange={e => setEditFuelDate(e.target.value)} style={{ ...inputStyle, marginBottom:8 }} />
+                          <input type="text" inputMode="decimal" placeholder="0.00" value={editFuelAmount} onChange={e => setEditFuelAmount(e.target.value)} style={{ ...inputStyle, marginBottom:8, fontSize:18, fontWeight:700, fontFamily:'var(--font-head)' }} />
+                          <input type="text" placeholder="Notes (optional)" value={editFuelNotes} onChange={e => setEditFuelNotes(e.target.value)} style={{ ...inputStyle, marginBottom:10 }} />
+                          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
+                            <button onClick={cancelEditFuel} style={{ padding:'10px 0', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--grey)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, cursor:'pointer' }}>CANCEL</button>
+                            <button onClick={saveEditFuel} disabled={editFuelSaving || !editFuelAmount} style={{ padding:'10px 0', borderRadius:8, border:'none', background:editFuelSaving||!editFuelAmount?'#555':'#4caf50', color:'#fff', fontFamily:'var(--font-head)', fontWeight:900, fontSize:12, cursor:'pointer' }}>{editFuelSaving ? 'SAVING...' : 'SAVE'}</button>
+                          </div>
+                        </div>
+                      ) : (
                       <div key={f.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', paddingBottom:6 }}>
                         <div>
                           <span style={{ fontSize:11, color:f.fuel_type==='fleet'?'var(--amber)':'#1565c0', fontFamily:'var(--font-head)', fontWeight:700 }}>{f.fuel_type==='fleet'?'FLEET':'POCKET'}</span>
@@ -874,9 +933,11 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
                         </div>
                         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                           <span style={{ fontFamily:'var(--font-head)', fontWeight:700, color:f.fuel_type==='fleet'?'var(--red)':'#1565c0' }}>{fmt(f.amount)}</span>
+                          <button onClick={() => startEditFuel(f)} style={{ background:'transparent', border:'none', color:'var(--amber)', cursor:'pointer', fontSize:12, padding:'0 2px', fontFamily:'var(--font-head)', fontWeight:700 }}>EDIT</button>
                           <button onClick={() => deleteFuelEntry(f.id)} style={{ background:'transparent', border:'none', color:'#666', cursor:'pointer', fontSize:14, padding:'0 2px' }}>X</button>
                         </div>
                       </div>
+                      )
                     ))}
                   </div>
                 )}
