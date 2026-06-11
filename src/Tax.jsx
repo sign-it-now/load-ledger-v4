@@ -7,6 +7,12 @@
 //             formats so quarter revenue is no longer $0. Revenue is
 //             accounted by DELIVERY DATE (rate con chronology), not by
 //             the date the driver entered the load.
+// 2026-06-11b: per diem entered as DAY COUNTS, not dollars. Full day = $80,
+//             half day = $60 (IRS 75% partial-day method — home by 12:00 PM
+//             noon rule decides full vs half). Both x 80% deductible for
+//             DOT drivers (IRS Notice 2025-54, rates effective Oct 1, 2025).
+//             Dollar-entry per diem items removed from the drop list to
+//             prevent double counting.
 //
 // AUTO-PULL: Fuel expenses are fetched from /api/fuel/{driver} (fleet + pocket).
 // Repair expenses are fetched from /api/maintenance/{driver} (paid_by TIM only).
@@ -17,6 +23,12 @@
 import { useState, useEffect } from 'react'
 
 const YEAR = 2026
+
+// IRS Notice 2025-54 — transportation industry special M&IE rates
+// (effective Oct 1, 2025; update these two numbers each October)
+const PER_DIEM_FULL       = 80    // full day away from home, CONUS
+const PER_DIEM_HALF       = 60    // half day — IRS 75% partial-day method
+const PER_DIEM_DEDUCTIBLE = 0.80  // 80% deductible for DOT drivers (since Jan 2023)
 
 const QUARTERS = [
   { label:'Q1', title:'January - March',     months:[0,1,2],    due:'2026-04-15', dueLabel:'April 15, 2026',     color:'#1e88e5' },
@@ -58,7 +70,6 @@ const EXPENSE_CATEGORIES = [
   {
     label: 'Travel, Meals & Per Diem',
     items: [
-      'Per Diem Meals (OTR Full Day - $80 x 80%)','Per Diem Meals (Partial Day - $60 x 80%)',
       'Hotel / Motel Stays','Short-Term Rental While on Job',
       'Truck Stop Shower Fees','Laundry While on the Road',
       'Sleeper Berth Supplies (Refrigerator, Bedding, Cleaning)',
@@ -207,7 +218,7 @@ export default function Tax({ loads, driver, api }) {
     setExpLoaded(false)
   }, [driver])
 
-  // Persist manual drop-list expenses and notes to localStorage
+  // Persist manual drop-list expenses, per diem days, and notes to localStorage
   useEffect(() => { saveStorage(driver, taxData) }, [taxData, driver])
 
   // Fetch fuel log and maintenance ledger when the Tax desk is rendered
@@ -314,6 +325,23 @@ export default function Tax({ loads, driver, api }) {
     })
   }
 
+  // ── PER DIEM — DAY COUNTS ──────────────────────────────
+  // Full day: away from home all day = $80.
+  // Half day: home by 12:00 PM = $60 (IRS 75% partial-day method).
+  // After 12:01 PM = full day. Both x 80% deductible (DOT drivers).
+  function getPerDiemDays(qIdx) {
+    const q = getQData(qIdx)
+    return {
+      full: parseFloat(q.perdiem_full) || 0,
+      half: parseFloat(q.perdiem_half) || 0,
+    }
+  }
+
+  function getPerDiemDeduction(qIdx) {
+    const { full, half } = getPerDiemDays(qIdx)
+    return (full * PER_DIEM_FULL + half * PER_DIEM_HALF) * PER_DIEM_DEDUCTIBLE
+  }
+
   // ── REVENUE — auto-pulled from loads by DELIVERY DATE ──
   // Rate con chronology: a load belongs to the quarter it was delivered,
   // not the date the driver entered it into the app.
@@ -327,13 +355,14 @@ export default function Tax({ loads, driver, api }) {
       .reduce((sum, l) => sum + (parseFloat(l.net_pay || l.netPay) || 0), 0)
   }
 
-  // Total expenses: auto-pulled fuel + auto-pulled repairs + manual drop-list
+  // Total expenses: auto fuel + auto repairs + per diem days + manual drop-list
   function getExpenseTotal(qIdx) {
     const q           = QUARTERS[qIdx]
     const autoFuel    = getQFuelTotal(q.months)
     const autoRepair  = getQMaintTotal(q.months)
+    const perDiem     = getPerDiemDeduction(qIdx)
     const manualDrop  = getDropEntries(qIdx).reduce((s,e) => s+(parseFloat(e.amount)||0), 0)
-    return autoFuel + autoRepair + manualDrop
+    return autoFuel + autoRepair + perDiem + manualDrop
   }
 
   function calcTax(revenue, expenses) {
@@ -361,6 +390,12 @@ export default function Tax({ loads, driver, api }) {
   const autoLabel = {
     fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)',
     letterSpacing:'0.08em', marginBottom:6, textTransform:'uppercase',
+  }
+  const dayInputStyle = {
+    width:'100%', background:'var(--navy2)', border:'1px solid var(--border)',
+    color:'var(--white)', borderRadius:8, padding:'10px 12px',
+    fontSize:20, fontWeight:700, fontFamily:'var(--font-head)',
+    boxSizing:'border-box', textAlign:'center',
   }
 
   return (
@@ -423,6 +458,10 @@ export default function Tax({ loads, driver, api }) {
         const qRepairs = getQMaintTotal(q.months)
         const qFuelCount  = getQFuelEntries(q.months).length
         const qRepairCount = getQMaintEntries(q.months).length
+
+        // Per diem
+        const pd          = getPerDiemDays(qIdx)
+        const pdDeduction = getPerDiemDeduction(qIdx)
 
         let countdownColor = 'var(--green)'
         let countdownText  = days + ' days away'
@@ -534,6 +573,56 @@ export default function Tax({ loads, driver, api }) {
                   )}
                 </div>
 
+                {/* PER DIEM — day counts */}
+                <div style={autoBox}>
+                  <div style={autoLabel}>
+                    Per Diem - Days Away From Home
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:8 }}>
+                    <div>
+                      <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:4, letterSpacing:'0.04em' }}>
+                        FULL DAYS (${PER_DIEM_FULL})
+                      </div>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        placeholder="0"
+                        value={(getQData(qIdx)).perdiem_full || ''}
+                        onChange={e => updateQData(qIdx, 'perdiem_full', e.target.value)}
+                        style={dayInputStyle}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:4, letterSpacing:'0.04em' }}>
+                        HALF DAYS (${PER_DIEM_HALF})
+                      </div>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        placeholder="0"
+                        value={(getQData(qIdx)).perdiem_half || ''}
+                        onChange={e => updateQData(qIdx, 'perdiem_half', e.target.value)}
+                        style={dayInputStyle}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ fontSize:10, color:'var(--grey)', marginBottom: pdDeduction > 0 ? 8 : 0 }}>
+                    Home by 12:00 PM = half day. After 12:01 PM = full day. 80% deductible.
+                  </div>
+                  {pdDeduction > 0 && (
+                    <div style={{borderTop:'1px solid var(--border)', paddingTop:6}}>
+                      <div className="amount-row" style={{marginBottom:0}}>
+                        <span className="label" style={{fontWeight:700}}>
+                          Per Diem Deduction ({pd.full} full{pd.half > 0 ? ', ' + pd.half + ' half' : ''})
+                        </span>
+                        <span className="value" style={{color:'var(--green)', fontWeight:700}}>{fmt(pdDeduction)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div style={{borderTop:'1px solid var(--border)', margin:'12px 0'}} />
 
                 {/* MANUAL ADDITIONAL EXPENSES from drop list */}
@@ -641,6 +730,9 @@ export default function Tax({ loads, driver, api }) {
                   )}
                   {qRepairs > 0 && (
                     <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- Repairs (auto)</span><span className="value" style={{color:'var(--grey)'}}>({fmt(qRepairs)})</span></div>
+                  )}
+                  {pdDeduction > 0 && (
+                    <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- Per Diem ({pd.full} full{pd.half > 0 ? ', ' + pd.half + ' half' : ''})</span><span className="value" style={{color:'var(--grey)'}}>({fmt(pdDeduction)})</span></div>
                   )}
                   {getDropEntries(qIdx).reduce((s,e) => s+(parseFloat(e.amount)||0),0) > 0 && (
                     <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- Other Expenses</span><span className="value" style={{color:'var(--grey)'}}>({fmt(getDropEntries(qIdx).reduce((s,e) => s+(parseFloat(e.amount)||0),0))})</span></div>
