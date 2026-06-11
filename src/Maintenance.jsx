@@ -1,5 +1,12 @@
 // src/Maintenance.jsx
 // (c) dbappsystems.com | daddyboyapps.com
+// 2026-06-11: ETTR FINANCED REPAIR — display rename from "Repair Escrow"
+//             (labels/toasts only — API routes, fields, and paid_by values
+//             are UNCHANGED: /api/escrow-payments, funded_at, 'EDGERTON').
+//             Two guards added: an EDGERTON entry cannot be toggled to TIM
+//             or deleted if doing so would drop the financed pool below
+//             what Tim has already paid back (orphaned-money trap), and
+//             any overpayment is now SURFACED instead of clamped to $0.
 
 import { useState, useEffect, useRef } from 'react'
 
@@ -279,6 +286,13 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
 
   async function togglePaidBy(entry) {
     const newVal = entry.paid_by==='EDGERTON'?'TIM':'EDGERTON'
+    // GUARD: a financed repair cannot leave the pool if removing it would
+    // drop the pool below what Tim has already paid back — that would
+    // orphan his money and silently corrupt the balance.
+    if (entry.paid_by === 'EDGERTON' && (totalEdgerton - (parseFloat(entry.amount)||0)) < escrowPaymentsTotal) {
+      showToast('⚠️ Blocked — Tim has already paid toward this financed repair')
+      return
+    }
     setToggling(entry.id)
     try {
       const res = await fetch(api+'/api/maintenance/'+entry.id,{
@@ -293,9 +307,9 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
       if(!res.ok) throw new Error('Update failed')
       setEntries(prev=>prev.map(e=>e.id===entry.id?{...e,paid_by:newVal}:e))
       if (newVal === 'TIM') {
-        showToast('✅ Moved to Tim Paid — escrow balance updated')
+        showToast('✅ Moved to Tim Paid — repair balance updated')
       } else {
-        showToast('🏦 Added to Repair Escrow')
+        showToast('🏦 Added to ETTR Financed Repair')
       }
     } catch(err) { showToast('⚠️ Update failed: '+err.message) }
     finally { setToggling(null) }
@@ -304,7 +318,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
   async function fundEscrow() {
     const amt = parseFloat(fundEscrowAmount)
     if (!amt || amt <= 0) { showToast('Enter a valid amount'); return }
-    if (amt > escrowBalance) { showToast('Amount exceeds escrow balance'); return }
+    if (amt > escrowBalance) { showToast('Amount exceeds repair balance'); return }
     if (timSettlementOwed !== null && amt > timSettlementOwed) {
       showToast('Amount exceeds your balance owed — check your settlement report'); return
     }
@@ -320,7 +334,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
         }),
       })
       if (!res.ok) throw new Error('Payment failed')
-      showToast('✅ Escrow funded — $' + amt.toFixed(2) + ' applied')
+      showToast('✅ Repair payment applied — $' + amt.toFixed(2))
       setFundEscrowAmount('')
       setShowFundEscrow(false)
       setTimSettlementOwed(null)
@@ -333,6 +347,12 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
   }
 
   async function deleteEntry(entry) {
+    // GUARD: same orphaned-money trap as the paid-by toggle.
+    if (entry.paid_by === 'EDGERTON' && (totalEdgerton - (parseFloat(entry.amount)||0)) < escrowPaymentsTotal) {
+      showToast('⚠️ Blocked — Tim has already paid toward this financed repair')
+      setConfirmDelete(null)
+      return
+    }
     setDeleting(true)
     try {
       const res = await fetch(api+'/api/maintenance/'+entry.id,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({driver})})
@@ -374,9 +394,13 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
   const totalTimPaid  = entries.filter(e=>e.paid_by!=='EDGERTON').reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
   const totalFiltered = filtered.reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
 
-  // Escrow balance = pool total minus what Tim has already funded toward it
-  const escrowBalance = Math.max(0, totalEdgerton - escrowPaymentsTotal)
-  const escrowCleared = totalEdgerton > 0 && escrowBalance <= 0
+  // ETTR financed repair balance = financed pool minus what Tim has paid back.
+  // rawRepairBalance can go negative if data is changed outside the guards —
+  // that overpayment is SURFACED below, never silently clamped away.
+  const rawRepairBalance = totalEdgerton - escrowPaymentsTotal
+  const escrowBalance    = Math.max(0, rawRepairBalance)
+  const escrowOverpaid   = Math.max(0, -rawRepairBalance)
+  const escrowCleared    = totalEdgerton > 0 && rawRepairBalance <= 0
 
   if (loading) return <div className="empty-state"><div className="icon">🔧</div><h3>LOADING...</h3></div>
 
@@ -410,9 +434,9 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                 <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>No reimbursement needed</div>
               </div>
               <div style={{background:'#1a0a2a',borderRadius:8,padding:'10px 12px',border:'1px solid #7b1fa2'}}>
-                <div style={{fontSize:10,color:'#ce93d8',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>REPAIR ESCROW</div>
+                <div style={{fontSize:10,color:'#ce93d8',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>ETTR FINANCED</div>
                 <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#ce93d8'}}>{fmt(escrowBalance)}</div>
-                <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>Escrow Balance</div>
+                <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>Repair Balance Owed</div>
               </div>
             </div>
 
@@ -430,16 +454,23 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                   marginBottom: escrowPaymentsTotal > 0 ? 4 : 8,
                 }}>
                   <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,color: escrowCleared ? '#66bb6a' : '#ce93d8'}}>
-                    {escrowCleared ? '✅ REPAIR ESCROW BALANCE' : '🏦 REPAIR ESCROW BALANCE'}
+                    {escrowCleared ? '✅ ETTR FINANCED REPAIR BALANCE' : '🏦 ETTR FINANCED REPAIR BALANCE'}
                   </span>
                   <span style={{fontSize:18,fontFamily:'var(--font-head)',fontWeight:900,color: escrowCleared ? '#66bb6a' : '#ce93d8'}}>
                     {escrowCleared ? fmt(0) : '-' + fmt(escrowBalance)}
                   </span>
                 </div>
 
+                {escrowOverpaid > 0 && (
+                  <div style={{marginBottom:8,padding:'10px 12px',background:'#2a0a0a',border:'1px solid #e53935',borderRadius:8}}>
+                    <div style={{fontSize:11,color:'#e53935',fontFamily:'var(--font-head)',fontWeight:900,marginBottom:2}}>⚠️ OVERPAID BY {fmt(escrowOverpaid)}</div>
+                    <div style={{fontSize:10,color:'var(--grey)'}}>Tim has paid back more than the financed repairs on the books. Reconcile before making changes.</div>
+                  </div>
+                )}
+
                 {escrowPaymentsTotal > 0 && (
                   <div style={{fontSize:10,color:'#66bb6a',fontFamily:'var(--font-head)',textAlign:'right',marginBottom:8}}>
-                    ✅ {fmt(escrowPaymentsTotal)} funded toward escrow
+                    ✅ {fmt(escrowPaymentsTotal)} paid toward financed repairs
                   </div>
                 )}
 
@@ -464,7 +495,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                       cursor:'pointer', letterSpacing:'0.06em', marginBottom:8,
                     }}
                   >
-                    {showFundEscrow ? '✕ CANCEL' : '💳 FUND ESCROW'}
+                    {showFundEscrow ? '✕ CANCEL' : '💳 MAKE REPAIR PAYMENT'}
                   </button>
                 )}
 
@@ -478,12 +509,12 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                     marginBottom:8,
                   }}>
                     <div style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:900,color:'#ce93d8',letterSpacing:'0.08em',marginBottom:12}}>
-                      💳 FUND REPAIR ESCROW
+                      💳 PAY ETTR FINANCED REPAIR
                     </div>
 
                     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
                       <div style={{background:'var(--navy3)',borderRadius:8,padding:'10px 12px'}}>
-                        <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>ESCROW BALANCE</div>
+                        <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>REPAIR BALANCE</div>
                         <div style={{fontFamily:'var(--font-head)',fontSize:15,fontWeight:900,color:'#ce93d8'}}>-{fmt(escrowBalance)}</div>
                       </div>
                       <div style={{background:'var(--navy3)',borderRadius:8,padding:'10px 12px'}}>
@@ -495,7 +526,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                     </div>
 
                     <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',marginBottom:12}}>
-                      Enter the amount to apply from your settlement toward the escrow balance.
+                      Enter the amount to apply from your settlement toward the ETTR financed repair balance.
                     </div>
 
                     <div style={{marginBottom:12}}>
@@ -524,7 +555,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                         border:'1px solid var(--border)', fontSize:12,
                       }}>
                         <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-                          <span style={{color:'var(--grey)'}}>Current escrow</span>
+                          <span style={{color:'var(--grey)'}}>Current balance</span>
                           <span style={{fontFamily:'var(--font-head)',fontWeight:700,color:'#ce93d8'}}>-{fmt(escrowBalance)}</span>
                         </div>
                         <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
@@ -558,7 +589,7 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                         cursor:'pointer', letterSpacing:'0.05em',
                       }}
                     >
-                      {fundingEscrow ? 'APPLYING...' : '💳 APPLY TO ESCROW'}
+                      {fundingEscrow ? 'APPLYING...' : '💳 APPLY PAYMENT'}
                     </button>
                   </div>
                 )}
@@ -663,11 +694,11 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                   color:form.paid_by==='EDGERTON'?'#fff':'var(--grey)',
                   fontSize:13,fontFamily:'var(--font-head)',fontWeight:900,cursor:'pointer',
                   borderLeft:form.paid_by==='EDGERTON'?'3px solid #ce93d8':'3px solid transparent',
-                }}>🏦 REPAIR ESCROW</button>
+                }}>🏦 ETTR FINANCED</button>
               </div>
               {form.paid_by==='EDGERTON'&&(
                 <div style={{fontSize:11,color:'#ce93d8',marginTop:6,fontFamily:'var(--font-head)'}}>
-                  ⚠️ This amount will be added to the repair escrow balance
+                  ⚠️ This amount will be added to the ETTR financed repair balance
                 </div>
               )}
             </div>
@@ -752,13 +783,13 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
                     {isToggling
                       ? 'SAVING...'
                       : isEdgerton
-                        ? '🏦 REPAIR ESCROW — tap to change'
+                        ? '🏦 ETTR FINANCED — tap to change'
                         : '✅ TIM PAID — tap to change'
                     }
                   </button>
                   {isEdgerton&&(
                     <div style={{fontSize:10,color:'#ce93d8',marginTop:4,fontFamily:'var(--font-head)'}}>
-                      In escrow pool
+                      ETTR financed — payback owed
                     </div>
                   )}
                 </div>
