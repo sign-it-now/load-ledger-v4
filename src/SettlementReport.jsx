@@ -21,6 +21,10 @@
 // 2026-06-11e: ETTR FINANCED REPAIR — display rename from "escrow"
 //             (labels only — API routes, fields, and internal variable
 //             names UNCHANGED: /api/escrow-payments, funded_at).
+// 2026-06-12: SHARED SETTLEMENT MATH — constants and pay/balance helpers
+//             moved to src/settlementMath.js (single source of truth,
+//             also used by Maintenance.jsx). Behavior unchanged —
+//             stillOwed is byte-for-byte the same formula.
 //
 // ACCOUNTING MODEL — v2:
 // "Still Owed to TIM" is a RUNNING BALANCE (all-time cumulative).
@@ -35,52 +39,11 @@
 // just because the period slice is smaller than the escrow amount.
 
 import { useState, useRef } from 'react'
-
-// -- CONSTANTS — DO NOT CHANGE -----------------------------------------
-const BRUCE_CUT = 0.10
-const TIM_CUT   = 0.90
-
-// Safely turn a D1 column that may be an array, a JSON string, null, or ''
-// into a real array. Never throws.
-function asArray(val) {
-  if (Array.isArray(val)) return val
-  if (typeof val === 'string') {
-    const s = val.trim()
-    if (!s) return []
-    try {
-      const parsed = JSON.parse(s)
-      return Array.isArray(parsed) ? parsed : []
-    } catch {
-      return []
-    }
-  }
-  return []
-}
-
-// Parse any date format that exists in this app's data into a Date at
-// local noon (prevents UTC midnight rolling back a day in Central time).
-// Handles: YYYY-MM-DD | MM/DD/YYYY | M/D/YYYY | MM/DD/YY. Never throws.
-function parseAppDate(dateStr) {
-  if (!dateStr || typeof dateStr !== 'string') return null
-  const s = dateStr.trim()
-  // ISO: YYYY-MM-DD (with or without trailing time)
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
-    const d = new Date(s.substring(0,10) + 'T12:00:00')
-    return isNaN(d.getTime()) ? null : d
-  }
-  // US: M/D/YY or MM/DD/YYYY etc.
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
-  if (m) {
-    const month = parseInt(m[1], 10)
-    const day   = parseInt(m[2], 10)
-    let year    = parseInt(m[3], 10)
-    if (m[3].length === 2) year += 2000
-    if (month < 1 || month > 12 || day < 1 || day > 31) return null
-    const d = new Date(year, month - 1, day, 12, 0, 0)
-    return isNaN(d.getTime()) ? null : d
-  }
-  return null
-}
+import {
+  BRUCE_CUT, TIM_CUT, asArray, parseAppDate, loadDate,
+  getLoadTotals, calcPay, advanceKept, reimbursementOwed,
+  computeRunningBalance,
+} from './settlementMath'
 
 // -- FORMATTERS --------------------------------------------------------
 function fmt(n) { return '$' + (parseFloat(n)||0).toFixed(2) }
@@ -130,45 +93,13 @@ function getPeriodLabel(p, offset) {
   return ''
 }
 
-// -- LOAD HELPERS — DO NOT CHANGE --------------------------------------
-// RATE CON CHRONOLOGY: a load's accounting date is its DELIVERY DATE.
-// created_at (entry date) is only a last-resort fallback.
-function loadDate(load) { return load.delivery_date || load.date || load.created_at || null }
-
+// -- LOAD HELPERS -------------------------------------------------------
+// loadDate / getLoadTotals / calcPay / advanceKept / reimbursementOwed
+// now live in src/settlementMath.js — imported above.
 function inPeriod(load, p, offset) {
   const dateStr = loadDate(load)
   if (!dateStr) return false
   return inPeriodByDate(dateStr, p, offset)
-}
-
-function getLoadTotals(load) {
-  const comdataTotal = parseFloat(load.comdata_total) > 0
-    ? parseFloat(load.comdata_total)
-    : asArray(load.comdatas).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
-  const lumperTotal = parseFloat(load.lumper_total) > 0
-    ? parseFloat(load.lumper_total)
-    : asArray(load.lumpers).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
-  const incTotal = parseFloat(load.incidental_total) > 0
-    ? parseFloat(load.incidental_total)
-    : asArray(load.incidentals).reduce((s,i) => s+(parseFloat(i.amount)||0), 0)
-  return { comdataTotal, lumperTotal, incTotal }
-}
-
-function calcPay(load) {
-  const base      = parseFloat(load.base_pay) || 0
-  const detention = parseFloat(load.detention) || 0
-  if (load.driver === 'BRUCE') return { gross: base, ownerCut: base * BRUCE_CUT, driverNet: base }
-  return { gross: base, ownerCut: base * BRUCE_CUT, driverNet: (base * TIM_CUT) + detention }
-}
-
-function advanceKept(load) {
-  const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
-  return Math.max(0, comdataTotal - lumperTotal - incTotal)
-}
-
-function reimbursementOwed(load) {
-  const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
-  return Math.max(0, (lumperTotal + incTotal) - comdataTotal)
 }
 
 // -- FIFO SOURCE OF FUNDS — display-only audit trail --------------------
@@ -762,19 +693,12 @@ export default function SettlementReport({ driverName, loads, api, showToast }) 
   // It uses every load, every fuel entry, every ACH payment, every escrow
   // ever recorded. Not period-filtered. Never resets.
   function runningBalance(dn) {
-    const dLoads = loads.filter(l => l.driver === dn)
-    const allGrossPay     = dLoads.reduce((s,l) => s + calcPay(l).driverNet, 0)
-    const allAdvKept      = dLoads.reduce((s,l) => s + advanceKept(l), 0)
-    const allReimb        = dLoads.reduce((s,l) => s + reimbursementOwed(l), 0)
-    const allFleetFuel    = fuelEntries.filter(f => f.driver === dn.toUpperCase() && f.fuel_type === 'fleet').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
-    const allAchDisbursed = dLoads.filter(l => l.ach_payment).reduce((s,l) => s+(parseFloat(l.ach_received)||0), 0)
-    const allEscrow       = escrowAllTime(dn)
-    return {
-      allGrossPay, allAdvKept, allReimb, allFleetFuel, allAchDisbursed, allEscrow,
-      allDetention: dLoads.reduce((s,l) => s+(parseFloat(l.detention)||0), 0),
-      allGross90: dLoads.reduce((s,l) => s+(parseFloat(l.base_pay)||0)*TIM_CUT, 0),
-      stillOwed: Math.max(0, allGrossPay - allAdvKept + allReimb - allFleetFuel - allAchDisbursed - allEscrow),
-    }
+    // ONE formula — src/settlementMath.js. Same shape, same numbers.
+    return computeRunningBalance({
+      loads, fuelEntries,
+      escrowTotal: escrowAllTime(dn),
+      driver: dn,
+    })
   }
 
   function buildSettlementData(dn) {
