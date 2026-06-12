@@ -10,8 +10,15 @@
 // 2026-06-11b: ETTR FINANCED summary box now shows TOTAL financed all-time
 //             (mirrors the TIM PAID box) — the tracker below carries the
 //             remaining balance. Was duplicating the balance number.
+// 2026-06-12: SHARED SETTLEMENT MATH — fetchTimSettlementOwed now uses
+//             computeRunningBalance from src/settlementMath.js: identical
+//             formula to the Settlement Report (no hardcoded 0.90,
+//             asArray-guarded array columns) and escrow payments are
+//             fetched fresh inside the function — the stale-state race
+//             on escrowPaymentsTotal is eliminated.
 
 import { useState, useEffect, useRef } from 'react'
+import { computeRunningBalance } from './settlementMath'
 
 const CATEGORIES = ['Repair', 'Parts', 'Maintenance', 'Equipment', 'Fuel', 'Other']
 const CAT_COLORS = {
@@ -113,40 +120,28 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
 
   async function fetchTimSettlementOwed() {
     try {
-      const [loadsRes, fuelRes] = await Promise.all([
+      const [loadsRes, fuelRes, escrowRes] = await Promise.all([
         fetch(api + '/api/loads'),
         fetch(api + '/api/fuel/TIM'),
+        fetch(api + '/api/escrow-payments/TIM'),
       ])
-      const allLoads = await loadsRes.json()
-      const fuelData = await fuelRes.json()
-      const timLoads = Array.isArray(allLoads) ? allLoads.filter(l => l.driver === 'TIM') : []
-      const fuel     = Array.isArray(fuelData) ? fuelData : []
+      const allLoads   = await loadsRes.json()
+      const fuelData   = await fuelRes.json()
+      const escrowData = await escrowRes.json()
+      const loads       = Array.isArray(allLoads)   ? allLoads   : []
+      const fuelEntries = Array.isArray(fuelData)   ? fuelData   : []
+      const payments    = Array.isArray(escrowData) ? escrowData : []
 
-      let totalEarned = 0, totalAdvKept = 0, totalReimb = 0
-      timLoads.forEach(l => {
-        const base = parseFloat(l.base_pay) || 0
-        const det  = parseFloat(l.detention) || 0
-        totalEarned += (base * 0.90) + det
+      // Refresh escrow state from the same fetch — the toggle/delete guards
+      // and the balance tracker read these, so they stay in lockstep.
+      const escrowTotal = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+      setEscrowPayments(payments)
+      setEscrowPaymentsTotal(escrowTotal)
 
-        // Mirror Loads.jsx getLoadTotals — check D1 columns first, fall back to arrays
-        const comdataTotal = parseFloat(l.comdata_total) > 0
-          ? parseFloat(l.comdata_total)
-          : (l.comdatas    || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
-        const lumperTotal  = parseFloat(l.lumper_total) > 0
-          ? parseFloat(l.lumper_total)
-          : (l.lumpers     || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
-        const incTotal     = parseFloat(l.incidental_total) > 0
-          ? parseFloat(l.incidental_total)
-          : (l.incidentals || []).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
-
-        const expenses = lumperTotal + incTotal
-        totalAdvKept += Math.max(0, comdataTotal - expenses)
-        totalReimb   += Math.max(0, expenses - comdataTotal)
-      })
-
-      const fleetFuel    = fuel.filter(f => f.fuel_type === 'fleet').reduce((s, f) => s + (parseFloat(f.amount) || 0), 0)
-      const achDisbursed = timLoads.filter(l => l.ach_payment).reduce((s, l) => s + (parseFloat(l.ach_received) || 0), 0)
-      setTimSettlementOwed(Math.max(0, totalEarned - totalAdvKept + totalReimb - fleetFuel - achDisbursed - escrowPaymentsTotal))
+      // ONE formula — src/settlementMath.js. Same number as the
+      // Settlement Report, always.
+      const rb = computeRunningBalance({ loads, fuelEntries, escrowTotal, driver: 'TIM' })
+      setTimSettlementOwed(rb.stillOwed)
     } catch (err) {
       console.error('Settlement fetch failed:', err)
       setTimSettlementOwed(0)
