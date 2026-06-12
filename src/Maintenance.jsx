@@ -7,6 +7,9 @@
 //             or deleted if doing so would drop the financed pool below
 //             what Tim has already paid back (orphaned-money trap), and
 //             any overpayment is now SURFACED instead of clamped to $0.
+// 2026-06-11b: ETTR FINANCED summary box now shows TOTAL financed all-time
+//             (mirrors the TIM PAID box) — the tracker below carries the
+//             remaining balance. Was duplicating the balance number.
 
 import { useState, useEffect, useRef } from 'react'
 
@@ -435,8 +438,8 @@ export default function Maintenance({ driver, api, showToast, onEntriesChange, r
               </div>
               <div style={{background:'#1a0a2a',borderRadius:8,padding:'10px 12px',border:'1px solid #7b1fa2'}}>
                 <div style={{fontSize:10,color:'#ce93d8',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>ETTR FINANCED</div>
-                <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#ce93d8'}}>{fmt(escrowBalance)}</div>
-                <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>Repair Balance Owed</div>
+                <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#ce93d8'}}>{fmt(totalEdgerton)}</div>
+                <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>Total Financed — All Time</div>
               </div>
             </div>
 
