@@ -18,11 +18,17 @@
 //             repair deduction in the quarter PAID (cash basis — confirm
 //             treatment with tax preparer). No double count possible:
 //             paid_by='TIM' entries and payback rows are separate datasets.
+// 2026-06-11d: ACCRUAL CORRECTION (Daddyboy): books run accrual-style —
+//             ALL repairs deduct at entry_date (when incurred), including
+//             ETTR-financed ones (financing is just a payable). Payback
+//             payments are DEBT SERVICE, never deductions — the payments
+//             box is now informational only and adds $0 to deductions.
 //
 // AUTO-PULL: Fuel expenses are fetched from /api/fuel/{driver} (fleet + pocket).
-// Repair expenses are fetched from /api/maintenance/{driver} (paid_by TIM only).
-// ETTR financed repair payments (Tim's payback) are fetched from
-// /api/escrow-payments/TIM and deducted in the quarter PAID.
+// Repair expenses are fetched from /api/maintenance/{driver} — ALL entries
+// deduct at entry_date (accrual: financed repairs are the driver's expense
+// when incurred). ETTR payback payments from /api/escrow-payments/TIM are
+// shown for information only — debt service, never a deduction.
 // Both are filtered by quarter using entry_date. These replace manual Fuel/Repair
 // sections — data already in the system is NOT re-entered manually here.
 // The drop-list remains for additional operating expenses not tracked elsewhere.
@@ -276,10 +282,19 @@ export default function Tax({ loads, driver, api }) {
     return getQFuelEntries(qMonths).filter(f => f.fuel_type === 'pocket').reduce((s, f) => s + (parseFloat(f.amount) || 0), 0)
   }
 
-  // Repairs: only entries where Tim paid (paid_by === 'TIM').
-  // EDGERTON-paid repairs are Bruce's expense, not Tim's deduction.
+  // ACCRUAL: ALL of the driver's repairs deduct at entry_date (when
+  // incurred). ETTR-financed repairs are the driver's expense the day they
+  // hit the books — the financing is just a payable. Payback of that
+  // financing is debt service, never a deduction.
   function getQMaintEntries(qMonths) {
-    return maintEntries.filter(m => inQuarter(m.entry_date, qMonths) && (m.paid_by === 'TIM' || m.paid_by === 'Tim'))
+    return maintEntries.filter(m => inQuarter(m.entry_date, qMonths))
+  }
+  function isEttrFinanced(m) { return m.paid_by === 'EDGERTON' }
+  function getQMaintTimTotal(qMonths) {
+    return getQMaintEntries(qMonths).filter(m => !isEttrFinanced(m)).reduce((s, m) => s + (parseFloat(m.amount) || 0), 0)
+  }
+  function getQMaintEttrTotal(qMonths) {
+    return getQMaintEntries(qMonths).filter(isEttrFinanced).reduce((s, m) => s + (parseFloat(m.amount) || 0), 0)
   }
   function getQMaintTotal(qMonths) {
     return getQMaintEntries(qMonths).reduce((s, m) => s + (parseFloat(m.amount) || 0), 0)
@@ -384,10 +399,11 @@ export default function Tax({ loads, driver, api }) {
     const q           = QUARTERS[qIdx]
     const autoFuel    = getQFuelTotal(q.months)
     const autoRepair  = getQMaintTotal(q.months)
-    const autoEttr    = getQEttrTotal(q.months)
     const perDiem     = getPerDiemDeduction(qIdx)
     const manualDrop  = getDropEntries(qIdx).reduce((s,e) => s+(parseFloat(e.amount)||0), 0)
-    return autoFuel + autoRepair + autoEttr + perDiem + manualDrop
+    // NOTE: ETTR payback payments deliberately NOT included — debt service,
+    // the financed repairs already deducted at entry_date above.
+    return autoFuel + autoRepair + perDiem + manualDrop
   }
 
   function calcTax(revenue, expenses) {
@@ -573,20 +589,20 @@ export default function Tax({ loads, driver, api }) {
                   )}
                 </div>
 
-                {/* REPAIRS — auto-pulled from maintenance ledger (Tim paid only) */}
+                {/* REPAIRS — auto-pulled from maintenance ledger (ALL entries, accrual at entry_date) */}
                 <div style={autoBox}>
                   <div style={autoLabel}>
-                    Auto-Pulled - Maintenance Ledger / Tim Paid ({qRepairCount} {qRepairCount === 1 ? 'entry' : 'entries'})
+                    Auto-Pulled - Repairs &amp; Maintenance ({qRepairCount} {qRepairCount === 1 ? 'entry' : 'entries'})
                   </div>
                   {qRepairCount === 0 ? (
                     <div style={{fontSize:11, color:'var(--grey)'}}>
-                      No Tim-paid maintenance in this quarter
+                      No repairs in this quarter
                     </div>
                   ) : (
                     <>
                       {getQMaintEntries(q.months).map((m, i) => (
                         <div key={m.id || i} className="amount-row" style={{marginBottom:4}}>
-                          <span className="label" style={{fontSize:11}}>{m.description || m.category || 'Repair'}</span>
+                          <span className="label" style={{fontSize:11}}>{m.description || m.category || 'Repair'}{isEttrFinanced(m) ? ' — ETTR financed' : ''}</span>
                           <span className="value" style={{color:'var(--green)'}}>{fmt(m.amount)}</span>
                         </div>
                       ))}
@@ -596,15 +612,20 @@ export default function Tax({ loads, driver, api }) {
                           <span className="value" style={{color:'var(--green)', fontWeight:700}}>{fmt(qRepairs)}</span>
                         </div>
                       </div>
+                      {getQMaintEttrTotal(q.months) > 0 && (
+                        <div style={{fontSize:10, color:'var(--grey)', marginTop:6}}>
+                          Tim paid {fmt(getQMaintTimTotal(q.months))} · ETTR financed (terms) {fmt(getQMaintEttrTotal(q.months))}. Financed repairs deduct when incurred — the driver extends terms; payback is debt service.
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
 
-                {/* ETTR FINANCED REPAIR PAYMENTS — Tim's payback, deducted when paid */}
+                {/* ETTR FINANCED REPAIR PAYMENTS — informational only: debt service, NOT a deduction */}
                 {driver === 'TIM' && (
                   <div style={autoBox}>
                     <div style={autoLabel}>
-                      Auto-Pulled - ETTR Financed Repair Payments ({qEttrCount} {qEttrCount === 1 ? 'payment' : 'payments'})
+                      Info - ETTR Repair Payback — not a deduction ({qEttrCount} {qEttrCount === 1 ? 'payment' : 'payments'})
                     </div>
                     {qEttrCount === 0 ? (
                       <div style={{fontSize:11, color:'var(--grey)'}}>
@@ -615,17 +636,17 @@ export default function Tax({ loads, driver, api }) {
                         {getQEttrPayments(q.months).map((p, i) => (
                           <div key={p.id || i} className="amount-row" style={{marginBottom:4}}>
                             <span className="label" style={{fontSize:11}}>Payment — {(p.funded_at || '').substring(0,10)}</span>
-                            <span className="value" style={{color:'var(--green)'}}>{fmt(p.amount)}</span>
+                            <span className="value" style={{color:'var(--grey)'}}>{fmt(p.amount)}</span>
                           </div>
                         ))}
                         <div style={{borderTop:'1px solid var(--border)', paddingTop:6, marginTop:4}}>
                           <div className="amount-row" style={{marginBottom:0}}>
-                            <span className="label" style={{fontWeight:700}}>Total Repair Payment Deduction</span>
-                            <span className="value" style={{color:'var(--green)', fontWeight:700}}>{fmt(qEttr)}</span>
+                            <span className="label" style={{fontWeight:700}}>Total Paid — Debt Service</span>
+                            <span className="value" style={{color:'var(--grey)', fontWeight:700}}>{fmt(qEttr)}</span>
                           </div>
                         </div>
                         <div style={{fontSize:10, color:'var(--grey)', marginTop:6}}>
-                          Payback of ETTR-financed repairs — deducted in the quarter paid. Confirm with your tax preparer.
+                          Payback of ETTR-financed repairs. NOT a deduction — those repairs already deducted in the quarter incurred.
                         </div>
                       </>
                     )}
@@ -789,9 +810,6 @@ export default function Tax({ loads, driver, api }) {
                   )}
                   {qRepairs > 0 && (
                     <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- Repairs (auto)</span><span className="value" style={{color:'var(--grey)'}}>({fmt(qRepairs)})</span></div>
-                  )}
-                  {qEttr > 0 && (
-                    <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- ETTR Repair Payments (auto)</span><span className="value" style={{color:'var(--grey)'}}>({fmt(qEttr)})</span></div>
                   )}
                   {pdDeduction > 0 && (
                     <div className="amount-row"><span className="label" style={{color:'var(--grey)'}}>- Per Diem ({pd.full} full{pd.half > 0 ? ', ' + pd.half + ' half' : ''})</span><span className="value" style={{color:'var(--grey)'}}>({fmt(pdDeduction)})</span></div>
