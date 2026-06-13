@@ -8,6 +8,12 @@
 //             DATE (from the rate con), not by the date the driver entered
 //             them. List sorts newest delivery first. parseAppDate() handles
 //             MM/DD/YYYY, M/D/YYYY, MM/DD/YY (scanner) and YYYY-MM-DD (D1).
+// 2026-06-13: DELETE AUTHORIZATION — delete now sends the logged-in driver to
+//             the worker. Worker enforces: TIM = god mode (any load), BRUCE =
+//             own loads only, NICOLE = none. Saved loads (load.id) are now
+//             server-authoritative on delete — a rejected delete no longer
+//             removes the card locally, keeping the UI in sync with the ETTR
+//             accounting record.
 
 import { useState, useEffect } from 'react'
 import { jsPDF } from 'jspdf'
@@ -112,15 +118,26 @@ export default function Loads({ loads, setLoads, driver, api, showToast, fetchLo
     setDeleting(true)
     try {
       if (load.id) {
-        const res = await fetch(api + '/api/loads/' + load.id, { method: 'DELETE' })
+        // Saved load = part of the ETTR accounting system. Delete must be
+        // authorized and confirmed by the worker. Send the logged-in driver
+        // so the worker can enforce ownership (TIM god mode, BRUCE own-only,
+        // NICOLE none). Do NOT remove the card locally on failure — that would
+        // desync the UI from the accounting record.
+        const res = await fetch(api + '/api/loads/' + load.id, {
+          method:  'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ driver }),
+        })
         if (!res.ok) {
           let errMsg = 'Server error ' + res.status
           try { const d = await res.json(); errMsg = d.error || errMsg } catch {}
+          if (res.status === 403) errMsg = 'You can only delete your own loads'
           showToast('Delete failed: ' + errMsg)
           setDeleting(false); return
         }
-        try { await fetchLoads() } catch { setLoads(prev => prev.filter((_,i) => i !== localIdx)) }
+        await fetchLoads()
       } else {
+        // Unsaved local-only load (never reached the accounting system).
         setLoads(prev => prev.filter((_,i) => i !== localIdx))
       }
       showToast('Load deleted')
