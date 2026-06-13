@@ -1,6 +1,11 @@
 // src/App.jsx
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V4 — Phase A: 4-tab restructure + PIN persistence fix
+// 2026-06-13: LOADS breadcrumb moved INTO the driver bar — centered between
+//             "LOGGED IN AS {driver}" and "+ NEW", LOADS link enlarged.
+//             Only shows for drivers inside ratecon/invoice flow. Tapping it
+//             still returns to the loads list (setLoadsSubView('list')).
+//             Bookkeeper driver bar and loads-list view are untouched.
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -349,6 +354,8 @@ export default function App() {
 
   // -- MAIN APP ---------------------------------------------
   const isBookkeeper = role === 'bookkeeper'
+  // LOADS breadcrumb shows only for drivers actively inside the new-load flow.
+  const showLoadsCrumb = !isBookkeeper && tab === 'loads' && (loadsSubView === 'ratecon' || loadsSubView === 'invoice')
 
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100dvh' }}>
@@ -367,7 +374,7 @@ export default function App() {
       </div>
 
       {/* DRIVER BAR */}
-      <div className="driver-bar" style={{ justifyContent:'space-between', alignItems:'center' }}>
+      <div className="driver-bar" style={{ justifyContent:'space-between', alignItems:'center', gap:8 }}>
         {isBookkeeper && (tab === 'maintenance' || tab === 'assets') ? (
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em' }}>VIEWING:</div>
@@ -376,8 +383,16 @@ export default function App() {
             ))}
           </div>
         ) : (
-          <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>LOGGED IN AS {driver}</div>
+          <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', flexShrink:1, minWidth:0 }}>LOGGED IN AS {driver}</div>
         )}
+
+        {/* Centered LOADS breadcrumb — drivers only, inside new-load flow */}
+        {showLoadsCrumb && (
+          <button onClick={() => setLoadsSubView('list')} style={{ background:'transparent', border:'none', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:900, fontSize:20, cursor:'pointer', letterSpacing:'0.06em', padding:0, flexShrink:0, lineHeight:1 }}>
+            LOADS
+          </button>
+        )}
+
         {!isBookkeeper && (
           <button className="driver-btn active" style={{ flex:'0 0 auto', padding:'10px 20px' }} onClick={resetLoad}>+ NEW</button>
         )}
@@ -389,17 +404,6 @@ export default function App() {
         {/* -- LOADS TAB ---------------------------------- */}
         {tab === 'loads' && (
           <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
-
-            {!isBookkeeper && (loadsSubView === 'ratecon' || loadsSubView === 'invoice') && (
-              <div style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 16px 8px', borderBottom:'1px solid var(--border)', background:'var(--navy2)', flexShrink:0 }}>
-                <button onClick={() => setLoadsSubView('list')} style={{ background:'transparent', border:'none', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, cursor:'pointer', letterSpacing:'0.06em', padding:0 }}>
-                  LOADS
-                </button>
-                <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>
-                  {loadsSubView === 'ratecon' ? 'NEW LOAD - RATE CONFIRMATION' : 'NEW LOAD - INVOICE'}
-                </div>
-              </div>
-            )}
 
             {loadsSubView === 'ratecon' && !isBookkeeper && (
               <div style={{ flex:1, overflowY:'auto' }}>
