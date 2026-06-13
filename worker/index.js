@@ -635,11 +635,27 @@ export default {
     }
 
     // ── LOADS DELETE ─────────────────────────────────────
+    // Authorization (ETTR accounting record — owner-gated):
+    //   TIM    = god mode (developer) — can delete any load (Bruce or Tim)
+    //   BRUCE  = can delete ONLY his own loads
+    //   NICOLE = cannot delete any load (no path granted)
+    //   Any other / missing driver = blocked
     if (path.startsWith('/api/loads/') && request.method === 'DELETE') {
       try {
-        const id  = path.split('/')[3];
+        const id = path.split('/')[3];
+        let driver = '';
+        try { ({ driver } = await request.json()); } catch {}
+        if (!driver) return json({ error: 'Missing driver' }, 400);
+        const who = driver.toUpperCase();
+
         const row = await env.DB.prepare('SELECT driver FROM loads WHERE id=?').bind(id).first();
         if (!row) return json({ error: 'Load not found' }, 404);
+
+        // TIM god mode bypasses owner check; everyone else must own the load.
+        if (who !== 'TIM' && row.driver !== who) {
+          return json({ error: 'Not authorized' }, 403);
+        }
+
         if (env.R2) await env.R2.delete('invoices/' + id + '.pdf').catch(() => {})
         await env.DB.prepare('DELETE FROM loads WHERE id=?').bind(id).run();
         return json({ ok: true });
