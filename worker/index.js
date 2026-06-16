@@ -1,6 +1,10 @@
 // worker/index.js
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V4 — Cloudflare Worker
+// 2026-06-16: OCR model migrated claude-sonnet-4-20250514 -> claude-sonnet-4-6
+//             (Sonnet 4 retired on the Claude API June 15 2026; old string
+//             returned not_found_error, breaking the scanner). Only the OCR
+//             model string changed; all routes/prompts/headers unchanged.
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -79,7 +83,7 @@ export default {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            model:      'claude-sonnet-4-20250514',
+            model:      'claude-sonnet-4-6',
             max_tokens: 1024,
             messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
           }),
